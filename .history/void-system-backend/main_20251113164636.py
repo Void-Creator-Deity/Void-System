@@ -85,15 +85,6 @@ add_routes(app, load_persona_chain(), path="/lc/persona")
 def read_root():
     return {"system": "VOID CORE ACTIVE", "status": "running"}
 
-@app.get("/routes")
-def list_routes():
-    routes = []
-    for route in app.routes:
-        if hasattr(route, "path"):
-            routes.append({"path": route.path, "methods": list(route.methods)})
-    return routes
-
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     logger.error(f"❌ 未捕获异常: {exc}")
