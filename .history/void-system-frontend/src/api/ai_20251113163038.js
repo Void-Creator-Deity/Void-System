@@ -16,19 +16,4 @@ export const askPersona = async (text) => {
   return res.data.output
 }
 
-
-// 调用学习任务建议
-export const getAdvisor = async (topic) => {
-  const res = await api.post("/lc/advisor/invoke", {
-    input: { topic }
-  })
-  return res.data.output
-}
-
-// 调用知识问答
-export const askQA = async (question) => {
-  const res = await api.post("/lc/qa/invoke", {
-    input: { question }
-  })
-  return res.data.output
-}
+// 其他接口保持不变...
