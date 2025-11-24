@@ -1,0 +1,588 @@
+<template>
+  <div class="advisor-container">
+    <!-- 页面标题 -->
+    <div class="advisor-header">
+      <h2><span class="glitch">学习</span> <span class="system-text">顾问</span></h2>
+      <p class="subtitle">输入学习主题，获取个性化学习任务建议</p>
+    </div>
+    
+    <!-- 输入区域 -->
+    <div class="input-section">
+      <div class="input-wrapper">
+        <div class="input-prefix">🧠</div>
+        <el-input 
+          v-model="topic" 
+          placeholder="输入学习主题，例如：高等数学、Python编程"
+          @keyup.enter="generate"
+          :disabled="isLoading"
+        />
+      </div>
+      <el-button 
+        type="primary" 
+        @click="generate"
+        :loading="isLoading"
+        :disabled="isLoading || !topic.trim()"
+      >
+        <span v-if="!isLoading">生成任务</span>
+        <span v-else>生成中...</span>
+      </el-button>
+    </div>
+    
+    <!-- 加载状态 -->
+    <div v-if="isLoading" class="loading-section">
+      <div class="loading-animation">
+        <div class="loading-ring"></div>
+        <p>正在分析学习主题...</p>
+      </div>
+    </div>
+    
+    <!-- 结果展示 -->
+    <div v-else-if="result" class="results-section fade-in">
+      <div class="result-header">
+        <h3>🎯 系统任务建议</h3>
+        <div class="timestamp">{{ formatTime(generationTime) }}</div>
+      </div>
+      
+      <div class="task-cards">
+        <!-- 如果API返回的是对象，尝试解析 -->
+        <div v-if="parsedResult" class="task-card">
+          <div class="task-header">
+            <div class="task-title">{{ parsedResult.title || '学习任务' }}</div>
+            <div class="task-priority">优先级: 高</div>
+          </div>
+          
+          <div class="task-body">
+            <div class="task-attribute">
+              <div class="attribute-label">学习目标</div>
+              <div class="attribute-value">{{ parsedResult.objective || '掌握相关知识点' }}</div>
+            </div>
+            
+            <div class="task-attribute">
+              <div class="attribute-label">建议时长</div>
+              <div class="attribute-value">{{ parsedResult.duration || '60分钟' }}</div>
+            </div>
+            
+            <div class="task-attribute">
+              <div class="attribute-label">预期成果</div>
+              <div class="attribute-value">{{ parsedResult.reward || '完成相关练习并巩固知识' }}</div>
+            </div>
+          </div>
+          
+          <div class="task-footer">
+            <div class="task-progress">
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: '0%' }"></div>
+              </div>
+              <span class="progress-text">0%</span>
+            </div>
+            <el-button size="small" class="start-task-btn">开始任务</el-button>
+          </div>
+        </div>
+        
+        <!-- 原始结果展示 -->
+        <div v-else class="raw-result">
+          <pre>{{ result }}</pre>
+        </div>
+      </div>
+      
+      <div class="action-buttons">
+        <el-button type="info" @click="saveTask" class="action-btn">
+          💾 保存任务
+        </el-button>
+        <el-button type="success" @click="generateNewTask" class="action-btn">
+          🔄 生成新任务
+        </el-button>
+      </div>
+    </div>
+    
+    <!-- 空状态 -->
+    <div v-else class="empty-state">
+      <div class="empty-icon">🧠</div>
+      <h3>准备就绪</h3>
+      <p>输入学习主题，获取个性化任务建议</p>
+      <div class="examples">
+        <span class="example-tag" v-for="example in examples" :key="example" @click="setExample(example)">{{ example }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch } from "vue"
+import { getAdvisor } from "@/api/ai"
+
+const topic = ref("")
+const result = ref("")
+const isLoading = ref(false)
+const generationTime = ref(null)
+
+// 示例主题
+const examples = ['高等数学', 'Python编程', '英语听力', '数据结构', '人工智能']
+
+// 解析结果（尝试将文本结果解析为结构化数据）
+const parsedResult = computed(() => {
+  if (!result.value) return null
+  
+  try {
+    // 尝试解析JSON格式
+    if (result.value.startsWith('{') && result.value.endsWith('}')) {
+      return JSON.parse(result.value)
+    }
+    
+    // 尝试从文本中提取结构化信息
+    const parsed = {}
+    
+    // 提取任务标题
+    const titleMatch = result.value.match(/任务标题[：:](.*?)(\n|$)/i)
+    if (titleMatch) parsed.title = titleMatch[1].trim()
+    
+    // 提取学习目标
+    const objectiveMatch = result.value.match(/学习目标[：:](.*?)(\n|$)/i)
+    if (objectiveMatch) parsed.objective = objectiveMatch[1].trim()
+    
+    // 提取建议时长
+    const durationMatch = result.value.match(/建议时长[：:](.*?)(\n|$)/i)
+    if (durationMatch) parsed.duration = durationMatch[1].trim()
+    
+    // 提取奖励提示
+    const rewardMatch = result.value.match(/奖励提示[：:](.*?)(\n|$)/i)
+    if (rewardMatch) parsed.reward = rewardMatch[1].trim()
+    
+    // 如果至少提取了一项，返回解析结果
+    return Object.keys(parsed).length > 0 ? parsed : null
+  } catch (e) {
+    console.log('无法解析结果为结构化数据:', e)
+    return null
+  }
+})
+
+// 格式化时间
+const formatTime = (timestamp) => {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN')
+}
+
+// 设置示例主题
+const setExample = (example) => {
+  topic.value = example
+}
+
+// 生成新任务
+const generateNewTask = () => {
+  result.value = ''
+  generationTime.value = null
+}
+
+// 保存任务
+const saveTask = () => {
+  // 这里可以实现保存任务的逻辑
+  alert('任务已保存到您的学习计划中')
+}
+
+// 生成任务
+async function generate() {
+  // 添加输入验证
+  if (!topic.value.trim() || isLoading.value) return
+  
+  isLoading.value = true
+  result.value = ''
+  
+  try {
+    result.value = await getAdvisor(topic.value)
+    generationTime.value = new Date().toISOString()
+  } catch (error) {
+    console.error('API调用失败：', error)
+    result.value = '生成失败，请重试\n错误信息：' + (error.message || '未知错误')
+  } finally {
+    isLoading.value = false
+  }
+}
+</script>
+
+<style scoped>
+.advisor-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+/* 页面标题 */
+.advisor-header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.advisor-header h2 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+.glitch {
+  color: var(--accent-primary);
+  text-shadow: 0 0 10px var(--accent-primary);
+}
+
+.system-text {
+  color: var(--text-secondary);
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+}
+
+/* 输入区域 */
+.input-section {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  align-items: stretch;
+}
+
+.input-wrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-prefix {
+  position: absolute;
+  left: 15px;
+  font-size: 1.2rem;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.input-wrapper :deep(.el-input__wrapper) {
+  background: rgba(5, 7, 20, 0.8);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  transition: all var(--transition-fast) ease;
+}
+
+.input-wrapper :deep(.el-input__wrapper:hover) {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5), 0 0 10px var(--accent-glow);
+}
+
+.input-wrapper :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5), 0 0 15px var(--accent-primary);
+}
+
+.input-wrapper :deep(.el-input__inner) {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--body-font);
+  padding-left: 35px;
+}
+
+.input-section :deep(.el-button) {
+  min-width: 120px;
+  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+  border: none;
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.input-section :deep(.el-button:hover:not(:disabled)) {
+  box-shadow: 0 0 20px var(--accent-primary);
+  transform: translateY(-1px);
+}
+
+/* 加载状态 */
+.loading-section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem;
+}
+
+.loading-animation {
+  text-align: center;
+}
+
+.loading-ring {
+  width: 60px;
+  height: 60px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  margin: 0 auto 1rem;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 结果展示 */
+.results-section {
+  background: linear-gradient(135deg, rgba(10, 13, 32, 0.9), rgba(5, 7, 20, 0.95));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 2rem;
+  box-shadow: 
+    0 0 30px rgba(0, 204, 255, 0.1),
+    inset 0 0 10px rgba(0, 204, 255, 0.05);
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.result-header h3 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.timestamp {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+/* 任务卡片 */
+.task-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.task-card {
+  background: linear-gradient(135deg, rgba(16, 21, 48, 0.7), rgba(10, 13, 32, 0.7));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-fast) ease;
+}
+
+.task-card:hover {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 20px var(--accent-glow);
+  transform: translateY(-2px);
+}
+
+.task-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.task-title {
+  font-family: var(--main-font);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.task-priority {
+  font-size: 0.8rem;
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.task-attribute {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.attribute-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.attribute-value {
+  font-size: 1rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.task-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.task-progress {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(42, 56, 89, 0.3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff66, #00ccff);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.progress-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  min-width: 35px;
+}
+
+.start-task-btn {
+  background: linear-gradient(135deg, #00ff66, #00ccff);
+  border: none;
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.start-task-btn:hover {
+  box-shadow: 0 0 15px rgba(0, 255, 102, 0.5);
+}
+
+/* 原始结果 */
+.raw-result {
+  background: rgba(5, 7, 20, 0.8);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  font-family: var(--body-font);
+}
+
+/* 操作按钮 */
+.action-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+.action-btn {
+  background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  min-width: 120px;
+}
+
+.action-btn:hover {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 3rem;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1.5rem;
+  animation: float 3s ease-in-out infinite;
+}
+
+.empty-state h3 {
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+
+.empty-state p {
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.example-tag {
+  background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all var(--transition-fast) ease;
+}
+
+.example-tag:hover {
+  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+  color: var(--bg-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .advisor-container {
+    padding: 1rem;
+  }
+  
+  .input-section {
+    flex-direction: column;
+  }
+  
+  .task-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .action-buttons {
+    flex-direction: column;
+  }
+  
+  .examples {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .example-tag {
+    width: 100%;
+    max-width: 200px;
+  }
+}
+</style>

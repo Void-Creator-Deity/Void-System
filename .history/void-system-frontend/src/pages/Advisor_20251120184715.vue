@@ -1,0 +1,1111 @@
+<template>
+  <div class="advisor-container">
+    <!-- 页面标题区域 -->
+    <header class="advisor-header">
+      <h1 class="page-title">学习顾问</h1>
+      <p class="page-description">获取个性化的学习建议和指导</p>
+    </header>
+
+    <!-- 输入区域 -->
+    <div class="input-section">
+      <div class="input-wrapper">
+        <div class="input-field">
+          <span class="input-prefix">📚</span>
+          <input 
+            v-model="userQuery" 
+            type="text" 
+            placeholder="输入您的学习问题或主题..."
+            @keyup.enter="submitQuery"
+            :disabled="isLoading"
+          />
+          <button 
+            class="send-btn" 
+            @click="submitQuery"
+            :disabled="isLoading || !userQuery.trim()"
+          >
+            <span class="btn-icon">{{ isLoading ? '⏱️' : '🚀' }}</span>
+            <span class="btn-text">{{ isLoading ? '生成中...' : '发送' }}</span>
+          </button>
+        </div>
+        
+        <div class="input-tips">
+          <span class="tip-icon">💡</span>
+          <span class="tip-text">提示：可以询问具体的学习方法、资源推荐或概念解释</span>
+        </div>
+      </div>
+
+      <!-- 预设问题标签 -->
+      <div class="quick-topics">
+        <div class="topics-header">快速主题：</div>
+        <div class="topics-list">
+          <button 
+            v-for="topic in quickTopics" 
+            :key="topic.id"
+            class="topic-tag"
+            @click="useQuickTopic(topic.text)"
+          >
+            {{ topic.text }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 加载状态 -->
+    <div v-if="isLoading" class="loading-state">
+      <div class="loading-container">
+        <div class="loading-spinner"></div>
+        <div class="loading-content">
+          <h3 class="loading-title">正在分析您的问题...</h3>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+          </div>
+          <p class="loading-description">正在生成个性化学习方案</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果区域 -->
+    <div v-else-if="advisorResult && !isLoading" class="result-section">
+      <!-- 学习计划卡片 -->
+      <div class="task-card">
+        <div class="task-header">
+          <h3 class="task-title">📋 学习计划</h3>
+          <div class="task-meta">
+            <span class="task-date">{{ formattedDate }}</span>
+            <span class="task-duration">预计用时: {{ estimatedDuration }}</span>
+          </div>
+        </div>
+        
+        <div class="task-content">
+          <div class="learning-path">
+            <div 
+              v-for="(step, index) in learningSteps" 
+              :key="index"
+              class="path-step"
+            >
+              <div class="step-number">{{ index + 1 }}</div>
+              <div class="step-content">
+                <h4 class="step-title">{{ step.title }}</h4>
+                <p class="step-description">{{ step.description }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="task-footer">
+          <button class="footer-btn secondary-btn">保存计划</button>
+          <button class="footer-btn primary-btn">开始学习</button>
+        </div>
+      </div>
+
+      <!-- 资源推荐卡片 -->
+      <div class="task-card">
+        <div class="task-header">
+          <h3 class="task-title">📚 推荐资源</h3>
+          <div class="task-meta">
+            <span class="task-resource-count">共 {{ resources.length }} 个资源</span>
+          </div>
+        </div>
+        
+        <div class="task-content">
+          <div class="resources-list">
+            <div 
+              v-for="(resource, index) in resources" 
+              :key="index"
+              class="resource-item"
+            >
+              <div class="resource-icon">{{ resource.icon }}</div>
+              <div class="resource-info">
+                <h4 class="resource-title">{{ resource.title }}</h4>
+                <p class="resource-description">{{ resource.description }}</p>
+                <a :href="resource.link" target="_blank" class="resource-link">查看资源</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 常见问题卡片 -->
+      <div class="task-card">
+        <div class="task-header">
+          <h3 class="task-title">❓ 相关问题</h3>
+        </div>
+        
+        <div class="task-content">
+          <div class="faq-list">
+            <div 
+              v-for="(faq, index) in faqs" 
+              :key="index"
+              class="faq-item"
+              @click="toggleFaq(index)"
+            >
+              <div class="faq-question">
+                <span class="faq-arrow" :class="{ 'rotated': faq.expanded }">▶</span>
+                <span class="faq-text">{{ faq.question }}</span>
+              </div>
+              <div v-if="faq.expanded" class="faq-answer">
+                {{ faq.answer }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 行动按钮 -->
+      <div class="action-buttons">
+        <button class="action-btn secondary-btn">生成更多建议</button>
+        <button class="action-btn primary-btn">分享学习计划</button>
+      </div>
+    </div>
+
+    <!-- 空状态 -->
+    <div v-else class="empty-state">
+      <div class="empty-container">
+        <div class="empty-icon">🧠</div>
+        <h2 class="empty-title">开始您的学习之旅</h2>
+        <p class="empty-description">
+          输入您的学习问题或选择一个快速主题，获取个性化的学习建议和资源推荐
+        </p>
+        <div class="examples">
+          <div 
+            v-for="example in examples" 
+            :key="example.id"
+            class="example-tag"
+            @click="useExample(example.text)"
+          >
+            <span class="example-icon">{{ example.icon }}</span>
+            <span class="example-text">{{ example.text }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 历史记录抽屉 -->
+    <div class="history-drawer" :class="{ 'open': showHistory }">
+      <div class="drawer-header">
+        <h3 class="drawer-title">历史记录</h3>
+        <button class="drawer-close" @click="toggleHistory">×</button>
+      </div>
+      <div class="history-list">
+        <div 
+          v-for="(item, index) in historyItems" 
+          :key="index"
+          class="history-item"
+          @click="loadHistoryItem(item)"
+        >
+          <div class="history-query">{{ item.query }}</div>
+          <div class="history-date">{{ formatHistoryDate(item.timestamp) }}</div>
+        </div>
+        <div v-if="historyItems.length === 0" class="empty-history">暂无历史记录</div>
+      </div>
+    </div>
+    
+    <!-- 历史记录切换按钮 -->
+    <button class="history-toggle" @click="toggleHistory">
+      <span class="history-icon">🕒</span>
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+
+// 状态管理
+const userQuery = ref('')
+const isLoading = ref(false)
+const progressPercent = ref(0)
+const advisorResult = ref(null)
+const showHistory = ref(false)
+const expandedFaqIndex = ref(-1)
+
+// 计算属性
+const formattedDate = computed(() => {
+  const date = new Date()
+  return date.toLocaleDateString('zh-CN', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  })
+})
+
+const estimatedDuration = computed(() => {
+  return '2-3 小时'
+})
+
+// 快速主题列表
+const quickTopics = [
+  { id: 1, text: '学习Vue.js框架' },
+  { id: 2, text: 'Python数据分析入门' },
+  { id: 3, text: '前端性能优化' },
+  { id: 4, text: '算法与数据结构' },
+  { id: 5, text: 'Git版本控制' }
+]
+
+// 示例问题
+const examples = [
+  { id: 1, icon: '💻', text: '如何快速掌握JavaScript?' },
+  { id: 2, icon: '📊', text: '推荐哪些数据可视化工具?' },
+  { id: 3, icon: '🔒', text: '前端安全最佳实践' },
+  { id: 4, icon: '⚡', text: '如何提高网页加载速度?' },
+  { id: 5, icon: '🌐', text: '响应式设计技巧' },
+  { id: 6, icon: '🧪', text: '自动化测试入门' }
+]
+
+// 模拟学习步骤数据
+const learningSteps = [
+  {
+    title: '基础知识学习',
+    description: '掌握核心概念和基本语法，建议通过官方文档和入门教程学习'
+  },
+  {
+    title: '实际项目练习',
+    description: '通过小型项目巩固所学知识，从简单到复杂逐步提升难度'
+  },
+  {
+    title: '深入进阶内容',
+    description: '学习高级特性和最佳实践，了解底层原理和优化技术'
+  },
+  {
+    title: '社区交流与反馈',
+    description: '参与开源项目或技术社区讨论，获取反馈并持续改进'
+  }
+]
+
+// 模拟资源数据
+const resources = [
+  {
+    icon: '📚',
+    title: '官方文档',
+    description: '全面的官方指南和API参考',
+    link: '#'
+  },
+  {
+    icon: '🎓',
+    title: '在线课程',
+    description: '结构化的视频教程和实践项目',
+    link: '#'
+  },
+  {
+    icon: '📝',
+    title: '实战教程',
+    description: '从入门到精通的步骤式教程',
+    link: '#'
+  },
+  {
+    icon: '💻',
+    title: '代码示例',
+    description: '丰富的示例代码和模板',
+    link: '#'
+  }
+]
+
+// 模拟常见问题数据
+const faqs = [
+  {
+    question: '学习需要哪些前置知识?',
+    answer: '建议具备基础的编程概念和逻辑思维能力。如果有相关编程语言经验会更容易上手，但不是必须的。',
+    expanded: false
+  },
+  {
+    question: '每天应该学习多长时间?',
+    answer: '建议每天保持1-2小时的学习时间，持续性学习比集中性学习更有效。重要的是保持学习习惯。',
+    expanded: false
+  },
+  {
+    question: '如何解决学习中遇到的问题?',
+    answer: '遇到问题时，可以先通过官方文档、搜索引擎和技术社区寻找答案。尝试自己解决问题是学习过程中的重要部分。',
+    expanded: false
+  }
+]
+
+// 模拟历史记录
+const historyItems = ref([])
+
+// 方法定义
+const submitQuery = () => {
+  if (!userQuery.value.trim() || isLoading.value) return
+  
+  isLoading.value = true
+  progressPercent.value = 0
+  
+  // 模拟加载进度
+  const progressInterval = setInterval(() => {
+    progressPercent.value += Math.random() * 20
+    if (progressPercent.value >= 100) {
+      progressPercent.value = 100
+      clearInterval(progressInterval)
+      
+      // 模拟完成加载
+      setTimeout(() => {
+        isLoading.value = false
+        advisorResult.value = { query: userQuery.value }
+        
+        // 添加到历史记录
+        historyItems.value.unshift({
+          query: userQuery.value,
+          timestamp: new Date()
+        })
+        
+        // 清空输入
+        userQuery.value = ''
+      }, 500)
+    }
+  }, 300)
+}
+
+const useQuickTopic = (topic) => {
+  userQuery.value = topic
+  submitQuery()
+}
+
+const useExample = (example) => {
+  userQuery.value = example
+  submitQuery()
+}
+
+const toggleFaq = (index) => {
+  faqs[index].expanded = !faqs[index].expanded
+}
+
+const toggleHistory = () => {
+  showHistory.value = !showHistory.value
+}
+
+const loadHistoryItem = (item) => {
+  userQuery.value = item.query
+  showHistory.value = false
+}
+
+const formatHistoryDate = (timestamp) => {
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN', { 
+    month: 'numeric', 
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+</script>
+
+<style scoped>
+/* 主容器 */
+.advisor-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
+  position: relative;
+}
+
+/* 页面标题区域 */
+.advisor-header {
+  text-align: center;
+  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.page-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.page-description {
+  font-size: 1.125rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* 输入区域 */
+.input-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.input-wrapper {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.input-field {
+  display: flex;
+  align-items: center;
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.input-field:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+}
+
+.input-prefix {
+  font-size: 1.25rem;
+  padding: 0 var(--spacing-sm);
+  color: var(--color-text-secondary);
+}
+
+.input-field input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: var(--spacing-md);
+  font-size: 1rem;
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.input-field input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.send-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.send-btn:hover:not(:disabled) {
+  background-color: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.send-btn:disabled {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-icon {
+  font-size: 1.125rem;
+}
+
+.input-tips {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-md);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.tip-icon {
+  font-size: 1rem;
+}
+
+/* 快速主题 */
+.quick-topics {
+  margin-bottom: var(--spacing-lg);
+}
+
+.topics-header {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-md);
+}
+
+.topics-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.topic-tag {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.topic-tag:hover {
+  background-color: var(--color-bg-tertiary);
+  border-color: var(--color-primary);
+}
+
+/* 加载状态 */
+.loading-state {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xl);
+}
+
+.loading-container {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+}
+
+.loading-spinner {
+  width: 50px;
+  height: 50px;
+  border: 3px solid var(--color-bg-tertiary);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-content {
+  flex: 1;
+}
+
+.loading-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: var(--spacing-md);
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.loading-description {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* 结果区域 */
+.result-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+/* 任务卡片 */
+.task-card {
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+  transition: box-shadow var(--transition-fast);
+}
+
+.task-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.task-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.task-meta {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.task-content {
+  margin-bottom: var(--spacing-lg);
+}
+
+.task-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+}
+
+/* 学习路径 */
+.learning-path {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.path-step {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+}
+
+.step-number {
+  width: 30px;
+  height: 30px;
+  background-color: var(--color-primary);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.step-description {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* 资源列表 */
+.resources-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.resource-item {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  padding: var(--spacing-md);
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast);
+}
+
+.resource-item:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.resource-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.resource-info {
+  flex: 1;
+}
+
+.resource-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.resource-description {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.resource-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+
+.resource-link:hover {
+  color: var(--color-primary-dark);
+  text-decoration: underline;
+}
+
+/* 常见问题 */
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.faq-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.faq-question {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background-color: var(--color-bg-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.faq-question:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.faq-arrow {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  transition: transform var(--transition-fast);
+}
+
+.faq-arrow.rotated {
+  transform: rotate(90deg);
+}
+
+.faq-text {
+  flex: 1;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.faq-answer {
+  padding: var(--spacing-md);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 行动按钮 */
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-lg);
+}
+
+.action-btn {
+  padding: var(--spacing-sm) var(--spacing-xl);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.primary-btn {
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+}
+
+.primary-btn:hover {
+  background-color: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.secondary-btn {
+  background-color: transparent;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+
+.secondary-btn:hover {
+  background-color: rgba(67, 97, 238, 0.05);
+}
+
+.footer-btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.empty-container {
+  text-align: center;
+  max-width: 600px;
+  padding: var(--spacing-xl);
+}
+
+.empty-icon {
+  font-size: 4rem;
+  margin-bottom: var(--spacing-lg);
+}
+
+.empty-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.empty-description {
+  font-size: 1rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-lg) 0;
+  line-height: 1.5;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  justify-content: center;
+}
+
+.example-tag {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.example-tag:hover {
+  background-color: var(--color-bg-tertiary);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.example-icon {
+  font-size: 1rem;
+}
+
+/* 历史记录抽屉 */
+.history-drawer {
+  position: fixed;
+  right: -400px;
+  top: 0;
+  bottom: 0;
+  width: 400px;
+  background-color: var(--color-bg-primary);
+  border-left: 1px solid var(--color-border);
+  transition: right var(--transition-fast);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-drawer.open {
+  right: 0;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.drawer-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.drawer-close {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: var(--spacing-xs);
+  color: var(--color-text-secondary);
+  transition: color var(--transition-fast);
+}
+
+.drawer-close:hover {
+  color: var(--color-text-primary);
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+}
+
+.history-item {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.history-item:hover {
+  background-color: var(--color-bg-secondary);
+  border-color: var(--color-primary);
+}
+
+.history-query {
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.history-date {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.empty-history {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--spacing-xl);
+  font-size: 0.875rem;
+}
+
+.history-toggle {
+  position: fixed;
+  right: var(--spacing-lg);
+  bottom: var(--spacing-lg);
+  width: 50px;
+  height: 50px;
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
+  z-index: 100;
+}
+
+.history-toggle:hover {
+  background-color: var(--color-primary-dark);
+  transform: scale(1.1);
+}
+
+.history-icon {
+  font-size: 1.25rem;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .advisor-container {
+    padding: 0 var(--spacing-md);
+  }
+  
+  .page-title {
+    font-size: 2rem;
+  }
+  
+  .input-section, 
+  .task-footer, 
+  .action-buttons {
+    flex-direction: column;
+  }
+  
+  .examples {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .example-tag {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .loading-container {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .task-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+  }
+  
+  .task-meta {
+    flex-direction: column;
+    gap: var(--spacing-xs);
+  }
+  
+  .history-drawer {
+    width: 100%;
+    right: -100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .input-field {
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+  
+  .input-field input {
+    width: 100%;
+  }
+  
+  .send-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .path-step {
+    flex-direction: column;
+  }
+  
+  .step-number {
+    align-self: center;
+  }
+  
+  .resource-item {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+</style>
