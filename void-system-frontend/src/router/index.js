@@ -12,9 +12,23 @@ const Home = () => import('@/pages/Home.vue')
 const AIConsole = () => import('@/pages/AIConsole.vue')
 const Advisor = () => import('@/pages/Advisor.vue')
 const QA = () => import('@/pages/QA.vue')
+const DocumentManager = () => import('@/pages/DocumentManager.vue')
 const Settings = () => import('@/pages/Settings.vue')
 const Login = () => import('@/pages/Login.vue')
 const Register = () => import('@/pages/Register.vue')
+const RAGManagement = () => import('@/pages/RAGManagement.vue')
+
+// 获取存储的用户信息
+const getUserInfo = () => {
+  const userInfo = localStorage.getItem('user_info')
+  return userInfo ? JSON.parse(userInfo) : null
+}
+
+// 检查用户是否是管理员
+const isAdmin = () => {
+  const userInfo = getUserInfo()
+  return userInfo?.user?.role === 'admin'
+}
 
 /**
  * 路由配置
@@ -51,9 +65,18 @@ const routes = [
     path: '/qa',
     name: 'QA',
     component: QA,
-    meta: { 
+    meta: {
       requiresAuth: true,
       title: '虚空知识库'
+    }
+  },
+  {
+    path: '/documents',
+    name: 'DocumentManager',
+    component: DocumentManager,
+    meta: {
+      requiresAuth: true,
+      title: '文档管理'
     }
   },
   {
@@ -63,6 +86,16 @@ const routes = [
     meta: { 
       requiresAuth: true,
       title: '系统设置'
+    }
+  },
+  {
+    path: '/admin/rag',
+    name: 'RAGManagement',
+    component: RAGManagement,
+    meta: { 
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'RAG文档管理'
     }
   },
   {
@@ -104,6 +137,7 @@ const router = createRouter({
  */
 router.beforeEach((to, from, next) => {
   const requiresAuth = to.meta.requiresAuth !== false
+  const requiresAdmin = to.meta.requiresAdmin === true
   
   // 设置页面标题
   if (to.meta.title) {
@@ -115,6 +149,9 @@ router.beforeEach((to, from, next) => {
     next('/login')
   } else if ((to.path === '/login' || to.path === '/register') && isLoggedIn()) {
     // 已登录用户访问登录/注册页，重定向到首页
+    next('/')
+  } else if (requiresAdmin && !isAdmin()) {
+    // 需要管理员权限但不是管理员，重定向到首页
     next('/')
   } else {
     next()

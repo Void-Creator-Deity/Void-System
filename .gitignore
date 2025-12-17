@@ -1,0 +1,5 @@
+.trae/
+.history/
+*.db
+*.db-journal
+user_documents/

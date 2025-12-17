@@ -70,16 +70,19 @@ const handleClick = (navigate, event) => {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 0.5rem);
-  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 1rem);
-  color: var(--color-text-secondary, #9ca3af);
+  padding: var(--spacing-sm, 0.5rem) var(--spacing-lg, 1.25rem);
+  color: var(--color-text-secondary, #cbd5e1);
   text-decoration: none;
-  border-radius: var(--radius-md, 8px);
-  transition: all 0.3s ease;
+  border-radius: var(--radius-lg, 12px);
+  transition: all var(--transition-normal, 0.3s ease);
   cursor: pointer;
   position: relative;
   overflow: hidden;
   font-weight: 500;
   font-size: 0.95rem;
+  border: 1px solid transparent;
+  background: rgba(30, 41, 59, 0.3);
+  backdrop-filter: blur(8px);
 }
 
 .nav-link::before {
@@ -89,18 +92,18 @@ const handleClick = (navigate, event) => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(67, 97, 238, 0.1), transparent);
-  transition: left 0.5s ease;
+  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
+  transition: left var(--transition-slow, 0.5s ease);
+  z-index: 0;
 }
 
 .nav-link:hover {
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.6), 
-    rgba(55, 65, 81, 0.4)
-  );
-  color: var(--color-text-primary, #f3f4f6);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  background: rgba(51, 65, 85, 0.6);
+  color: var(--color-text-primary, #f8fafc);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25),
+              0 0 0 1px rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
 .nav-link:hover::before {
@@ -108,16 +111,17 @@ const handleClick = (navigate, event) => {
 }
 
 .nav-link.active {
-  color: var(--color-primary, #4361ee);
+  color: var(--color-primary, #6366f1);
   background: linear-gradient(135deg, 
-    rgba(67, 97, 238, 0.15), 
-    rgba(76, 201, 240, 0.1)
+    rgba(99, 102, 241, 0.2), 
+    rgba(6, 182, 212, 0.15)
   );
   box-shadow: 
-    0 0 15px rgba(67, 97, 238, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  text-shadow: 0 0 10px rgba(67, 97, 238, 0.5);
-  border: 1px solid rgba(67, 97, 238, 0.3);
+    0 6px 20px rgba(99, 102, 241, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  text-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  transform: translateY(-1px);
 }
 
 .nav-link.active::before {
@@ -131,37 +135,44 @@ const handleClick = (navigate, event) => {
   width: 100%;
   height: 2px;
   background: linear-gradient(90deg, 
-    var(--color-primary, #4361ee), 
-    var(--color-secondary, #4cc9f0)
+    var(--color-primary, #6366f1), 
+    var(--color-secondary, #06b6d4),
+    var(--color-accent, #ec4899)
   );
+  background-size: 200% 100%;
   border-radius: var(--radius-full, 9999px);
-  box-shadow: 0 0 10px rgba(67, 97, 238, 0.6);
-  animation: indicatorGlow 2s ease-in-out infinite;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.7);
+  animation: indicatorGlow 3s ease-in-out infinite;
 }
 
 @keyframes indicatorGlow {
   0%, 100% {
     opacity: 0.8;
-    box-shadow: 0 0 10px rgba(67, 97, 238, 0.6);
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.7);
+    background-position: 0% 50%;
   }
   50% {
     opacity: 1;
-    box-shadow: 0 0 20px rgba(67, 97, 238, 0.9);
+    box-shadow: 0 0 25px rgba(99, 102, 241, 1);
+    background-position: 100% 50%;
   }
 }
 
 .nav-icon {
-  font-size: 1.25rem;
-  transition: transform 0.3s ease;
-  filter: drop-shadow(0 0 3px rgba(67, 97, 238, 0.3));
+  font-size: 1.35rem;
+  transition: all var(--transition-normal, 0.3s ease);
+  filter: drop-shadow(0 0 5px rgba(99, 102, 241, 0.3));
+  position: relative;
+  z-index: 1;
 }
 
 .nav-link:hover .nav-icon {
-  transform: scale(1.1);
+  transform: scale(1.15);
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5));
 }
 
 .nav-link.active .nav-icon {
-  filter: drop-shadow(0 0 8px rgba(67, 97, 238, 0.6));
+  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.8));
   animation: iconPulse 2s ease-in-out infinite;
 }
 
@@ -170,7 +181,7 @@ const handleClick = (navigate, event) => {
     transform: scale(1);
   }
   50% {
-    transform: scale(1.15);
+    transform: scale(1.2);
   }
 }
 
@@ -179,5 +190,13 @@ const handleClick = (navigate, event) => {
   letter-spacing: 0.3px;
   position: relative;
   z-index: 1;
+  transition: all var(--transition-normal, 0.3s ease);
+}
+
+.nav-link.active .nav-text {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 </style>

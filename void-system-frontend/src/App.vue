@@ -23,7 +23,10 @@
           <NavItem to="/ai" icon="⌨️">系统精灵</NavItem>
           <NavItem to="/advisor" icon="🧠">任务系统</NavItem>
           <NavItem to="/qa" icon="❓">虚空知识库</NavItem>
+          <NavItem to="/documents" icon="📄">文档管理</NavItem>
           <NavItem to="/settings" icon="⚙️">系统设置</NavItem>
+          <!-- 仅管理员可见 -->
+          <NavItem v-if="isAdmin" to="/admin/rag" icon="🔧">RAG管理</NavItem>
         </nav>
         
         <!-- 用户认证状态显示 -->
@@ -105,6 +108,7 @@ const userName = ref('')
 const userLevel = ref(1)
 const userAvatar = ref('U')
 const isAuthenticated = ref(false)
+const isAdmin = ref(false)
 
 // ==================== 业务逻辑 ====================
 
@@ -145,6 +149,8 @@ const updateUserInfo = (userData) => {
   userLevel.value = userData.level || userData.userLevel || 1
   // 生成头像文字（用户名的第一个字符）
   userAvatar.value = userName.value.charAt(0).toUpperCase()
+  // 检查是否为管理员
+  isAdmin.value = userData.user?.role === 'admin' || userData.role === 'admin'
 }
 
 /**

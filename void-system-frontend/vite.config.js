@@ -23,7 +23,9 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        ws: true,  // 支持 WebSocket 和 SSE 长连接
+        secure: false  // 允许代理到 HTTP 服务
+        // 移除 rewrite 选项，确保 /api/stream-chat 被代理到 http://127.0.0.1:8000/api/stream-chat
       }
     }
   },

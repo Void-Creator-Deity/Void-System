@@ -1,9 +1,0 @@
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferMemory
-from langchain.chat_models import ChatOpenAI
-
-def load_persona_chain():
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.6)
-    memory = ConversationBufferMemory()
-    chain = ConversationChain(llm=llm, memory=memory)
-    return chain

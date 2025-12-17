@@ -52,19 +52,22 @@ export const login = async (username, password) => {
   formData.append('username', username)
   formData.append('password', password)
   
-  const response = await api.post('/token', formData, {
+  const response = await api.post('/api/token', formData, {
     headers: {
       'Content-Type': undefined  // 让浏览器自动设置 Content-Type
     }
   })
   
-  // 保存 token 和用户信息到本地存储
-  if (response.data.access_token) {
-    localStorage.setItem('access_token', response.data.access_token)
-    localStorage.setItem('user_info', JSON.stringify(response.data))
-  }
+  // 处理 APIResponse 格式，实际数据在 data 字段中
+  const authResult = response.data.data
   
-  return response.data
+  // 保存 token 和用户信息到本地存储
+  if (authResult.access_token) {
+    localStorage.setItem('access_token', authResult.access_token)
+    localStorage.setItem('user_info', JSON.stringify(authResult))
+  }
+
+  return authResult
 }
 
 /**
@@ -77,7 +80,8 @@ export const login = async (username, password) => {
  * @returns {Promise<Object>} 注册响应数据
  */
 export const register = async (userData) => {
-  return await api.post('/register', userData)
+  const response = await api.post('/api/register', userData)
+  return response.data.data
 }
 
 /**
@@ -85,7 +89,8 @@ export const register = async (userData) => {
  * @returns {Promise<Object>} 用户资料数据
  */
 export const getCurrentUser = async () => {
-  return await api.get('/user/profile')
+  const response = await api.get('/api/user/profile')
+  return response.data.data
 }
 
 /**

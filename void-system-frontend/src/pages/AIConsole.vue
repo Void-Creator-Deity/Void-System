@@ -74,6 +74,17 @@
             :disabled="isLoading"
           />
         </div>
+        <!-- 文件上传按钮 -->
+        <label class="file-upload-btn" @click.prevent="fileInputRef?.click()">
+          <el-icon><Upload /></el-icon>
+        </label>
+        <input
+          ref="fileInputRef"
+          type="file"
+          :accept="acceptedFileTypes.map(type => '.' + type).join(',')"
+          style="display: none"
+          @change="handleFileUpload"
+        />
         <el-button @click="send" :loading="isLoading" :disabled="isLoading || !input.trim()">
           发送
         </el-button>
@@ -99,7 +110,9 @@
 
 import { ref, nextTick, watch, onMounted } from "vue"
 import { ElMessage } from "element-plus"
-import { askPersona } from "@/api/ai"
+import { Upload } from "@element-plus/icons-vue"
+import { askPersona, streamPersona } from "@/api/ai"
+import { sessionApi } from "@/api/session"
 
 // ==================== 响应式状态 ====================
 const input = ref("")
@@ -108,6 +121,9 @@ const isLoading = ref(false)  // 初始状态改为 false，避免显示加载�
 const messagesContainer = ref(null)
 const conversationId = ref('')
 const totalTokens = ref(0)
+// 文件上传相关状态
+const fileInputRef = ref(null)
+const acceptedFileTypes = ref(['txt', 'md', 'json', 'csv', 'py', 'js', 'html', 'css', 'xml']) // 与后端统一
 
 // ==================== 工具函数 ====================
 
@@ -178,43 +194,133 @@ const send = async () => {
   // 设置加载状态
   isLoading.value = true
   
+  // 添加一个空的系统消息占位符用于打字机效果
+  const systemMessage = {
+    role: "system",
+    text: "",
+    timestamp: new Date().toISOString(),
+    tokens: 0
+  }
+  const messageIndex = messages.value.length
+  messages.value.push(systemMessage)
+  
   try {
-    // 调用 AI API 获取回复
-    const reply = await askPersona(userInput)
-    
-    // 简单估算 token 数量（实际应该从 API 响应中获取）
-    const tokens = Math.floor(reply.length / 4)
-    totalTokens.value += tokens
-    
-    // 添加系统回复到消息列表
-    const systemMessage = {
-      role: "system",
-      text: reply,
-      timestamp: new Date().toISOString(),
-      tokens: tokens
+    // 使用当前对话的会话 ID
+    let sessionId = localStorage.getItem('persona_session_id')
+    if (!sessionId) {
+      sessionId = 'user-' + Math.random().toString(36).substring(2, 11)
+      localStorage.setItem('persona_session_id', sessionId)
     }
-    messages.value.push(systemMessage)
     
-    ElMessage.success('消息发送成功')
+    // 调用流式 AI API 获取回复
+    let accumulatedContent = ""
+    
+    // 流式接收消息的回调函数
+    const onMessage = (content, finished) => {
+      if (finished) {
+        // 如果是结束信号，不处理内容
+        // 完成后计算令牌数并更新消息
+        const tokens = Math.floor(accumulatedContent.length / 4)
+        totalTokens.value += tokens
+        messages.value[messageIndex].tokens = tokens
+        isLoading.value = false
+        ElMessage.success('消息发送成功')
+      } else {
+        // 累积接收到的内容
+        accumulatedContent += content
+        messages.value[messageIndex].text = accumulatedContent
+      }
+    }
+    
+    // 错误处理函数
+    const onError = (error) => {
+      console.error('发送消息失败:', error)
+      const errorMessage = error.message || '消息发送失败，请检查网络连接'
+      messages.value[messageIndex] = {
+        role: "system",
+        text: `[系统错误] ${errorMessage}`,
+        timestamp: new Date().toISOString(),
+        isError: true
+      }
+      isLoading.value = false
+      ElMessage.error(errorMessage)
+    }
+    
+    // 调用流式 API
+    streamPersona(userInput, sessionId, onMessage, onError)
   } catch (error) {
     console.error('发送消息失败:', error)
-    
-    // 显示错误消息
-    const errorMessage = error.response?.data?.detail || 
-                        error.message || 
-                        '消息发送失败，请检查网络连接'
-    ElMessage.error(errorMessage)
-    
-    // 添加错误消息到消息列表
-    messages.value.push({
+    const errorMessage = error.message || '消息发送失败，请检查网络连接'
+    messages.value[messageIndex] = {
       role: "system",
       text: `[系统错误] ${errorMessage}`,
       timestamp: new Date().toISOString(),
       isError: true
-    })
+    }
+    isLoading.value = false
+    ElMessage.error(errorMessage)
+  }
+}
+
+/**
+ * 处理文件上传
+ */
+const handleFileUpload = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  
+  isLoading.value = true
+  
+  try {
+    // 准备 FormData
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    // 使用当前会话 ID 或创建新会话
+    let sessionId = conversationId.value
+    if (!sessionId) {
+      const sessionResult = await sessionApi.createSession()
+      sessionId = sessionResult.data.session_id
+      conversationId.value = sessionId
+    }
+    
+    // 调用临时文件上传 API
+    const uploadResult = await sessionApi.uploadTemporaryFile(sessionId, formData)
+    
+    if (uploadResult.data.success) {
+      // 添加文件上传成功消息到聊天记录
+      const fileMessage = {
+        role: "system",
+        text: `📁 文件上传成功：${file.name}（${formatFileSize(file.size)}）\n预览：${uploadResult.data.data.content_preview}`,
+        timestamp: new Date().toISOString()
+      }
+      messages.value.push(fileMessage)
+      
+      ElMessage.success('文件上传成功')
+    } else {
+      ElMessage.error('文件上传失败：' + uploadResult.data.message)
+    }
+  } catch (error) {
+    console.error('上传文件失败:', error)
+    ElMessage.error('文件上传失败：' + (error.response?.data?.message || error.message))
   } finally {
     isLoading.value = false
+    // 清空文件输入
+    if (fileInputRef.value) {
+      fileInputRef.value.value = ''
+    }
   }
+}
+
+/**
+ * 格式化文件大小
+ */
+const formatFileSize = (bytes) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 // ==================== 生命周期 ====================
@@ -719,6 +825,34 @@ onMounted(() => {
 .input-container :deep(.el-button.is-disabled) {
   opacity: 0.6;
   transform: none;
+}
+
+/* 文件上传按钮样式 */
+.file-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-right: 8px;
+}
+
+.file-upload-btn:hover {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+  transform: translateY(-2px);
+}
+
+.file-upload-btn:active {
+  transform: translateY(0);
 }
 
 /* 底部信息 */

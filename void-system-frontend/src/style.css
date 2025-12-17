@@ -7,32 +7,39 @@
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   --font-family-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   
-  /* 核心颜色系统 - 蓝色科技风，符合金手指系统定位 */
-  --color-primary: #4361ee;
-  --color-primary-light: #4895ef;
-  --color-primary-dark: #3f37c9;
-  --color-secondary: #4cc9f0;
+  /* 核心颜色系统 - 高对比度配色，确保清晰可读 */
+  --color-primary: #6366f1;
+  --color-primary-light: #818cf8;
+  --color-primary-dark: #4f46e5;
+  --color-secondary: #06b6d4;
+  --color-secondary-light: #22d3ee;
+  --color-secondary-dark: #0891b2;
+  --color-accent: #ec4899;
+  --color-accent-light: #f472b6;
+  --color-accent-dark: #db2777;
   
-  /* 背景颜色 - 默认暗色主题，营造沉浸感 */
-  --color-bg-primary: #111827;
-  --color-bg-secondary: #1f2937;
-  --color-bg-tertiary: #374151;
+  /* 背景颜色 - 增强对比度 */
+  --color-bg-primary: #020617;
+  --color-bg-secondary: #0f172a;
+  --color-bg-tertiary: #1e293b;
+  --color-bg-card: #0f172a;
   
-  /* 文本颜色 */
-  --color-text-primary: #f3f4f6;
-  --color-text-secondary: #9ca3af;
-  --color-text-muted: #6b7280;
-  --color-text-light: #ffffff;
+  /* 文本颜色 - 极高对比度，确保可读性 */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #f1f5f9;
+  --color-text-muted: #cbd5e1;
+  --color-text-light: #f8fafc;
   
-  /* 状态颜色 - 游戏化反馈 */
-  --color-success: #4ade80;
-  --color-warning: #f59e0b;
+  /* 状态颜色 - 增强视觉区分，提高对比度 */
+  --color-success: #22c55e;
+  --color-warning: #eab308;
   --color-error: #ef4444;
-  --color-info: #60a5fa;
+  --color-info: #3b82f6;
   
-  /* 边框颜色 */
-  --color-border: #374151;
-  --color-border-light: #4b5563;
+  /* 边框颜色 - 提高对比度，确保清晰可见 */
+  --color-border: #475569;
+  --color-border-light: #64748b;
+  --color-border-card: rgba(71, 85, 105, 0.8);
   
   /* 间距系统 */
   --spacing-xs: 0.25rem;
@@ -101,10 +108,11 @@
 /* 基础样式 */
 html {
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 1.6;
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -112,53 +120,22 @@ body {
   color: var(--color-text-primary);
   background-color: var(--color-bg-primary);
   background-image: 
-    radial-gradient(circle at 25% 15%, rgba(67, 97, 238, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 75% 85%, rgba(76, 201, 240, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, rgba(67, 97, 238, 0.03) 0%, transparent 70%);
+    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%);
   background-attachment: fixed;
-  background-size: 100% 100%, 100% 100%, 100% 100%;
+  background-size: cover;
   position: relative;
-  transition: background-color var(--transition-normal), color var(--transition-normal);
   overflow-x: hidden;
-  opacity: 0; /* 用于系统加载动画 */
+  min-height: 100vh;
+  opacity: 1; /* 移除系统加载动画，避免影响内容显示 */
 }
 
-/* 动态背景粒子效果 */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-image: 
-    radial-gradient(2px 2px at 20% 30%, rgba(67, 97, 238, 0.3), transparent),
-    radial-gradient(2px 2px at 60% 70%, rgba(76, 201, 240, 0.3), transparent),
-    radial-gradient(1px 1px at 50% 50%, rgba(67, 97, 238, 0.2), transparent),
-    radial-gradient(1px 1px at 80% 10%, rgba(76, 201, 240, 0.2), transparent),
-    radial-gradient(2px 2px at 90% 60%, rgba(67, 97, 238, 0.25), transparent),
-    radial-gradient(1px 1px at 30% 80%, rgba(76, 201, 240, 0.25), transparent);
-  background-size: 200% 200%, 200% 200%, 300% 300%, 250% 250%, 180% 180%, 220% 220%;
-  background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%, 90% 60%, 30% 80%;
-  animation: particleMove 20s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.6;
-}
+/* 移除复杂的粒子背景效果 */
 
-@keyframes particleMove {
-  0%, 100% {
-    background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%, 90% 60%, 30% 80%;
-  }
-  50% {
-    background-position: 100% 100%, 0% 0%, 50% 50%, 20% 80%, 10% 40%, 70% 20%;
-  }
-}
-
-/* 系统初始化动画 */
+/* 系统初始化动画 - 简化版本 */
 body.system-loaded {
   opacity: 1;
-  transition: opacity var(--transition-slow);
+  transition: opacity var(--transition-normal);
 }
 
 /* 应用容器 */
@@ -224,152 +201,187 @@ a:hover {
   color: var(--color-primary-dark);
 }
 
-/* 表单元素 - 游戏化输入框 */
+/* 表单元素 - 高对比度清晰样式 */
 input, textarea, select {
   font-family: inherit;
   font-size: 1rem;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--color-text-primary);
-  background-color: var(--color-bg-tertiary);
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 0.625rem 0.75rem;
-  transition: all var(--transition-fast);
-  position: relative;
-  overflow: hidden;
+  padding: 0.75rem 1rem;
+  transition: all var(--transition-normal);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1), var(--shadow-glow);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 2px 8px rgba(99, 102, 241, 0.2);
+}
+
+input:hover:not(:focus), textarea:hover:not(:focus), select:hover:not(:focus) {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 input::placeholder, textarea::placeholder {
   color: var(--color-text-muted);
+  opacity: 0.8;
 }
 
-/* 输入框发光效果 */
-input:focus::after, textarea:focus::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  box-shadow: inset 0 0 20px rgba(67, 97, 238, 0.2);
-  pointer-events: none;
+input:focus::placeholder, textarea:focus::placeholder {
+  opacity: 0.6;
 }
 
-/* 按钮样式 - 游戏化按钮效果 */
+/* 文本域特殊样式 */
+textarea {
+  resize: vertical;
+  min-height: 120px;
+  font-family: var(--font-family-sans);
+}
+
+/* 选择框样式优化 */
+select {
+  appearance: none;
+  background-image: url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%2364748b%27 stroke-width=%272%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3e%3cpolyline points=%276 9 12 15 18 9%27%3e%3c/polyline%3e%3c/svg%3e');
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 1em;
+  padding-right: 2.5rem;
+  background-color: var(--color-bg-tertiary);
+}
+
+select:focus {
+  background-image: url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%236366f1%27 stroke-width=%272%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3e%3cpolyline points=%276 9 12 15 18 9%27%3e%3c/polyline%3e%3c/svg%3e');
+}
+
+/* 禁用状态样式 */
+input:disabled, textarea:disabled, select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+input:disabled:hover, textarea:disabled:hover, select:disabled:hover {
+  border-color: var(--color-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 按钮样式 - 高对比度清晰设计 */
 button {
   font-family: inherit;
   font-size: 1rem;
   font-weight: 500;
-  line-height: 1.5;
+  line-height: 1.6;
   border: none;
   border-radius: var(--radius-md);
-  padding: 0.625rem 1rem;
+  padding: 0.75rem 1.5rem;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all var(--transition-normal);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  position: relative;
-  overflow: hidden;
-}
-
-button::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left var(--transition-normal);
-}
-
-button:hover::before {
-  left: 100%;
+  text-transform: none;
+  letter-spacing: 0.025em;
+  border: 1px solid transparent;
 }
 
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
-/* 主按钮 - 金手指效果 */
+/* 主按钮 - 高对比度纯色设计 */
 button.primary {
-  background: linear-gradient(45deg, var(--color-primary), var(--color-primary-dark));
+  background: var(--color-primary);
   color: white;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 button.primary:hover:not(:disabled) {
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  background: var(--color-primary-dark);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
   transform: translateY(-1px);
 }
 
 button.primary:active:not(:disabled) {
   transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 }
 
-/* 次要按钮 */
+/* 次要按钮 - 清晰边框设计 */
 button.secondary {
-  background-color: var(--color-bg-tertiary);
+  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
-  border: 1px solid var(--color-border-light);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 button.secondary:hover:not(:disabled) {
-  background-color: var(--color-border-light);
-  box-shadow: var(--shadow-sm);
+  background: var(--color-bg-secondary);
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
 }
 
-/* 文本按钮 */
+button.secondary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 文本按钮 - 清晰高对比度 */
 button.text {
   background-color: transparent;
   color: var(--color-primary);
-  padding: 0.25rem 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
 }
 
 button.text:hover:not(:disabled) {
-  background-color: rgba(67, 97, 238, 0.1);
+  background-color: rgba(99, 102, 241, 0.15);
+  color: var(--color-primary-light);
+  transform: translateY(-1px);
 }
 
-/* 卡片组件 - 游戏化卡片效果 */
+button.text:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* 强调按钮 - 高对比度纯色设计 */
+button.accent {
+  background: var(--color-accent);
+  color: white;
+  box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);
+}
+
+button.accent:hover:not(:disabled) {
+  background: var(--color-accent-dark);
+  box-shadow: 0 4px 16px rgba(236, 72, 153, 0.4);
+  transform: translateY(-1px);
+}
+
+/* 卡片组件 - 高对比度清晰设计 */
 .card {
-  background-color: var(--color-bg-secondary);
+  background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   padding: var(--spacing-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all var(--transition-normal);
-  position: relative;
-  overflow: hidden;
-}
-
-.card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
-  opacity: 0;
-  transition: opacity var(--transition-normal);
 }
 
 .card:hover {
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(99, 102, 241, 0.2);
+  border-color: var(--color-primary);
   transform: translateY(-2px);
-}
-
-.card:hover::before {
-  opacity: 1;
 }
 
 /* 金手指系统特色样式 */
@@ -381,55 +393,28 @@ button.text:hover:not(:disabled) {
   box-shadow: var(--shadow-glow-strong);
 }
 
-/* 属性卡片样式 - 增强游戏化效果 */
+/* 属性卡片样式 - 简化版本 */
 .attribute-card {
   padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.8), 
-    rgba(55, 65, 81, 0.6)
-  );
-  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
   border-top: 2px solid var(--color-primary);
-  transition: all var(--transition-normal);
+  transition: all var(--transition-fast);
   position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(10px);
-}
-
-.attribute-card::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(circle, rgba(67, 97, 238, 0.1) 0%, transparent 70%);
-  opacity: 0;
-  transition: opacity var(--transition-normal);
 }
 
 .attribute-card:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 
-    0 10px 30px rgba(0, 0, 0, 0.3),
-    0 0 20px rgba(67, 97, 238, 0.3),
-    inset 0 0 20px rgba(67, 97, 238, 0.1);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
   border-color: var(--color-primary);
-}
-
-.attribute-card:hover::before {
-  opacity: 1;
 }
 
 .attribute-value {
   font-size: 2rem;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--color-primary-light), var(--color-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: 0 0 20px rgba(67, 97, 238, 0.5);
+  color: var(--color-primary-light);
+  text-shadow: 0 0 10px rgba(67, 97, 238, 0.3);
   position: relative;
   display: inline-block;
 }
@@ -445,20 +430,16 @@ button.text:hover:not(:disabled) {
   opacity: 0.6;
 }
 
-/* 任务卡片样式 - 增强游戏化效果 */
+/* 任务卡片样式 - 简化版本 */
 .task-card {
   position: relative;
   padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.9), 
-    rgba(55, 65, 81, 0.7)
-  );
+  background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-left: 4px solid var(--color-primary);
-  transition: all var(--transition-normal);
+  transition: all var(--transition-fast);
   overflow: hidden;
-  backdrop-filter: blur(10px);
 }
 
 .task-card::before {
@@ -468,18 +449,7 @@ button.text:hover:not(:disabled) {
   left: 0;
   width: 4px;
   height: 100%;
-  background: linear-gradient(to bottom, 
-    var(--color-primary), 
-    var(--color-secondary),
-    var(--color-primary)
-  );
-  background-size: 100% 200%;
-  animation: taskBorderGlow 3s ease-in-out infinite;
-}
-
-@keyframes taskBorderGlow {
-  0%, 100% { background-position: 0% 0%; }
-  50% { background-position: 0% 100%; }
+  background: var(--color-primary);
 }
 
 .task-card::after {
@@ -487,19 +457,17 @@ button.text:hover:not(:disabled) {
   position: absolute;
   top: 0;
   right: 0;
-  width: 100px;
-  height: 100px;
-  background: radial-gradient(circle, rgba(67, 97, 238, 0.1) 0%, transparent 70%);
+  width: 80px;
+  height: 80px;
+  background: radial-gradient(circle, rgba(67, 97, 238, 0.05) 0%, transparent 70%);
   opacity: 0;
-  transition: opacity var(--transition-normal);
+  transition: opacity var(--transition-fast);
 }
 
 .task-card:hover {
-  box-shadow: 
-    0 10px 30px rgba(0, 0, 0, 0.3),
-    0 0 20px rgba(67, 97, 238, 0.3);
-  transform: translateY(-4px) scale(1.01);
-  border-color: var(--color-primary-light);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  border-color: var(--color-primary);
 }
 
 .task-card:hover::after {
@@ -513,7 +481,7 @@ button.text:hover:not(:disabled) {
 
 .task-card[data-status="in_progress"] {
   border-left-color: var(--color-warning);
-  animation: pulseGlow 2s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.2); /* 简化的发光效果 */
 }
 
 .task-card[data-status="pending"] {
@@ -618,7 +586,7 @@ button.text:hover:not(:disabled) {
   .lg\:grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
 }
 
-/* 滚动条样式 - 美化滚动条 */
+/* 滚动条样式 - 简化版本 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -632,7 +600,6 @@ button.text:hover:not(:disabled) {
 ::-webkit-scrollbar-thumb {
   background-color: var(--color-border-light);
   border-radius: var(--radius-full);
-  transition: background-color var(--transition-fast);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -643,7 +610,7 @@ button.text:hover:not(:disabled) {
   background-color: var(--color-bg-secondary);
 }
 
-/* 加载动画 - 增强版 */
+/* 简化的加载动画 */
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -652,57 +619,6 @@ button.text:hover:not(:disabled) {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
-}
-
-@keyframes glow {
-  0%, 100% { box-shadow: 0 0 10px rgba(67, 97, 238, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(67, 97, 238, 0.5); }
-}
-
-@keyframes borderGlow {
-  0% { background-position: 0% 0%; }
-  100% { background-position: 200% 0%; }
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-}
-
-@keyframes shimmer {
-  0% { background-position: -1000px 0; }
-  100% { background-position: 1000px 0; }
-}
-
-@keyframes pulseGlow {
-  0%, 100% { 
-    box-shadow: 0 0 10px rgba(67, 97, 238, 0.3),
-                0 0 20px rgba(67, 97, 238, 0.2),
-                0 0 30px rgba(67, 97, 238, 0.1);
-  }
-  50% { 
-    box-shadow: 0 0 20px rgba(67, 97, 238, 0.5),
-                0 0 40px rgba(67, 97, 238, 0.3),
-                0 0 60px rgba(67, 97, 238, 0.2);
-  }
-}
-
-@keyframes progressShine {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-@keyframes attributeGain {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.2); box-shadow: var(--shadow-glow-strong); }
-  100% { transform: scale(1); box-shadow: none; }
-}
-
-@keyframes levelUp {
-  0% { transform: scale(1); }
-  30% { transform: scale(1.15); color: var(--color-primary); text-shadow: 0 0 20px rgba(67, 97, 238, 0.8); }
-  70% { transform: scale(1.1); color: var(--color-primary); text-shadow: 0 0 15px rgba(67, 97, 238, 0.6); }
-  100% { transform: scale(1); color: var(--color-text-primary); }
 }
 
 .loading {
@@ -715,9 +631,9 @@ button.text:hover:not(:disabled) {
   animation: spin 1s linear infinite;
 }
 
-/* 淡入动画 */
+/* 淡入动画 - 简化版本 */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -725,60 +641,31 @@ button.text:hover:not(:disabled) {
   animation: fadeIn var(--transition-normal);
 }
 
-/* 进度条样式 - 增强游戏化视觉反馈 */
+/* 进度条样式 - 简化版本 */
 .progress-container {
   height: 12px;
-  background: linear-gradient(90deg, 
-    rgba(55, 65, 81, 0.5), 
-    rgba(31, 41, 55, 0.5)
-  );
+  background: var(--color-bg-tertiary);
   border-radius: var(--radius-full);
   overflow: hidden;
   position: relative;
   margin: var(--spacing-sm) 0;
-  border: 1px solid rgba(67, 97, 238, 0.2);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--color-border);
 }
 
 .progress-bar {
   height: 100%;
   background: linear-gradient(90deg, 
     var(--color-primary-light), 
-    var(--color-primary),
-    var(--color-secondary)
+    var(--color-primary)
   );
-  background-size: 200% 100%;
   border-radius: var(--radius-full);
   transition: width var(--transition-normal);
   position: relative;
   overflow: hidden;
-  box-shadow: 
-    0 0 10px rgba(67, 97, 238, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-  animation: progressGradient 3s ease-in-out infinite;
-}
-
-@keyframes progressGradient {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  box-shadow: 0 0 8px rgba(67, 97, 238, 0.3);
 }
 
 .progress-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(90deg, 
-    transparent,
-    rgba(255, 255, 255, 0.3),
-    transparent
-  );
-  animation: progressShine 2s ease-in-out infinite;
-}
-
-.progress-bar::after {
   content: '';
   position: absolute;
   top: 0;
@@ -787,13 +674,18 @@ button.text:hover:not(:disabled) {
   height: 100%;
   background: linear-gradient(90deg, 
     transparent,
-    rgba(255, 255, 255, 0.4),
+    rgba(255, 255, 255, 0.3),
     transparent
   );
   animation: progressShine 2s ease-in-out infinite;
 }
 
-/* 游戏化边框样式 */
+@keyframes progressShine {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* 简化的边框样式 */
 .game-border {
   position: relative;
   border: 1px solid var(--color-border-light);
@@ -813,73 +705,40 @@ button.text:hover:not(:disabled) {
   background: linear-gradient(90deg, 
     transparent, 
     var(--color-primary), 
-    var(--color-secondary), 
-    var(--color-primary), 
     transparent
   );
-  animation: borderGlow 5s linear infinite;
 }
 
-/* 特效类 */
-.attribute-gain {
-  animation: attributeGain 0.6s ease-out;
-}
+/* 移除不必要的特效类 */
 
-.level-up {
-  animation: levelUp 0.8s ease-out;
-}
-
-.glow-text {
-  text-shadow: 0 0 10px rgba(67, 97, 238, 0.5);
-}
-
-/* 游戏化数字显示 */
-.stat-value {
-  font-size: 2.5rem;
-  font-weight: 700;
-  background: linear-gradient(135deg, var(--color-primary-light), var(--color-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: 0 0 30px rgba(67, 97, 238, 0.5);
-  animation: float 3s ease-in-out infinite;
-}
-
-/* 系统币显示 */
+/* 简化的系统币显示 */
 .system-coins {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: linear-gradient(135deg, 
-    rgba(67, 97, 238, 0.1), 
-    rgba(76, 201, 240, 0.1)
-  );
-  border: 1px solid rgba(67, 97, 238, 0.3);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: rgba(31, 41, 55, 0.6);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
-  box-shadow: 0 0 15px rgba(67, 97, 238, 0.2);
-  transition: all var(--transition-normal);
+  transition: all var(--transition-fast);
 }
 
 .system-coins:hover {
-  box-shadow: 0 0 25px rgba(67, 97, 238, 0.4);
-  transform: scale(1.05);
+  box-shadow: var(--shadow-md);
 }
 
 .coin-icon {
   font-size: 1.5rem;
-  animation: float 2s ease-in-out infinite;
-  filter: drop-shadow(0 0 5px rgba(255, 215, 0, 0.5));
+  filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.3));
 }
 
 .coin-count {
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--color-warning);
-  text-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
 }
 
-/* 状态指示器 */
+/* 简化的状态指示器 */
 .status-indicator {
   display: flex;
   align-items: center;
@@ -895,34 +754,26 @@ button.text:hover:not(:disabled) {
   height: 8px;
   border-radius: 50%;
   background: var(--color-text-muted);
-  box-shadow: 0 0 8px currentColor;
-  animation: pulse 2s ease-in-out infinite;
 }
 
 .status-dot.online {
   background: var(--color-success);
-  color: var(--color-success);
-  animation: pulseGlow 2s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
 }
 
 .status-dot.loading {
   background: var(--color-warning);
-  color: var(--color-warning);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
 
-/* 卡片统计 */
+/* 简化的统计卡片 */
 .stat-card {
   padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.8), 
-    rgba(55, 65, 81, 0.6)
-  );
+  background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  transition: all var(--transition-normal);
+  transition: all var(--transition-fast);
   position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(10px);
 }
 
 .stat-card::before {
@@ -931,21 +782,19 @@ button.text:hover:not(:disabled) {
   top: 0;
   left: 0;
   width: 100%;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(90deg, 
     transparent, 
     var(--color-primary), 
     transparent
   );
   opacity: 0;
-  transition: opacity var(--transition-normal);
+  transition: opacity var(--transition-fast);
 }
 
 .stat-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 
-    0 10px 30px rgba(0, 0, 0, 0.3),
-    0 0 20px rgba(67, 97, 238, 0.3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .stat-card:hover::before {
@@ -954,35 +803,127 @@ button.text:hover:not(:disabled) {
 
 .stat-icon {
   font-size: 2.5rem;
-  filter: drop-shadow(0 0 10px rgba(67, 97, 238, 0.5));
-  animation: float 3s ease-in-out infinite;
+  filter: drop-shadow(0 0 10px rgba(67, 97, 238, 0.3));
 }
 
-/* Element Plus 样式覆盖 */
-.el-button {
-  transition: all var(--transition-fast);
-}
-
-.el-button--primary {
-  background: linear-gradient(45deg, var(--color-primary), var(--color-primary-dark));
-  border: none;
-}
-
-.el-button--primary:hover:not(:disabled) {
-  background: linear-gradient(45deg, var(--color-primary-dark), var(--color-primary));
-  box-shadow: var(--shadow-glow);
-}
-
+/* Element Plus 样式覆盖 - 高对比度清晰设计 */
 .el-input__wrapper {
-  background-color: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-tertiary) !important;
+  border: 1px solid var(--color-border) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
 }
 
 .el-input__wrapper.is-focused {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 2px 8px rgba(99, 102, 241, 0.2) !important;
 }
 
 .el-input__inner {
-  color: var(--color-text-primary);
+  color: var(--color-text-primary) !important;
+  background-color: var(--color-bg-tertiary) !important;
+}
+
+.el-input__placeholder {
+  color: var(--color-text-muted) !important;
+  opacity: 0.8 !important;
+}
+
+/* 高对比度按钮样式 */
+.el-button--primary {
+  background: var(--color-primary) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3) !important;
+  color: white !important;
+}
+
+.el-button--primary:hover:not(:disabled) {
+  background: var(--color-primary-dark) !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* 次要按钮样式 */
+.el-button--default {
+  background: var(--color-bg-tertiary) !important;
+  border: 1px solid var(--color-border) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.el-button--default:hover:not(:disabled) {
+  background: var(--color-bg-secondary) !important;
+  border-color: var(--color-primary) !important;
+}
+
+/* 卡片样式 */
+.el-card {
+  background: var(--color-bg-card) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.el-card__header {
+  border-bottom: 1px solid var(--color-border) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.el-card__body {
+  color: var(--color-text-secondary) !important;
+}
+
+/* 表格样式 */
+.el-table {
+  background: var(--color-bg-card) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.el-table__header-wrapper th {
+  background: var(--color-bg-tertiary) !important;
+  color: var(--color-text-primary) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+.el-table__body-wrapper tr {
+  background: var(--color-bg-card) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+.el-table__body-wrapper tr:hover {
+  background: var(--color-bg-tertiary) !important;
+}
+
+.el-table__body-wrapper td {
+  color: var(--color-text-secondary) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+/* 弹窗样式 */
+.el-dialog {
+  background: var(--color-bg-card) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid var(--color-border) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.el-dialog__body {
+  color: var(--color-text-secondary) !important;
+}
+
+/* 菜单样式 */
+.el-menu {
+  background: var(--color-bg-secondary) !important;
+  border-right: 1px solid var(--color-border) !important;
+}
+
+.el-menu-item {
+  color: var(--color-text-secondary) !important;
+}
+
+.el-menu-item:hover,
+.el-menu-item.is-active {
+  background: var(--color-bg-tertiary) !important;
+  color: var(--color-primary) !important;
 }

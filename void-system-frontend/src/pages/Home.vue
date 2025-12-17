@@ -342,9 +342,9 @@ const proofContent = ref('')
 const loadUserData = async () => {
   try {
     // 获取用户信息（包括余额）
-    const profile = await api.get('/user/profile')
-    if (profile.data) {
-      systemData.coins = profile.data.balance || 0
+    const profile = await api.get('/api/user/profile')
+    if (profile.data.data) {
+      systemData.coins = profile.data.data.balance || 0
     }
     
     // 并行加载数据
@@ -364,8 +364,8 @@ const loadUserData = async () => {
  */
 const loadShopItems = async () => {
   try {
-    const response = await api.get('/shop/items')
-    shopItems.value = response.data
+    const response = await api.get('/api/shop/items')
+    shopItems.value = response.data.data || []
   } catch (error) {
     console.error('加载商店商品失败:', error)
     ElMessage.error('加载商店商品失败')
@@ -385,8 +385,9 @@ const loadShopItems = async () => {
  */
   const loadAttributes = async () => {
     try {
-      const response = await api.get('/attributes')
-      attributes.value = response.data
+      const response = await api.get('/api/attributes')
+      // 确保attributes.value始终是数组
+      attributes.value = Array.isArray(response.data?.data) ? response.data.data : []
     
     // 计算总属性点数
     systemData.attributePoints = attributes.value.reduce(
@@ -396,6 +397,9 @@ const loadShopItems = async () => {
     } catch (error) {
       console.error('加载属性失败:', error)
       ElMessage.error('加载属性失败')
+      // API 调用失败时设置默认值
+      attributes.value = []
+      systemData.attributePoints = 0
     }
   }
 
@@ -404,8 +408,9 @@ const loadShopItems = async () => {
  */
 const loadTasks = async () => {
   try {
-    const response = await api.get('/tasks')
-    tasks.value = response.data
+    const response = await api.get('/api/tasks')
+    // 确保tasks.value始终是数组，正确访问后端返回的数据结构
+    tasks.value = Array.isArray(response.data?.data?.tasks) ? response.data.data.tasks : []
     
     // 更新任务统计
     systemData.taskCompleted = tasks.value.filter(t => t.status === 'completed').length
@@ -413,6 +418,10 @@ const loadTasks = async () => {
   } catch (error) {
     console.error('加载任务失败:', error)
     ElMessage.error('加载任务失败')
+    // API 调用失败时设置默认值
+    tasks.value = []
+    systemData.taskCompleted = 0
+    systemData.taskInProgress = 0
   }
 }
 
@@ -426,7 +435,7 @@ const addAttribute = async () => {
   }
   
   try {
-    const response = await api.post('/attributes', {
+    const response = await api.post('/api/attributes', {
       attr_name: newAttribute.name,
       max_value: 100,
       description: newAttribute.description
@@ -463,7 +472,7 @@ const addTask = async () => {
       [attributes.value.find(a => a.attr_name === newTask.attributeName)?.attr_id]: 1
     } : {}
     
-    const response = await api.post('/tasks', {
+    const response = await api.post('/api/tasks', {
       task_name: newTask.title,
       description: '',
       related_attrs: relatedAttrs,
@@ -504,7 +513,7 @@ const purchaseItem = async (index) => {
   }
   
   try {
-    await api.post(`/shop/purchase/${item.item_id || item.id}`)
+    await api.post(`/api/shop/purchase/${item.item_id || item.id}`)
     
     // 重新加载用户数据以更新余额
     await loadUserData()
@@ -522,7 +531,7 @@ const purchaseItem = async (index) => {
  */
 const startTask = async (taskId) => {
   try {
-    await api.put(`/tasks/${taskId}/status?status=in_progress`)
+    await api.put(`/api/tasks/${taskId}/status?status=in_progress`)
     await loadTasks()
     ElMessage.success('任务已开始')
   } catch (error) {
@@ -554,7 +563,7 @@ const submitTaskProof = async () => {
   }
   
   try {
-    await api.post(`/tasks/${currentTaskForProof.value.task_id}/proof`, {
+    await api.post(`/api/tasks/${currentTaskForProof.value.task_id}/proof`, {
       proof_data: {
         content: proofContent.value.trim(),
         timestamp: new Date().toISOString()
@@ -590,7 +599,7 @@ const completeTask = async (taskId) => {
       openProofDialog(taskId)
       } else {
         // 简单任务直接完成
-      await api.put(`/tasks/${taskId}/status?status=completed`)
+      await api.put(`/api/tasks/${taskId}/status?status=completed`)
         await loadTasks()
       await loadUserData()  // 重新加载用户数据以更新余额
         ElMessage.success('任务完成！获得奖励')
