@@ -242,24 +242,24 @@ export default {
     /**
      * 删除文件
      */
-    async deleteFile(fileId) {
-      this.deletingFiles.push(fileId);
+    async deleteFile(file_id) {
+      this.deletingFiles.push(file_id);
       
       try {
         const { sessionApi } = await import('../api/session');
-        const response = await sessionApi.deleteTemporaryFile(fileId);
+        const response = await sessionApi.deleteTemporaryFile(file_id);
         
         if (response.data.success) {
           this.$message.success('文件删除成功');
           // 从列表中移除
-          this.uploadedFiles = this.uploadedFiles.filter(file => file.file_id !== fileId);
+          this.uploadedFiles = this.uploadedFiles.filter(file => file.file_id !== file_id);
         } else {
           this.$message.error('文件删除失败：' + response.data.message);
         }
       } catch (error) {
         this.$message.error('文件删除失败：' + (error.response?.data?.message || error.message));
       } finally {
-        this.deletingFiles = this.deletingFiles.filter(id => id !== fileId);
+        this.deletingFiles = this.deletingFiles.filter(id => id !== file_id);
       }
     },
     

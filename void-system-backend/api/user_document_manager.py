@@ -223,32 +223,65 @@ class UserDocumentManager:
             删除结果
         """
         try:
-            # 获取文档信息
-            document = self.db.get_user_document(user_id, doc_id)
-            if not document:
+            # 1. 首先检查文档是否存在，使用轻量级的存在检查
+            if not self.db.check_document_exists(doc_id, user_id):
                 return {
                     "success": False,
                     "message": "文档不存在或无权访问",
                     "error_code": "DOCUMENT_NOT_FOUND"
                 }
-
-            # 删除物理文件
-            storage_path = Path(document["storage_path"])
-            if storage_path.exists():
-                storage_path.unlink()
-
-            # 删除数据库记录
-            success = self.db.delete_user_document(doc_id, user_id)
-
-            if success:
+            
+            # 2. 获取文档信息，用于后续操作
+            document = self.db.get_user_document(user_id, doc_id)
+            storage_path = None
+            chroma_ids = []
+            
+            if document:
+                # 记录存储路径用于删除物理文件
+                storage_path = Path(document["storage_path"])
+                # 记录chroma_ids用于删除向量索引
+                chroma_ids = document.get("chroma_ids", [])
+            
+            # 3. 删除向量索引（忽略错误，确保流程继续）
+            try:
+                from .user_vector_manager import vector_manager
+                vector_manager.delete_document_vectors(user_id, doc_id)
+            except Exception as e:
+                logger.warning(f"删除向量索引失败，但继续执行文档删除: {str(e)}")
+            
+            # 4. 执行数据库删除操作
+            db_success = self.db.delete_user_document(doc_id, user_id)
+            
+            # 5. 删除物理文件（仅当数据库删除成功且文件存在时）
+            file_deleted = False
+            if db_success and storage_path and storage_path.exists():
+                try:
+                    storage_path.unlink()
+                    file_deleted = True
+                except Exception as e:
+                    logger.error(f"删除物理文件失败: {str(e)}")
+                    # 物理文件删除失败不影响整体删除结果
+            
+            # 6. 返回删除结果
+            if db_success:
                 return {
                     "success": True,
-                    "message": "文档删除成功"
+                    "message": "文档删除成功",
+                    "data": {
+                        "file_deleted": file_deleted
+                    }
                 }
             else:
+                # 数据库删除失败，检查文档是否真的不存在
+                if not self.db.check_document_exists(doc_id, user_id):
+                    return {
+                        "success": False,
+                        "message": "文档不存在或无权访问",
+                        "error_code": "DOCUMENT_NOT_FOUND"
+                    }
                 return {
                     "success": False,
-                    "message": "文档删除失败"
+                    "message": "数据库删除失败"
                 }
         except Exception as e:
             logger.error(f"删除文档失败: {str(e)}")
@@ -373,8 +406,19 @@ class UserDocumentManager:
             # 暂时使用状态更新
             self.db.update_user_document_status(doc_id, "parsed")
 
-            # 3. 创建向量嵌入（后续实现）
-            # 这里会调用向量管理器来处理向量化
+            # 3. 创建向量嵌入
+            from .user_vector_manager import vector_manager
+            await vector_manager.process_and_store_document(
+                user_id=user_id,
+                doc_id=doc_id,
+                content=content,
+                metadata={
+                    "file_name": file_name,
+                    "title": self.db.get_user_document(user_id, doc_id).get("title", file_name),
+                    "created_at": datetime.now().isoformat(),
+                    "file_type": file_name.split('.')[-1].lower() if '.' in file_name else 'unknown'
+                }
+            )
 
             logger.info(f"文档 {doc_id} 处理完成")
 

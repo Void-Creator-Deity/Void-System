@@ -99,6 +99,55 @@
             </div>
           </div>
         </template>
+        
+        <!-- 向量搜索 -->
+        <div class="vector-search-section">
+          <el-input
+            v-model="vectorSearchQuery"
+            placeholder="通过内容搜索文档..."
+            clearable
+            @keyup.enter="performVectorSearch"
+          >
+            <template #append>
+              <el-button @click="performVectorSearch">
+                <el-icon><Search /></el-icon>
+                搜索
+              </el-button>
+            </template>
+          </el-input>
+        </div>
+        
+        <!-- 向量搜索结果 -->
+        <div v-if="vectorSearchResults.length > 0" class="search-results-section">
+          <h3>搜索结果 ({{ vectorSearchResults.length }})</h3>
+          <div class="search-results-grid">
+            <el-card
+              v-for="result in vectorSearchResults"
+              :key="result.doc_id + '_' + Math.random()"
+              class="search-result-card"
+            >
+              <template #header>
+                <div class="result-header">
+                  <span class="result-score">匹配度: {{ (result.score * 100).toFixed(1) }}%</span>
+                </div>
+              </template>
+              <div class="result-content">
+                <p class="result-text">{{ result.content }}</p>
+                <p class="result-metadata" v-if="result.metadata">
+                  <span>文档ID: {{ result.doc_id }}</span>
+                  <span v-if="result.metadata.created_at">创建时间: {{ formatDate(result.metadata.created_at) }}</span>
+                </p>
+              </div>
+            </el-card>
+          </div>
+        </div>
+        
+        <!-- 无搜索结果提示 -->
+        <div v-else-if="vectorSearchQuery && !vectorSearchLoading" class="empty-search-results">
+          <el-empty description="未找到匹配的文档" :image-size="120">
+            <el-button type="primary" @click="vectorSearchQuery = ''">清空搜索</el-button>
+          </el-empty>
+        </div>
 
         <!-- 统计信息 -->
         <div class="stats-bar" v-if="stats">
@@ -384,6 +433,11 @@ const selectedDocForQA = ref(null)
 const qaQuestion = ref('')
 const qaMessages = ref([])
 const asking = ref(false)
+
+// 向量搜索相关
+const vectorSearchQuery = ref('')
+const vectorSearchResults = ref([])
+const vectorSearchLoading = ref(false)
 
 // 文件类型图标映射
 const getFileIcon = (fileType) => {
@@ -740,6 +794,33 @@ const deleteDocument = async (doc) => {
     if (error !== 'cancel') {
       ElMessage.error('删除失败：' + (error.response?.data?.message || error.message))
     }
+  }
+}
+
+// 向量搜索功能
+const performVectorSearch = async () => {
+  if (!vectorSearchQuery.value.trim()) {
+    ElMessage.warning('请输入搜索关键词')
+    return
+  }
+
+  vectorSearchLoading.value = true
+  try {
+    const response = await axios.post('/api/vector/search', {
+      query: vectorSearchQuery.value.trim()
+    })
+
+    if (response.data.success) {
+      vectorSearchResults.value = response.data.data.results || []
+    } else {
+      ElMessage.error(response.data.message || '搜索失败')
+      vectorSearchResults.value = []
+    }
+  } catch (error) {
+    ElMessage.error('搜索失败：' + (error.response?.data?.message || error.message))
+    vectorSearchResults.value = []
+  } finally {
+    vectorSearchLoading.value = false
   }
 }
 

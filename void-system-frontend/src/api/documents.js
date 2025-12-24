@@ -50,12 +50,12 @@ class DocumentAPI {
 
   /**
    * 获取单个文档详情
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @returns {Promise} 文档详情
    */
-  async getDocument(docId) {
+  async getDocument(doc_id) {
     try {
-      const response = await axios.get(`/api/user/documents/${docId}`)
+      const response = await axios.get(`/api/user/documents/${doc_id}`)
       return response.data
     } catch (error) {
       console.error('获取文档详情失败:', error)
@@ -65,15 +65,15 @@ class DocumentAPI {
 
   /**
    * 更新文档信息
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @param {Object} data - 更新数据
    * @param {string} data.title - 文档标题
    * @param {Array} data.tags - 标签数组
    * @returns {Promise} 更新结果
    */
-  async updateDocument(docId, data) {
+  async updateDocument(doc_id, data) {
     try {
-      const response = await axios.put(`/api/user/documents/${docId}`, data)
+      const response = await axios.put(`/api/user/documents/${doc_id}`, data)
       return response.data
     } catch (error) {
       console.error('更新文档失败:', error)
@@ -83,12 +83,12 @@ class DocumentAPI {
 
   /**
    * 删除文档
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @returns {Promise} 删除结果
    */
-  async deleteDocument(docId) {
+  async deleteDocument(doc_id) {
     try {
-      const response = await axios.delete(`/api/user/documents/${docId}`)
+      const response = await axios.delete(`/api/user/documents/${doc_id}`)
       return response.data
     } catch (error) {
       console.error('删除文档失败:', error)

@@ -51,19 +51,19 @@ export const sessionApi = {
 
   /**
    * 获取临时文件内容
-   * @param {string} fileId - 文件ID
+   * @param {string} file_id - 文件ID
    * @returns {Promise}
    */
-  getTemporaryFileContent(fileId) {
-    return api.get(`/api/session/files/${fileId}`)
+  getTemporaryFileContent(file_id) {
+    return api.get(`/api/session/files/${file_id}`)
   },
 
   /**
    * 删除临时文件
-   * @param {string} fileId - 文件ID
+   * @param {string} file_id - 文件ID
    * @returns {Promise}
    */
-  deleteTemporaryFile(fileId) {
-    return api.delete(`/api/session/files/${fileId}`)
+  deleteTemporaryFile(file_id) {
+    return api.delete(`/api/session/files/${file_id}`)
   }
 }

@@ -60,6 +60,10 @@
         <div v-for="(attr, index) in attributes" :key="index" class="attribute-card">
           <div class="attribute-header">
             <h4 class="attribute-name">{{ attr.attr_name }}</h4>
+            <div class="attribute-actions">
+              <el-button size="small" @click="editAttribute(attr)">编辑</el-button>
+              <el-button size="small" type="danger" @click="deleteAttribute(attr.attr_id)">删除</el-button>
+            </div>
             <div class="attribute-level">Lv.{{ Math.floor(attr.attr_value / 10) }}</div>
           </div>
           
@@ -150,6 +154,8 @@
               <template v-if="task.status === 'failed'">
                 <el-tag type="danger">未通过</el-tag>
               </template>
+              <el-button size="small" @click="viewTaskDetail(task.task_id)">查看详情</el-button>
+              <el-button size="small" type="danger" @click="deleteTask(task.task_id)">删除</el-button>
             </div>
           </div>
         </div>
@@ -196,6 +202,59 @@
       </div>
     </div>
     
+    <!-- 系统币统计 -->
+    <div class="coins-section">
+      <div class="section-header">
+        <h3>💰 系统币统计</h3>
+      </div>
+      
+      <div class="coins-overview">
+        <div class="stat-card">
+          <div class="stat-icon">📊</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ coinStats?.total_coins || 0 }}</div>
+            <div class="stat-label">总获取</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">💸</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ coinStats?.total_spent || 0 }}</div>
+            <div class="stat-label">总支出</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📈</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ coinStats?.daily_average || 0 }}</div>
+            <div class="stat-label">日均获取</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🏆</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ coinStats?.highest_balance || 0 }}</div>
+            <div class="stat-label">历史最高</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 系统币历史记录 -->
+      <div class="coins-history">
+        <h4>📋 近期收支记录</h4>
+        <el-table v-if="coinHistory.length > 0" :data="coinHistory.slice(0, 5)" style="width: 100%">
+          <el-table-column prop="transaction_type" label="类型" width="100"></el-table-column>
+          <el-table-column prop="amount" label="金额" width="100"></el-table-column>
+          <el-table-column prop="description" label="描述"></el-table-column>
+          <el-table-column prop="created_at" label="时间" width="180"></el-table-column>
+        </el-table>
+        <div v-else class="empty-history">
+          <div class="empty-icon">📝</div>
+          <p>暂无收支记录</p>
+        </div>
+      </div>
+    </div>
+    
     <!-- 添加属性对话框 -->
     <el-dialog v-model="showAddAttributeDialog" title="添加新属性" width="500px">
       <el-form :model="newAttribute" label-width="80px">
@@ -212,6 +271,81 @@
       <template #footer>
         <el-button @click="showAddAttributeDialog = false">取消</el-button>
         <el-button type="primary" @click="addAttribute">添加</el-button>
+      </template>
+    </el-dialog>
+    
+    <!-- 编辑属性对话框 -->
+    <el-dialog v-model="showEditAttributeDialog" title="编辑属性" width="500px">
+      <el-form :model="editingAttribute" label-width="80px">
+        <el-form-item label="属性名称">
+          <el-input v-model="editingAttribute.attr_name" placeholder="例如：高数熟练度"></el-input>
+        </el-form-item>
+        <el-form-item label="当前值">
+          <el-slider v-model="editingAttribute.attr_value" :min="0" :max="editingAttribute.max_value" :step="1"></el-slider>
+        </el-form-item>
+        <el-form-item label="最大值">
+          <el-input-number v-model="editingAttribute.max_value" :min="10" :max="1000"></el-input-number>
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editingAttribute.description" type="textarea" placeholder="简要描述此属性"></el-input>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditAttributeDialog = false">取消</el-button>
+        <el-button type="primary" @click="updateAttribute">保存</el-button>
+      </template>
+    </el-dialog>
+    
+    <!-- 任务详情对话框 -->
+    <el-dialog v-model="showTaskDetailDialog" title="任务详情" width="600px">
+      <div v-if="currentTask" class="task-detail">
+        <h4>{{ currentTask.task_name }}</h4>
+        <div class="detail-section">
+          <div class="detail-item">
+            <span class="detail-label">状态：</span>
+            <el-tag :type="getTaskStatusType(currentTask.status)">{{ getTaskStatusText(currentTask.status) }}</el-tag>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">优先级：</span>
+            <span :class="'priority-' + currentTask.priority">{{ getPriorityText(currentTask.priority) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">预计时长：</span>
+            <span>{{ currentTask.estimated_time || '未设置' }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">关联属性：</span>
+            <span>{{ currentTask.related_attrs || '未关联' }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">系统币奖励：</span>
+            <span>+{{ currentTask.reward_coins || 0 }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">属性点数奖励：</span>
+            <span>+{{ currentTask.attribute_points || 0 }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">创建时间：</span>
+            <span>{{ formatDate(currentTask.created_at) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">更新时间：</span>
+            <span>{{ formatDate(currentTask.updated_at) }}</span>
+          </div>
+          <div class="detail-item description">
+            <span class="detail-label">描述：</span>
+            <span>{{ currentTask.description || '暂无描述' }}</span>
+          </div>
+        </div>
+        <div v-if="currentTask.proof_data" class="proof-section">
+          <h5>任务证明：</h5>
+          <div class="proof-content">{{ currentTask.proof_data.content }}</div>
+          <div class="proof-time">{{ formatDate(currentTask.proof_data.timestamp) }}</div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showTaskDetailDialog = false">关闭</el-button>
       </template>
     </el-dialog>
     
@@ -287,6 +421,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api/index'
+import { getUserStats } from '@/api/user'
 
 // ==================== 响应式状态 ====================
 
@@ -299,6 +434,12 @@ const systemData = reactive({
   consecutiveDays: 0  // 连续学习天数
 })
 
+// 系统币历史记录
+const coinHistory = ref([])
+
+// 系统币统计信息
+const coinStats = ref(null)
+
 // 用户属性列表
 const attributes = ref([])
 
@@ -308,14 +449,23 @@ const tasks = ref([])
 // 商店商品列表
 const shopItems = ref([])
 
-// 新增属性表单
+// 新属性表单数据
 const newAttribute = reactive({
   name: '',
   value: 0,
   description: ''
 })
 
-// 新增任务表单
+// 编辑属性表单数据
+const editingAttribute = reactive({
+  attr_id: '',
+  attr_name: '',
+  attr_value: 0,
+  max_value: 100,
+  description: ''
+})
+
+// 新任务表单数据
 const newTask = reactive({
   title: '',
   attributeName: '',
@@ -325,9 +475,14 @@ const newTask = reactive({
   rewardCoins: 10
 })
 
-// 对话框显示状态
+// 对话框状态
 const showAddAttributeDialog = ref(false)
+const showEditAttributeDialog = ref(false)
 const showAddTaskDialog = ref(false)
+const showTaskDetailDialog = ref(false)
+
+// 任务详情数据
+const currentTask = ref(null)
 
 // 任务证明相关
 const proofDialogVisible = ref(false)
@@ -335,6 +490,36 @@ const currentTaskForProof = ref(null)
 const proofContent = ref('')
 
 // ==================== 业务逻辑 ====================
+
+/**
+ * 加载系统币历史记录
+ */
+const loadCoinHistory = async () => {
+  try {
+    const response = await api.get('/api/coins/history')
+    if (response.data.success && response.data.data) {
+      coinHistory.value = response.data.data
+    }
+  } catch (error) {
+    console.error('加载系统币历史记录失败:', error)
+    // 不显示错误消息，避免影响用户体验
+  }
+}
+
+/**
+ * 加载系统币统计信息
+ */
+const loadCoinStats = async () => {
+  try {
+    const response = await api.get('/api/coins/stats')
+    if (response.data.success && response.data.data) {
+      coinStats.value = response.data.data
+    }
+  } catch (error) {
+    console.error('加载系统币统计信息失败:', error)
+    // 不显示错误消息，避免影响用户体验
+  }
+}
 
 /**
  * 加载用户数据（包括任务、属性、商店等）
@@ -347,11 +532,21 @@ const loadUserData = async () => {
       systemData.coins = profile.data.data.balance || 0
     }
     
+    // 获取用户统计信息
+    const stats = await getUserStats()
+    if (stats) {
+      // 使用用户统计数据更新系统数据
+      systemData.taskCompleted = stats.total_tasks_completed || systemData.taskCompleted
+      systemData.consecutiveDays = stats.consecutive_login_days || systemData.consecutiveDays
+    }
+    
     // 并行加载数据
     await Promise.all([
       loadTasks(),
       loadAttributes(),
-      loadShopItems()
+      loadShopItems(),
+      loadCoinHistory(),
+      loadCoinStats()
     ])
   } catch (error) {
     console.error('加载用户数据失败:', error)
@@ -458,6 +653,147 @@ const addAttribute = async () => {
 }
 
 /**
+ * 编辑属性
+ */
+const editAttribute = (attr) => {
+  // 填充编辑表单数据
+  editingAttribute.attr_id = attr.attr_id
+  editingAttribute.attr_name = attr.attr_name
+  editingAttribute.attr_value = attr.attr_value
+  editingAttribute.max_value = attr.max_value || 100
+  editingAttribute.description = attr.description || ''
+  // 打开编辑对话框
+  showEditAttributeDialog.value = true
+}
+
+/**
+ * 更新属性
+ */
+const updateAttribute = async () => {
+  if (!editingAttribute.attr_name.trim()) {
+    ElMessage.warning('请输入属性名称')
+    return
+  }
+  
+  try {
+    const response = await api.put(`/api/attributes/${editingAttribute.attr_id}`, {
+      attr_name: editingAttribute.attr_name,
+      attr_value: editingAttribute.attr_value,
+      max_value: editingAttribute.max_value,
+      description: editingAttribute.description
+    })
+    
+    // 重新加载属性列表
+    await loadAttributes()
+    
+    showEditAttributeDialog.value = false
+    ElMessage.success('属性更新成功')
+  } catch (error) {
+    console.error('更新属性失败:', error)
+    ElMessage.error(error.response?.data?.detail || '更新属性失败')
+  }
+}
+
+/**
+ * 删除属性
+ */
+const deleteAttribute = async (attr_id) => {
+  try {
+    await api.delete(`/api/attributes/${attr_id}`)
+    
+    // 重新加载属性列表
+    await loadAttributes()
+    
+    ElMessage.success('属性删除成功')
+  } catch (error) {
+    console.error('删除属性失败:', error)
+    ElMessage.error(error.response?.data?.detail || '删除属性失败')
+  }
+}
+
+/**
+ * 查看任务详情
+ */
+const viewTaskDetail = async (task_id) => {
+  try {
+    const response = await api.get(`/api/tasks/${task_id}`)
+    if (response.data.success && response.data.data) {
+      currentTask.value = response.data.data
+      showTaskDetailDialog.value = true
+    }
+  } catch (error) {
+    console.error('获取任务详情失败:', error)
+    ElMessage.error(error.response?.data?.detail || '获取任务详情失败')
+  }
+}
+
+/**
+ * 删除任务
+ */
+const deleteTask = async (task_id) => {
+  try {
+    const response = await api.delete(`/api/tasks/${task_id}`)
+    if (response.data.success) {
+      // 重新加载任务列表
+      await loadTasks()
+      ElMessage.success('任务删除成功')
+    }
+  } catch (error) {
+    console.error('删除任务失败:', error)
+    ElMessage.error(error.response?.data?.detail || '删除任务失败')
+  }
+}
+
+/**
+ * 获取任务状态对应的Element Plus标签类型
+ */
+const getTaskStatusType = (status) => {
+  const statusMap = {
+    pending: 'info',
+    in_progress: 'warning',
+    pending_evaluation: 'warning',
+    completed: 'success',
+    failed: 'danger'
+  }
+  return statusMap[status] || 'info'
+}
+
+/**
+ * 获取任务状态的中文文本
+ */
+const getTaskStatusText = (status) => {
+  const statusMap = {
+    pending: '待开始',
+    in_progress: '进行中',
+    pending_evaluation: '待评估',
+    completed: '已完成',
+    failed: '未通过'
+  }
+  return statusMap[status] || '未知状态'
+}
+
+/**
+ * 获取任务优先级的中文文本
+ */
+const getPriorityText = (priority) => {
+  const priorityMap = {
+    easy: '简单',
+    medium: '中等',
+    hard: '困难'
+  }
+  return priorityMap[priority] || '未知优先级'
+}
+
+/**
+ * 格式化日期
+ */
+const formatDate = (dateString) => {
+  if (!dateString) return '未设置'
+  const date = new Date(dateString)
+  return date.toLocaleString('zh-CN')
+}
+
+/**
  * 创建新任务
  */
 const addTask = async () => {
@@ -527,11 +863,11 @@ const purchaseItem = async (index) => {
 
 /**
  * 开始任务
- * @param {string} taskId - 任务ID
+ * @param {string} task_id - 任务ID
  */
-const startTask = async (taskId) => {
+const startTask = async (task_id) => {
   try {
-    await api.put(`/api/tasks/${taskId}/status?status=in_progress`)
+    await api.put(`/api/tasks/${task_id}/status?status=in_progress`)
     await loadTasks()
     ElMessage.success('任务已开始')
   } catch (error) {
@@ -542,10 +878,10 @@ const startTask = async (taskId) => {
 
 /**
  * 打开任务证明提交对话框
- * @param {string} taskId - 任务ID
+ * @param {string} task_id - 任务ID
  */
-const openProofDialog = (taskId) => {
-  const task = tasks.value.find(t => t.task_id === taskId)
+const openProofDialog = (task_id) => {
+  const task = tasks.value.find(t => t.task_id === task_id)
   if (task) {
     currentTaskForProof.value = task
     proofContent.value = ''
@@ -583,11 +919,11 @@ const submitTaskProof = async () => {
 
 /**
  * 完成任务
- * @param {string} taskId - 任务ID
+ * @param {string} task_id - 任务ID
  */
-const completeTask = async (taskId) => {
+const completeTask = async (task_id) => {
   try {
-    const task = tasks.value.find(t => t.task_id === taskId)
+    const task = tasks.value.find(t => t.task_id === task_id)
     if (!task) {
       ElMessage.error('任务不存在')
       return
@@ -596,10 +932,10 @@ const completeTask = async (taskId) => {
     // 检查任务是否需要证明（根据难度或其他条件）
     if (task.estimated_time && task.estimated_time >= 120) {
       // 预计时间超过2小时的任务需要提交证明
-      openProofDialog(taskId)
+      openProofDialog(task_id)
       } else {
         // 简单任务直接完成
-      await api.put(`/api/tasks/${taskId}/status?status=completed`)
+      await api.put(`/api/tasks/${task_id}/status?status=completed`)
         await loadTasks()
       await loadUserData()  // 重新加载用户数据以更新余额
         ElMessage.success('任务完成！获得奖励')

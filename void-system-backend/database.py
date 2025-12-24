@@ -1726,14 +1726,28 @@ class Database:
 
             if row:
                 doc_dict = dict(row)
+                # 确保所有字段都有默认值，避免后续处理出错
+                doc_dict.setdefault("tags", "[]")
+                doc_dict.setdefault("chroma_ids", None)
+                doc_dict.setdefault("storage_path", "")
+                doc_dict.setdefault("vector_collection", "")
+                
+                # 安全解析JSON字段，即使解析出错也能返回文档信息
                 try:
-                    doc_dict["tags"] = json.loads(doc_dict.get("tags", "[]"))
-                    doc_dict["chroma_ids"] = json.loads(doc_dict.get("chroma_ids", "[]")) if doc_dict.get("chroma_ids") else []
-                except json.JSONDecodeError:
+                    doc_dict["tags"] = json.loads(doc_dict["tags"])
+                except (json.JSONDecodeError, TypeError):
                     doc_dict["tags"] = []
+                
+                try:
+                    doc_dict["chroma_ids"] = json.loads(doc_dict["chroma_ids"]) if doc_dict["chroma_ids"] else []
+                except (json.JSONDecodeError, TypeError):
                     doc_dict["chroma_ids"] = []
+                
                 return doc_dict
 
+            return None
+        except Exception as e:
+            logger.error(f"获取单个文档失败 {user_id}:{doc_id}: {str(e)}")
             return None
         finally:
             conn.close()
@@ -1832,19 +1846,42 @@ class Database:
         cursor = conn.cursor()
 
         try:
-            # 获取文档信息，用于清理向量数据
-            doc = self.get_user_document(user_id, doc_id)
-            if not doc:
+            # 先检查文档是否存在
+            cursor.execute(
+                "SELECT doc_id FROM user_documents WHERE doc_id = ? AND user_id = ?",
+                (doc_id, user_id)
+            )
+            if cursor.fetchone() is None:
                 return False
-
-            # 如果有向量数据，需要清理（这里简化处理，实际需要向量管理器配合）
-
+                
+            # 执行删除操作
             cursor.execute(
                 "DELETE FROM user_documents WHERE doc_id = ? AND user_id = ?",
                 (doc_id, user_id)
             )
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            conn.close()
+    
+    def check_document_exists(self, doc_id: str, user_id: str) -> bool:
+        """
+        检查文档是否存在
+        Args:
+            doc_id: 文档ID
+            user_id: 用户ID
+        Returns:
+            文档是否存在
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                "SELECT doc_id FROM user_documents WHERE doc_id = ? AND user_id = ?",
+                (doc_id, user_id)
+            )
+            return cursor.fetchone() is not None
         finally:
             conn.close()
 

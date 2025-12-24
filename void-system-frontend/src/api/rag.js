@@ -22,11 +22,11 @@ export const ragApi = {
 
   /**
    * 获取单个RAG文档
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @returns {Promise}
    */
-  getDocument(docId) {
-    return api.get(`/api/admin/rag/documents/${docId}`)
+  getDocument(doc_id) {
+    return api.get(`/api/admin/rag/documents/${doc_id}`)
   },
 
   /**
@@ -44,21 +44,21 @@ export const ragApi = {
 
   /**
    * 更新RAG文档
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @param {Object} updates - 更新数据
    * @returns {Promise}
    */
-  updateDocument(docId, updates) {
-    return api.put(`/api/admin/rag/documents/${docId}`, updates)
+  updateDocument(doc_id, updates) {
+    return api.put(`/api/admin/rag/documents/${doc_id}`, updates)
   },
 
   /**
    * 删除RAG文档
-   * @param {string} docId - 文档ID
+   * @param {string} doc_id - 文档ID
    * @returns {Promise}
    */
-  deleteDocument(docId) {
-    return api.delete(`/api/admin/rag/documents/${docId}`)
+  deleteDocument(doc_id) {
+    return api.delete(`/api/admin/rag/documents/${doc_id}`)
   },
 
   /**

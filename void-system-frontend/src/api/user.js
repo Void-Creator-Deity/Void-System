@@ -97,7 +97,15 @@ export const getCurrentUser = async () => {
  * 用户登出
  * 清除本地存储的认证信息
  */
-export const logout = () => {
+export const logout = async () => {
+  try {
+    // 调用后端登出 API
+    await api.post('/api/logout')
+  } catch (error) {
+    // 如果后端登出失败，仍然清除客户端的 token
+    console.error('Logout API call failed:', error)
+  }
+  // 清除本地存储的 token 和用户信息
   localStorage.removeItem('access_token')
   localStorage.removeItem('user_info')
   localStorage.removeItem('persona_session_id')  // 清除会话 ID
@@ -118,4 +126,13 @@ export const isLoggedIn = () => {
 export const getUserInfo = () => {
   const userInfo = localStorage.getItem('user_info')
   return userInfo ? JSON.parse(userInfo) : null
+}
+
+/**
+ * 获取用户统计信息
+ * @returns {Promise<Object>} 用户统计数据
+ */
+export const getUserStats = async () => {
+  const response = await api.get('/api/user/stats')
+  return response.data.data
 }

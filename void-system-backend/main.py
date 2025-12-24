@@ -17,14 +17,19 @@ TODO:
 - [ ] 添加API速率限制
 - [ ] 实现微服务架构迁移计划
 """
+# 标准库导入
 import os
 import time
 import uuid
 import secrets
+import json
+import asyncio
+from io import StringIO
 from contextlib import asynccontextmanager
 from typing import Any, Optional, List, Dict, Literal, Union, AsyncGenerator, Callable, Awaitable
 from datetime import datetime, timedelta, timezone
 
+# 第三方库导入
 from fastapi import FastAPI, Request, Response, status, Depends, HTTPException, UploadFile, File, Form, Query, Body, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -32,20 +37,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from langserve import add_routes
+from sse_starlette.sse import EventSourceResponse
 import bcrypt
 from jose import JWTError, jwt
 import uvicorn
 import logging
 from dotenv import load_dotenv
-
-# 导入项目模块 - 实现更好的解耦
-from config import config
-from errors import ErrorCode, VoidSystemException, create_auth_error, create_file_error
-from tools.utils import (
-    get_file_extension, is_allowed_file, validate_file_size,
-    generate_unique_filename, ensure_directory_exists, get_current_timestamp,
-    paginate_results, sanitize_string, time_function_execution
-)
 
 # 加载环境变量
 load_dotenv()
@@ -57,12 +54,15 @@ logging.basicConfig(
 )
 logger: logging.Logger = logging.getLogger("void-system")
 
-# 导入数据库模块
-from database import Database
-
-# ==================== 配置验证 ====================
-# 导入配置模块
+# 项目模块导入
 from config import Config
+from database import Database
+from errors import ErrorCode, VoidSystemException, create_auth_error, create_file_error
+from tools.utils import (
+    get_file_extension, is_allowed_file, validate_file_size,
+    generate_unique_filename, ensure_directory_exists, get_current_timestamp,
+    paginate_results, sanitize_string, time_function_execution
+)
 
 # 验证配置
 if Config.SECRET_KEY == Config._default_secret:
@@ -627,22 +627,12 @@ from sse_starlette.sse import EventSourceResponse
 import json
 from typing import Dict, Any
 
-# 流式响应端点（支持旧路径重定向）
-@app.post("/stream-chat")
-async def stream_chat_legacy(user_input: Dict[str, Any]):
-    """
-    旧流式响应路径重定向
-    """
-    # 直接调用新端点的处理函数
-    return await stream_chat_endpoint(user_input)
-
+# 流式响应端点
 @app.post("/api/stream-chat")
 async def stream_chat_endpoint(user_input: Dict[str, Any]):
     """
-    流式响应接口，提供打字机效果
+    处理流式聊天请求
     """
-    import asyncio
-    from io import StringIO
     
     try:
         user_topic = user_input.get("topic", "")
@@ -964,6 +954,23 @@ async def get_user_profile(
         }
     )
 
+@app.get("/api/user/stats", summary="获取用户统计信息", tags=["用户"], response_model=APIResponse)
+async def get_user_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户统计信息
+    """
+    # 获取用户统计数据
+    stats = db.get_user_stats(current_user["user_id"])
+    
+    return APIResponse(
+        success=True,
+        message="用户统计信息获取成功",
+        data=stats
+    )
+
 @app.put("/api/user/profile", summary="更新用户资料", tags=["用户"], response_model=APIResponse)
 async def update_user_profile(
     nickname: Optional[str] = None,
@@ -1000,6 +1007,53 @@ async def update_user_profile(
     return APIResponse(
         success=True,
         message="用户资料更新成功"
+    )
+
+# ==================== 系统币相关路由 ====================
+@app.get("/api/coins/balance", summary="获取用户余额", tags=["系统币"], response_model=APIResponse)
+async def get_coins_balance(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户系统币余额
+    """
+    balance = db.get_user_balance(current_user["user_id"])
+    return APIResponse(
+        success=True,
+        message="用户余额获取成功",
+        data={"balance": balance}
+    )
+
+@app.get("/api/coins/history", summary="获取系统币历史记录", tags=["系统币"], response_model=APIResponse)
+async def get_coins_history(
+    limit: Optional[int] = Query(50, ge=1, le=200),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户系统币收支记录
+    """
+    history = db.get_coin_history(current_user["user_id"], limit=limit)
+    return APIResponse(
+        success=True,
+        message="系统币历史记录获取成功",
+        data={"history": history}
+    )
+
+@app.get("/api/coins/stats", summary="获取收支统计", tags=["系统币"], response_model=APIResponse)
+async def get_coins_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户系统币收支统计
+    """
+    stats = db.get_income_expense_stats(current_user["user_id"])
+    return APIResponse(
+        success=True,
+        message="收支统计获取成功",
+        data=stats
     )
 
 # ==================== 属性系统相关路由 ====================
@@ -1155,6 +1209,117 @@ async def delete_attribute(
     return APIResponse(
         success=True,
         message="属性删除成功"
+    )
+
+# ==================== 任务分类相关路由 ====================
+@app.get("/api/task-categories", summary="获取任务分类列表", tags=["任务"], response_model=APIResponse)
+async def get_task_categories(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户任务分类列表
+    """
+    categories = db.get_user_task_categories(current_user["user_id"])
+    return APIResponse(
+        success=True,
+        message="任务分类列表获取成功",
+        data={"categories": categories}
+    )
+
+@app.post("/api/task-categories", summary="创建任务分类", tags=["任务"], response_model=APIResponse)
+async def create_task_category(
+    category_data: TaskCategoryCreate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    创建新任务分类
+    """
+    category_id = db.add_task_category(
+        user_id=current_user["user_id"],
+        category_name=category_data.category_name,
+        description=category_data.description or "",
+        icon=category_data.icon or "📚",
+        color=category_data.color or "#3B82F6"
+    )
+    if not category_id:
+        raise VoidSystemException(
+            message="任务分类创建失败",
+            error_code="CATEGORY_CREATE_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    return APIResponse(
+        success=True,
+        message="任务分类创建成功",
+        data={"category_id": category_id}
+    )
+
+@app.put("/api/task-categories/{category_id}", summary="更新任务分类", tags=["任务"], response_model=APIResponse)
+async def update_task_category(
+    category_id: str,
+    category_data: TaskCategoryUpdate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    更新任务分类
+    """
+    # 验证分类归属
+    categories = db.get_user_task_categories(current_user["user_id"])
+    category = next((cat for cat in categories if cat["category_id"] == category_id), None)
+    if not category:
+        raise VoidSystemException(
+            message="任务分类不存在或无权访问",
+            error_code="CATEGORY_NOT_FOUND",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
+    success = db.update_task_category(
+        category_id=category_id,
+        category_name=category_data.category_name,
+        description=category_data.description,
+        icon=category_data.icon,
+        color=category_data.color
+    )
+    if not success:
+        raise VoidSystemException(
+            message="任务分类更新失败",
+            error_code="CATEGORY_UPDATE_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    return APIResponse(
+        success=True,
+        message="任务分类更新成功"
+    )
+
+@app.delete("/api/task-categories/{category_id}", summary="删除任务分类", tags=["任务"], response_model=APIResponse)
+async def delete_task_category(
+    category_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    删除任务分类
+    """
+    # 验证分类归属
+    categories = db.get_user_task_categories(current_user["user_id"])
+    category = next((cat for cat in categories if cat["category_id"] == category_id), None)
+    if not category:
+        raise VoidSystemException(
+            message="任务分类不存在或无权访问",
+            error_code="CATEGORY_NOT_FOUND",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
+    success = db.delete_task_category(category_id, current_user["user_id"])
+    if not success:
+        raise VoidSystemException(
+            message="任务分类删除失败",
+            error_code="CATEGORY_DELETE_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    return APIResponse(
+        success=True,
+        message="任务分类删除成功"
     )
 
 # ==================== 任务系统相关路由 ====================
@@ -1644,117 +1809,6 @@ async def purchase_item(
         }
     )
 
-# ==================== 任务类别相关路由 ====================
-@app.get("/api/task-categories", summary="获取任务类别列表", tags=["任务类别"], response_model=APIResponse)
-async def get_task_categories(
-    include_preset: bool = True,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    """
-    获取用户的任务类别列表
-    """
-    categories = db.get_user_task_categories(
-        user_id=current_user["user_id"],
-        include_preset=include_preset
-    )
-    
-    return APIResponse(
-        success=True,
-        message="任务类别列表获取成功",
-        data={"categories": categories}
-    )
-
-@app.post("/api/task-categories", summary="创建任务类别", tags=["任务类别"], response_model=APIResponse)
-async def create_task_category(
-    category_data: TaskCategoryCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    """
-    创建新的任务类别
-    """
-    # 检查类别名是否已存在
-    categories = db.get_user_task_categories(current_user["user_id"])
-    for cat in categories:
-        if cat["category_name"] == category_data.category_name:
-            raise VoidSystemException(
-                message="类别名已存在",
-                error_code="CATEGORY_EXISTS",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-    
-    category_id = db.add_task_category(
-        user_id=current_user["user_id"],
-        category_name=category_data.category_name,
-        description=category_data.description or "",
-        icon=category_data.icon or "📚",
-        color=category_data.color or "#3B82F6"
-    )
-    
-    return APIResponse(
-        success=True,
-        message="任务类别创建成功",
-        data={"category_id": category_id}
-    )
-
-@app.put("/api/task-categories/{category_id}", summary="更新任务类别", tags=["任务类别"], response_model=APIResponse)
-async def update_task_category(
-    category_id: str,
-    category_data: TaskCategoryUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    """
-    更新任务类别
-    """
-    success = db.update_task_category(
-        category_id=category_id,
-        user_id=current_user["user_id"],
-        category_name=category_data.category_name,
-        description=category_data.description,
-        icon=category_data.icon,
-        color=category_data.color
-    )
-    
-    if not success:
-        raise VoidSystemException(
-            message="任务类别不存在或无权访问",
-            error_code="CATEGORY_NOT_FOUND",
-            status_code=status.HTTP_404_NOT_FOUND
-        )
-    
-    return APIResponse(
-        success=True,
-        message="任务类别更新成功"
-    )
-
-@app.delete("/api/task-categories/{category_id}", summary="删除任务类别", tags=["任务类别"], response_model=APIResponse)
-async def delete_task_category(
-    category_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    """
-    删除任务类别
-    """
-    success = db.delete_task_category(
-        category_id=category_id,
-        user_id=current_user["user_id"]
-    )
-    
-    if not success:
-        raise VoidSystemException(
-            message="任务类别不存在或无权删除",
-            error_code="CATEGORY_NOT_FOUND",
-            status_code=status.HTTP_404_NOT_FOUND
-        )
-    
-    return APIResponse(
-        success=True,
-        message="任务类别删除成功"
-    )
-
 # ==================== 统计分析路由 ====================
 @app.get("/api/stats/overview", summary="获取统计概览", tags=["统计"], response_model=APIResponse)
 async def get_stats_overview(
@@ -1993,9 +2047,6 @@ async def get_economy_visualization(
         )
 
 # ==================== RAG文档管理路由 ====================
-# ... existing code ...
-
-# ==================== 用户文档管理路由 ====================
 @app.get("/api/admin/rag/documents", summary="列出系统RAG文档", tags=["RAG管理"], response_model=APIResponse)
 async def list_rag_documents(
     tags: Optional[str] = None,
@@ -2460,6 +2511,77 @@ async def get_user_document_stats(
             message=f"获取文档统计失败: {str(e)}",
             error_code="GET_STATS_FAILED",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+# ==================== 用户文档向量搜索相关路由 ====================
+@app.post("/api/vector/search", summary="向量搜索用户文档", tags=["用户文档"], response_model=APIResponse)
+async def vector_search(
+    query: str = Body(..., embed=True),
+    top_k: Optional[int] = Body(3, ge=1, le=10),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    向量搜索用户文档内容
+    """
+    from api.user_vector_manager import vector_manager
+    
+    try:
+        # 使用向量管理器执行搜索
+        results = vector_manager.search_user_documents(
+            user_id=current_user["user_id"],
+            query=query,
+            top_k=top_k
+        )
+        
+        # 转换结果格式
+        search_results = []
+        for result in results:
+            search_results.append({
+                "content": result.page_content,
+                "doc_id": result.metadata.get("doc_id"),
+                "score": getattr(result, "score", None),
+                "metadata": result.metadata
+            })
+        
+        return APIResponse(
+            success=True,
+            message="向量搜索成功",
+            data={"results": search_results}
+        )
+    except Exception as e:
+        logger.error(f"向量搜索失败: {str(e)}")
+        return APIResponse(
+            success=False,
+            message=f"向量搜索失败: {str(e)}",
+            error_code="VECTOR_SEARCH_FAILED"
+        )
+
+@app.get("/api/vector/stats", summary="获取向量统计信息", tags=["用户文档"], response_model=APIResponse)
+async def get_vector_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户文档向量统计信息
+    """
+    from api.user_vector_manager import vector_manager
+    
+    try:
+        # 使用向量管理器获取统计信息
+        stats = vector_manager.get_collection_stats(current_user["user_id"])
+        
+        return APIResponse(
+            success=True,
+            message="向量统计信息获取成功",
+            data={"stats": stats}
+        )
+    except Exception as e:
+        logger.error(f"获取向量统计信息失败: {str(e)}")
+        return APIResponse(
+            success=False,
+            message=f"获取向量统计信息失败: {str(e)}",
+            error_code="VECTOR_STATS_FAILED"
         )
 
 # ==================== 个性化问答路由 ====================
