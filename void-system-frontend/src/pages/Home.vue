@@ -2,47 +2,78 @@
   <div class="home-container">
     <!-- 页面标题 -->
     <div class="home-header">
-      <h2><span class="glitch">虚空</span> <span class="system-text">系统</span> <span class="dashboard">控制台</span></h2>
-      <div class="system-status">
-        <div class="status-indicator">
-          <div class="status-dot"></div>
-          <span>系统运行正常</span>
+      <div class="header-main">
+        <h2><span class="glitch">虚空</span> <span class="system-text">系统</span> 终端</h2>
+        <div class="user-level-badge">
+          <div class="level-label">等级</div>
+          <div class="level-value">{{ systemData.level }}</div>
         </div>
-        <div class="system-coins">
-          <span class="coin-icon">💰</span>
-          <span class="coin-count">{{ systemData.coins }}</span>
+      </div>
+      
+      <div class="system-meta">
+        <div class="exp-bar-container">
+          <div class="exp-info">
+            <span>EXP</span>
+            <span>{{ systemData.expProgress }} / 100</span>
+          </div>
+          <div class="exp-track">
+            <div class="exp-fill" :style="{ width: systemData.expProgress + '%' }"></div>
+          </div>
+        </div>
+
+        <div class="system-status">
+          <div class="status-indicator">
+            <div class="status-dot"></div>
+            <span>已连接</span>
+          </div>
+          <div class="system-coins">
+            <span class="coin-icon">💰</span>
+            <span class="coin-count">{{ systemData.coins }}</span>
+          </div>
         </div>
       </div>
     </div>
     
     <!-- 核心数据概览 -->
-    <div class="overview-section">
-      <div class="stat-card">
-        <div class="stat-icon">📊</div>
+    <div class="overview-section grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-lg">
+      <div class="stat-card card cyber-border">
+        <div class="stat-icon-wrapper">
+          <div class="stat-icon">📊</div>
+        </div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.taskCompleted }}</div>
-          <div class="stat-label">总任务完成</div>
+          <div class="stat-label">完成任务</div>
+          <div class="stat-sub">率: {{ systemData.completionRate.toFixed(1) }}%</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon">🎯</div>
+      <div class="stat-card card cyber-border">
+        <div class="stat-icon-wrapper">
+          <div class="stat-icon">🎯</div>
+        </div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.taskInProgress }}</div>
-          <div class="stat-label">进行中任务</div>
+          <div class="stat-label">进行中</div>
+          <div class="stat-sub">待处理记录</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon">📈</div>
+      <div class="stat-card card cyber-border">
+        <div class="stat-icon-wrapper">
+          <div class="stat-icon">📈</div>
+        </div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.attributePoints }}</div>
-          <div class="stat-label">总属性点数</div>
+          <div class="stat-label">属性总值</div>
+          <div class="stat-sub">当前能力总点数</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon">🔥</div>
+      <div class="stat-card card cyber-border">
+        <div class="stat-icon-wrapper">
+          <div class="stat-icon">⚡</div>
+        </div>
         <div class="stat-content">
-          <div class="stat-value">{{ systemData.consecutiveDays }}</div>
-          <div class="stat-label">连续学习天数</div>
+          <div class="stat-value">{{ systemData.totalExperience }}</div>
+          <div class="stat-label">总经验值</div>
+          <div class="stat-sub">历史累积</div>
         </div>
       </div>
     </div>
@@ -56,8 +87,8 @@
         </el-button>
       </div>
       
-      <div class="attributes-grid">
-        <div v-for="(attr, index) in attributes" :key="index" class="attribute-card">
+      <div class="attributes-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
+        <div v-for="(attr, index) in attributes" :key="index" class="attribute-card card">
           <div class="attribute-header">
             <h4 class="attribute-name">{{ attr.attr_name }}</h4>
             <div class="attribute-actions">
@@ -97,8 +128,8 @@
         </el-button>
       </div>
       
-      <div class="tasks-list">
-        <div v-for="(task, index) in tasks" :key="index" class="task-card">
+      <div class="tasks-list grid grid-cols-1 md:grid-cols-2 gap-lg">
+        <div v-for="(task, index) in tasks" :key="index" class="task-card card">
           <div class="task-header">
             <h4 class="task-title">{{ task.task_name || task.title }}</h4>
             <div class="task-priority" :class="task.priority || 'medium'">
@@ -180,8 +211,8 @@
         </div>
       </div>
       
-      <div class="store-items">
-        <div v-for="(item, index) in shopItems" :key="index" class="store-item">
+      <div class="store-items grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
+        <div v-for="(item, index) in shopItems" :key="index" class="store-item card">
           <div class="item-icon">{{ item.icon || '📦' }}</div>
           <div class="item-info">
             <h4 class="item-name">{{ item.name || '未命名物品' }}</h4>
@@ -428,10 +459,14 @@ import { getUserStats } from '@/api/user'
 // 系统统计数据
 const systemData = reactive({
   coins: 0,  // 系统币余额
+  totalExperience: 0, // 总经验
+  level: 1, // 当前等级
+  expProgress: 0, // 当前等级经验进度
   taskCompleted: 0,  // 已完成任务数
   taskInProgress: 0,  // 进行中任务数
   attributePoints: 0,  // 总属性点数
-  consecutiveDays: 0  // 连续学习天数
+  consecutiveDays: 0,  // 连续学习天数
+  completionRate: 0   // 任务完成率
 })
 
 // 系统币历史记录
@@ -536,8 +571,17 @@ const loadUserData = async () => {
     const stats = await getUserStats()
     if (stats) {
       // 使用用户统计数据更新系统数据
-      systemData.taskCompleted = stats.total_tasks_completed || systemData.taskCompleted
-      systemData.consecutiveDays = stats.consecutive_login_days || systemData.consecutiveDays
+      systemData.taskCompleted = stats.completed_tasks || 0
+      systemData.taskInProgress = stats.in_progress_tasks || 0
+      systemData.totalExperience = stats.total_experience || 0
+      systemData.completionRate = stats.completion_rate || 0
+      
+      // 简单的等级计算逻辑：100经验一级
+      systemData.level = Math.floor(systemData.totalExperience / 100) + 1
+      systemData.expProgress = systemData.totalExperience % 100
+      
+      // 连续天数暂时从 profile 获取或后端 stats 返回
+      systemData.consecutiveDays = stats.consecutive_days || 0
     }
     
     // 并行加载数据
@@ -968,213 +1012,217 @@ onMounted(() => {
   margin-bottom: 30px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border-color);
-  position: relative;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 40px;
+  padding-bottom: 25px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.home-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+.header-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.home-header h2 {
-  font-size: 2.4em;
+.header-main h2 {
+  font-size: 2.2em;
   margin: 0;
-  position: relative;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: -0.5px;
 }
 
 .home-header h2 .glitch {
-  color: var(--accent-primary);
-  text-shadow: 0 0 15px var(--accent-glow);
+  color: var(--color-primary-light);
+  text-shadow: var(--shadow-glow);
   position: relative;
   display: inline-block;
-  animation: glitchEffect 3s infinite;
 }
 
 .home-header h2 .dashboard {
-  color: var(--text-muted);
-  font-weight: 500;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-left: 5px;
+}
+
+.user-level-badge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-bg-card);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-cyber);
+  box-shadow: var(--shadow-cyber);
+}
+
+.level-label {
+  font-size: 0.75em;
+  font-weight: 800;
+  color: var(--color-text-muted);
+  letter-spacing: 1px;
+}
+
+.level-value {
+  font-size: 1.8em;
+  font-weight: 900;
+  color: var(--color-primary-light);
+  font-family: var(--font-family-mono);
+  line-height: 1;
+}
+
+.system-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 30px;
+}
+
+.exp-bar-container {
+  flex: 1;
+  max-width: 600px;
+}
+
+.exp-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.exp-track {
+  height: 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+}
+
+.exp-fill {
+  height: 100%;
+  background: var(--grad-cyber);
+  box-shadow: 0 0 10px var(--glow-primary);
+  transition: width var(--transition-slow);
 }
 
 .system-status {
   display: flex;
   align-items: center;
-  gap: 25px;
-  background: rgba(10, 13, 32, 0.6);
-  backdrop-filter: var(--blur-sm);
-  padding: 0.75rem 1.5rem;
+  gap: 20px;
+  background: var(--color-bg-glass);
+  backdrop-filter: blur(10px);
+  padding: 6px 16px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--color-border);
 }
 
 .status-indicator {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--main-font);
-  font-size: 0.9rem;
+  gap: 8px;
+  font-size: 0.75em;
+  font-weight: 700;
+  letter-spacing: 1px;
 }
 
 .status-dot {
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background-color: var(--success-color);
+  background-color: var(--color-success);
+  box-shadow: 0 0 8px var(--color-success);
   animation: pulse 2s infinite;
-  box-shadow: 0 0 10px var(--success-color);
 }
 
 .system-coins {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  font-size: 1.3em;
-  color: var(--warning-color);
-  font-family: var(--main-font);
-  letter-spacing: 1px;
-  position: relative;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 1.1em;
+  color: var(--color-warning);
 }
 
-.system-coins::before {
-  content: '';
-  position: absolute;
-  left: -15px;
-  width: 1px;
-  height: 20px;
-  background: var(--border-color);
-}
-
-.coin-icon {
-  font-size: 1.4em;
-  animation: float 2s ease-in-out infinite;
-}
-
-@keyframes glitchEffect {
-  0%, 90%, 100% { transform: translateX(0); }
-  91% { transform: translateX(-2px); }
-  92% { transform: translateX(2px); }
-  93% { transform: translateX(-1px); }
-  94% { transform: translateX(1px); }
-  95% { transform: translateX(-1px); }
-  96% { transform: translateX(1px); }
-  97% { transform: translateX(-1px); }
-  98% { transform: translateX(1px); }
-  99% { transform: translateX(-1px); }
-}
-
-/* 概览部分 */
+/* 概览统计卡片 */
 .overview-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 25px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
   margin-bottom: 40px;
 }
 
 .stat-card {
-  background: rgba(42, 65, 140, 0.4);
-  backdrop-filter: var(--blur-md);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 25px;
+  padding: 24px;
   display: flex;
-  align-items: center;
-  gap: 20px;
-  transition: all var(--transition-normal) ease;
-  position: relative;
-  overflow: hidden;
-  transform: perspective(1000px) rotateX(0deg);
-  transform-style: preserve-3d;
-}
-
-.stat-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 4px;
-  background: linear-gradient(90deg, var(--accent-primary), transparent);
-}
-
-.stat-card::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 150%;
-  height: 150%;
-  background: radial-gradient(circle, rgba(0, 255, 204, 0.05), transparent 70%);
-  transform: translate(-50%, -50%);
-  transition: opacity var(--transition-normal) ease;
-  opacity: 0;
+  align-items: flex-start;
+  gap: 16px;
+  background: var(--grad-surface);
+  border: 1px solid var(--color-border);
+  transition: all var(--transition-normal);
 }
 
 .stat-card:hover {
-  transform: translateY(-8px) perspective(1000px) rotateX(5deg);
-  box-shadow: 0 8px 30px rgba(0, 255, 204, 0.25);
-  border-color: var(--accent-primary);
-  background: rgba(42, 65, 140, 0.6);
+  transform: translateY(-4px);
+  border-color: var(--color-border-cyber);
+  box-shadow: var(--shadow-cyber);
 }
 
-.stat-card:hover::after {
-  opacity: 1;
-}
-
-.stat-icon {
-  font-size: 3em;
-  opacity: 0.9;
-  transition: transform var(--transition-normal) ease;
-  position: relative;
-  z-index: 1;
-}
-
-.stat-card:hover .stat-icon {
-  transform: scale(1.2) rotate(10deg);
+.stat-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  font-size: 1.5em;
+  border: 1px solid var(--color-border-light);
 }
 
 .stat-content {
   flex: 1;
-  position: relative;
-  z-index: 1;
 }
 
 .stat-value {
-  font-size: 2.5em;
-  font-weight: 700;
-  font-family: var(--main-font);
-  color: var(--accent-primary);
-  line-height: 1.1;
-  text-shadow: 0 0 10px var(--accent-glow);
-  margin-bottom: 0.25rem;
+  font-size: 2.2em;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+  font-family: var(--font-family-mono);
 }
 
 .stat-label {
-  color: var(--text-secondary);
-  font-size: 0.95em;
-  font-family: var(--main-font);
-  letter-spacing: 0.5px;
+  font-size: 0.85em;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.stat-sub {
+  font-size: 0.7em;
+  color: var(--color-text-muted);
+  font-weight: 500;
   text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 /* 通用区块样式 */
 .attributes-section,
 .tasks-section,
-.store-section {
+.store-section,
+.coins-section {
   margin-bottom: 40px;
-  background: rgba(20, 33, 82, 0.4);
-  backdrop-filter: var(--blur-md);
-  border: 1px solid var(--border-color);
+  background: var(--color-bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  padding: 25px;
+  padding: 30px;
   position: relative;
   overflow: hidden;
-  transition: all var(--transition-normal) ease;
 }
 
 .attributes-section::before,
@@ -1184,68 +1232,44 @@ onMounted(() => {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent-primary), transparent);
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-.attributes-section:hover,
-.tasks-section:hover,
-.store-section:hover {
-  box-shadow: 0 0 30px rgba(0, 255, 204, 0.1);
-  border-color: var(--accent-primary);
+  width: 4px;
+  height: 100%;
+  background: var(--grad-cyber);
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 25px;
+  margin-bottom: 30px;
 }
 
 .section-header h3 {
-  font-size: 1.5em;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  font-size: 1.6em;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  letter-spacing: -0.5px;
 }
 
+/* 属性卡片 */
 .attributes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 25px;
-  margin-top: 25px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
 }
 
 .attribute-card {
-  background: rgba(10, 13, 32, 0.6);
-  backdrop-filter: var(--blur-sm);
-  border: 1px solid var(--border-color);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 25px;
-  transition: all var(--transition-normal) ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.attribute-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 5px;
-  height: 100%;
-  background: linear-gradient(to bottom, var(--accent-primary), var(--accent-secondary));
-  box-shadow: 0 0 15px var(--accent-glow);
+  padding: 24px;
+  transition: all var(--transition-normal);
 }
 
 .attribute-card:hover {
-  border-color: var(--accent-primary);
-  transform: translateY(-8px);
-  box-shadow: 0 8px 25px rgba(0, 255, 204, 0.15);
-  background: rgba(10, 13, 32, 0.8);
+  transform: translateY(-4px);
+  border-color: var(--color-border-cyber);
+  background: var(--color-bg-secondary);
 }
 
 .attribute-header {
@@ -1253,278 +1277,131 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  position: relative;
-  z-index: 1;
 }
 
 .attribute-name {
-  font-size: 1.3em;
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--main-font);
-  letter-spacing: 0.5px;
+  font-size: 1.1em;
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
 .attribute-level {
-  font-size: 0.95em;
-  color: var(--bg-primary);
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  padding: 0.3rem 0.8rem;
-  border-radius: var(--radius-full);
-  font-weight: 600;
-  font-family: var(--main-font);
-  box-shadow: 0 0 10px var(--accent-glow);
+  font-size: 0.8em;
+  font-weight: 800;
+  color: var(--color-primary-light);
+  background: var(--color-bg-primary);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-cyber);
 }
 
 .attribute-progress {
-  margin-bottom: 15px;
-  position: relative;
-  z-index: 1;
+  margin-bottom: 16px;
 }
 
 .progress-bar {
-  height: 10px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 8px;
+  background: var(--color-bg-primary);
   border-radius: var(--radius-full);
+  margin-bottom: 8px;
   overflow: hidden;
-  margin-bottom: 10px;
-  border: 1px solid var(--border-color);
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
-  transition: width 0.5s ease;
-  border-radius: var(--radius-full);
-  position: relative;
-  overflow: hidden;
-}
-
-.progress-fill::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  animation: shimmer 2s infinite;
-}
-
-@keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  background: var(--grad-cyber);
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .attribute-value {
-  font-size: 0.9em;
-  color: var(--text-secondary);
-  text-align: right;
-  font-family: var(--main-font);
+  font-size: 0.8em;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-family: var(--font-family-mono);
 }
 
 .attribute-description {
-  color: var(--text-muted);
-  font-size: 0.95em;
-  line-height: 1.6;
-  position: relative;
-  z-index: 1;
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+  line-height: 1.5;
 }
 
-/* 任务面板 */
+/* 任务卡片 */
 .tasks-list {
   display: grid;
-  gap: 25px;
-  margin-top: 25px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
 }
 
 .task-card {
-  background: rgba(42, 65, 140, 0.6);
-  backdrop-filter: var(--blur-sm);
-  border: 1px solid var(--border-color);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 25px;
-  transition: all var(--transition-normal) ease;
-  position: relative;
-  overflow: hidden;
-  transform: perspective(1000px) rotateX(0deg);
-}
-
-.task-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  transition: all var(--transition-normal) ease;
-}
-
-.task-card.hard::before {
-  background: var(--error-color, #ff6666);
-  box-shadow: 0 0 15px var(--error-color, #ff6666);
-}
-
-.task-card.medium::before {
-  background: var(--warning-color, #ffff00);
-  box-shadow: 0 0 15px var(--warning-color, #ffff00);
-}
-
-.task-card.easy::before {
-  background: var(--success-color, #00ff66);
-  box-shadow: 0 0 15px var(--success-color, #00ff66);
+  padding: 24px;
+  transition: all var(--transition-normal);
+  border-left: 4px solid var(--color-primary);
 }
 
 .task-card:hover {
-  border-color: var(--accent-primary);
-  transform: translateY(-5px) perspective(1000px) rotateX(2deg);
-  box-shadow: 0 8px 25px rgba(0, 255, 204, 0.15);
-  background: rgba(42, 65, 140, 0.8);
+  transform: translateX(4px);
+  border-color: var(--color-border-cyber);
+  background: var(--color-bg-secondary);
 }
 
 .task-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 15px;
-  position: relative;
-  z-index: 1;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .task-title {
-  font-size: 1.3em;
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--main-font);
-  letter-spacing: 0.5px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.task-title::first-letter {
-  color: var(--accent-primary);
-  font-size: 1.2em;
+  font-size: 1.15em;
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
 .task-priority {
-  font-size: 0.85em;
-  padding: 0.3rem 0.8rem;
-  border-radius: var(--radius-full, 20px);
-  border: 1px solid;
-  font-weight: 600;
-  font-family: var(--main-font);
+  font-size: 0.7em;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
-.task-priority.easy {
-  background: rgba(0, 255, 102, 0.2);
-  color: #00ff66;
-  border-color: #00ff66;
-  box-shadow: 0 0 8px rgba(0, 255, 102, 0.2);
-}
-
-.task-priority.medium {
-  background: rgba(255, 255, 0, 0.2);
-  color: #ffff00;
-  border-color: #ffff00;
-  box-shadow: 0 0 8px rgba(255, 255, 0, 0.2);
-}
-
-.task-priority.hard {
-  background: rgba(255, 102, 102, 0.2);
-  color: #ff6666;
-  border-color: #ff6666;
-  box-shadow: 0 0 8px rgba(255, 102, 102, 0.2);
-}
-
-.task-body {
-  margin-bottom: 15px;
-  position: relative;
-  z-index: 1;
-}
+.task-priority.easy { color: var(--color-success); background: rgba(16, 185, 129, 0.1); }
+.task-priority.medium { color: var(--color-warning); background: rgba(245, 158, 11, 0.1); }
+.task-priority.hard { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
 
 .task-info {
   display: flex;
-  flex-wrap: wrap;
-  gap: 15px;
-  margin-bottom: 15px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .info-item {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 0.9em;
-  color: var(--text-secondary);
-  font-family: var(--main-font);
-}
-
-.task-progress {
-  position: relative;
-  z-index: 1;
-}
-
-.task-progress .progress-text {
-  text-align: right;
-  font-size: 0.9em;
-  color: var(--text-secondary);
-  margin-top: 5px;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--color-text-secondary);
+  font-weight: 600;
 }
 
 .task-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  position: relative;
-  z-index: 1;
-  flex-wrap: wrap;
-  gap: 15px;
 }
 
 .task-status {
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 0.9em;
-  font-weight: 600;
-  border: 1px solid;
-  font-family: var(--main-font);
+  font-size: 0.75em;
+  font-weight: 700;
+  color: var(--color-text-muted);
 }
 
-.task-status.pending {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-secondary);
-  border-color: var(--text-secondary);
-}
-
-.task-status.in-progress {
-  background: rgba(0, 255, 204, 0.2);
-  color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 8px rgba(0, 255, 204, 0.2);
-}
-
-.task-status.completed {
-  background: rgba(0, 255, 102, 0.2);
-  color: #00ff66;
-  border-color: #00ff66;
-  box-shadow: 0 0 8px rgba(0, 255, 102, 0.2);
-}
-
-.task-status.pending_evaluation {
-  background: rgba(255, 204, 0, 0.2);
-  color: #ffff00;
-  border-color: #ffff00;
-  box-shadow: 0 0 8px rgba(255, 204, 0, 0.2);
-}
-
-.task-status.failed {
-  background: rgba(255, 102, 102, 0.2);
-  color: #ff6666;
-  border-color: #ff6666;
-  box-shadow: 0 0 8px rgba(255, 102, 102, 0.2);
-}
+.task-status.in_progress { color: var(--color-primary-light); }
+.task-status.completed { color: var(--color-success); }
 
 /* 商店部分 */
 .store-balance {

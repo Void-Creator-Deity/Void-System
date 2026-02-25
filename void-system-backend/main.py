@@ -247,6 +247,28 @@ class PurchaseRequest(BaseModel):
     """购买请求模型"""
     quantity: int = Field(1, ge=1, le=10)
 
+# --- 聊天相关模型 ---
+class ChatGroupCreate(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=50)
+
+class ChatGroupUpdate(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=50)
+
+class ChatSessionCreate(BaseModel):
+    group_id: str
+    session_name: str = Field(..., min_length=1, max_length=100)
+    session_id: Optional[str] = None
+
+class ChatSessionUpdate(BaseModel):
+    session_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    group_id: Optional[str] = None
+
+class ChatMessageCreate(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant|system)$")
+    content: str = Field(..., min_length=1)
+    tokens: int = 0
+    reply_to_id: Optional[str] = None
+
 # ==================== 自定义异常 ====================
 class VoidSystemException(Exception):
     """虚空系统自定义异常"""
@@ -2702,7 +2724,6 @@ async def ask_with_user_documents(
                 "stats": stats
             }
         )
-
     except VoidSystemException:
         raise
     except Exception as e:
@@ -2712,6 +2733,127 @@ async def ask_with_user_documents(
             error_code="QA_ERROR",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+# ==================== 智能助手对话持久化路由 ====================
+
+@app.get("/api/chat/groups", summary="获取所有对话分组及会话", tags=["对话持久化"])
+async def get_chat_history(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """获取当前用户的所有对话分组，每个分组下包含其所属的会话"""
+    groups = db.get_chat_groups(current_user["user_id"])
+    return create_success_response("获取对话历史成功", data={"groups": groups})
+
+@app.post("/api/chat/groups", summary="创建对话分组", tags=["对话持久化"])
+async def create_chat_group(
+    group_data: ChatGroupCreate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    group_id = db.add_chat_group(current_user["user_id"], group_data.group_name)
+    return create_success_response("分组创建成功", data={"group_id": group_id})
+
+@app.put("/api/chat/groups/{group_id}", summary="修改分组名称", tags=["对话持久化"])
+async def update_chat_group(
+    group_id: str,
+    group_data: ChatGroupUpdate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    success = db.update_chat_group(group_id, current_user["user_id"], group_data.group_name)
+    if not success:
+        raise HTTPException(status_code=404, detail="分组不存在或无权操作")
+    return create_success_response("分组更新成功")
+
+@app.delete("/api/chat/groups/{group_id}", summary="删除对话分组", tags=["对话持久化"])
+async def delete_chat_group(
+    group_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    success = db.delete_chat_group(group_id, current_user["user_id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="分组不存在或无权操作")
+    return create_success_response("分组删除成功")
+
+@app.post("/api/chat/sessions", summary="创建对话会话", tags=["对话持久化"])
+async def create_chat_session(
+    session_data: ChatSessionCreate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    session_id = db.add_chat_session(
+        current_user["user_id"], 
+        session_data.group_id, 
+        session_data.session_name,
+        session_data.session_id
+    )
+    return create_success_response("会话创建成功", data={"session_id": session_id})
+
+@app.put("/api/chat/sessions/{session_id}", summary="更新会话信息", tags=["对话持久化"])
+async def update_chat_session(
+    session_id: str,
+    session_data: ChatSessionUpdate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    success = db.update_chat_session(
+        session_id, 
+        current_user["user_id"], 
+        name=session_data.session_name,
+        group_id=session_data.group_id
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在或无权操作")
+    return create_success_response("会话更新成功")
+
+@app.delete("/api/chat/sessions/{session_id}", summary="删除对话会话", tags=["对话持久化"])
+async def delete_chat_session(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    success = db.delete_chat_session(session_id, current_user["user_id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在或无权操作")
+    return create_success_response("会话删除成功")
+
+@app.get("/api/chat/sessions/{session_id}/messages", summary="获取历史消息", tags=["对话持久化"])
+async def get_chat_messages(
+    session_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    messages = db.get_chat_messages(session_id, current_user["user_id"], limit)
+    return create_success_response("获取消息成功", data={"messages": messages})
+
+@app.post("/api/chat/sessions/{session_id}/messages", summary="新增对话消息", tags=["对话持久化"])
+async def add_chat_message(
+    session_id: str,
+    msg_data: ChatMessageCreate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    message_id = db.add_chat_message(
+        current_user["user_id"],
+        session_id,
+        msg_data.role,
+        msg_data.content,
+        msg_data.tokens,
+        msg_data.reply_to_id
+    )
+    return create_success_response("消息添加成功", data={"message_id": message_id})
+
+@app.delete("/api/chat/sessions/{session_id}/messages", summary="清空对话历史", tags=["对话持久化"])
+async def clear_chat_messages(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    db.clear_chat_history(session_id, current_user["user_id"])
+    return create_success_response("对话历史已清空")
 
 # ==================== 应用启动 ====================
 if __name__ == "__main__":

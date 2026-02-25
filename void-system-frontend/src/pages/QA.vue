@@ -2,38 +2,48 @@
   <div class="qa-container">
     <!-- 页面标题 -->
     <div class="qa-header">
-      <h2><span class="system-text">📖 系统知识库</span></h2>
-      <p class="subtitle">虚空智能分析，助您获取精准专业知识</p>
+      <h2><span>📖 系统问答</span></h2>
+      <p class="subtitle">通过系统知识库获取精准信息</p>
     </div>
     
-    <!-- 输入区域 -->
-    <div class="input-section">
-      <div class="input-wrapper">
-        <div class="input-prefix">❓</div>
-        <el-input 
-          v-model="question" 
-          placeholder="请输入您的问题，例如：如何学习人工智能知识"
-          @keyup.enter="ask"
-          :disabled="isLoading"
-          clearable
-        />
+    <div class="search-options">
+      <div class="search-mode-selector">
+        <el-radio-group v-model="searchMode" size="small" class="cyber-radio">
+          <el-radio-button label="vector">基础模式</el-radio-button>
+          <el-radio-button label="hybrid">混合模式</el-radio-button>
+        </el-radio-group>
       </div>
-      <el-button 
-        type="primary" 
-        @click="ask"
-        :loading="isLoading"
-        :disabled="isLoading || !question.trim()"
-      >
-        <span v-if="!isLoading">提问</span>
-        <span v-else>检索中...</span>
-      </el-button>
+      
+      <div class="input-section">
+        <div class="input-wrapper">
+          <div class="input-prefix">❓</div>
+          <el-input 
+            v-model="question" 
+            placeholder="请输入您的问题... (Shift + Enter 换行)"
+            @keyup.enter.native="handleEnter"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 4 }"
+            :disabled="isLoading"
+          />
+        </div>
+        <el-button 
+          class="cyber-button"
+          type="primary" 
+          @click="ask"
+          :loading="isLoading"
+          :disabled="isLoading || !question.trim()"
+        >
+          <span v-if="!isLoading">开始提问</span>
+          <span v-else>分析中...</span>
+        </el-button>
+      </div>
     </div>
     
     <!-- 加载状态 -->
     <div v-if="isLoading" class="loading-section">
       <div class="loading-animation">
         <div class="loading-ring"></div>
-        <p>正在智能分析您的问题...</p>
+        <p>正在搜索并分析您的问题...</p>
       </div>
     </div>
     
@@ -44,9 +54,7 @@
         <div class="timestamp">{{ formatTime(new Date()) }}</div>
       </div>
       
-      <div class="answer-content">
-        <pre>{{ answer }}</pre>
-      </div>
+      <div class="answer-content markdown-body" v-html="renderMarkdown(answer)"></div>
       
       <div class="action-buttons">
         <el-button type="info" @click="clearAnswer" class="action-btn">
@@ -77,26 +85,39 @@
 import { ref, nextTick } from "vue"
 import { ElMessage } from "element-plus"
 import { askQA } from "@/api/ai"
+import { marked } from 'marked'
 
 // ==================== 响应式状态 ====================
 const question = ref("")
 const answer = ref("")
 const isLoading = ref(false)
+const searchMode = ref("vector") // vector, hybrid
 
 // ==================== 业务逻辑 ====================
+
+/**
+ * 处理 Enter 键 (防抖 + Shift Enter 支持)
+ */
+const handleEnter = (e) => {
+  if (!e.shiftKey) {
+    e.preventDefault()
+    ask()
+  }
+}
 
 /**
  * 提问并获取答案
  */
 const ask = async () => {
   if (!question.value.trim()) {
-    ElMessage.warning('请输入问题')
     return
   }
   
   isLoading.value = true
   try {
-    const result = await askQA(question.value.trim())
+    const result = await askQA(question.value.trim(), { 
+      mode: searchMode.value 
+    })
     answer.value = result
     ElMessage.success('检索完成')
   } catch (error) {
@@ -117,6 +138,14 @@ const ask = async () => {
 const clearAnswer = () => {
   answer.value = ''
   question.value = ''
+}
+
+/**
+ * 渲染 Markdown 内容
+ */
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  return marked.parse(text)
 }
 
 /**
@@ -234,64 +263,86 @@ const formatTime = (date) => {
   background-clip: text;
 }
 
+/* 搜索选项 */
+.search-options {
+  margin-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.search-mode-selector {
+  display: flex;
+  justify-content: center;
+}
+
+.cyber-radio :deep(.el-radio-button__inner) {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-light);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.cyber-radio :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--grad-cyber);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-glow);
+}
+
 /* 输入区域 */
 .input-section {
   display: flex;
   gap: 1rem;
-  margin-bottom: 2rem;
-  align-items: center;
-  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
-  border: 1px solid var(--color-border-light);
+  align-items: flex-end;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  padding: var(--spacing-lg);
+  padding: 1.5rem;
   box-shadow: var(--shadow-md);
   position: relative;
-  overflow: hidden;
 }
 
-.input-section::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+.cyber-button {
+  height: 54px;
+  padding: 0 25px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: var(--grad-cyber);
+  border: none;
+  box-shadow: var(--shadow-glow);
 }
 
 .input-wrapper {
   flex: 1;
-  position: relative;
   display: flex;
-  align-items: center;
-  background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+  align-items: flex-start;
+  background: var(--color-bg-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 0 1rem;
+  padding: 0.75rem 1rem;
   transition: all var(--transition-normal);
-  box-shadow: var(--shadow-sm);
 }
 
 .input-wrapper:focus-within {
   border-color: var(--color-primary);
-  box-shadow: 0 0 15px rgba(67, 97, 238, 0.2);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-cyber);
 }
 
 .input-prefix {
   font-size: 1.2rem;
   margin-right: 0.75rem;
-  color: var(--color-primary);
-  animation: pulse 2s ease-in-out infinite;
+  margin-top: 4px;
 }
 
-.input-wrapper .el-input {
-    flex: 1;
-    --el-input-bg-color: transparent;
-    /* 确保在深色背景上的高对比度 */
-    --el-input-text-color: var(--color-text-primary);
-    --el-input-placeholder-color: var(--color-text-secondary);
-  }
+.input-wrapper :deep(.el-textarea__inner) {
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  padding: 0;
+  box-shadow: none !important;
+}
 
 /* 加载状态 */
 .loading-section {
@@ -394,63 +445,71 @@ const formatTime = (date) => {
   position: relative;
 }
 
-.answer-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, var(--color-primary), transparent);
-}
-
-.answer-header h3 {
-  margin: 0;
-  font-size: 1.3rem;
-  color: var(--color-text-primary);
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-weight: 600;
-}
-
-.timestamp {
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: var(--color-bg-tertiary);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border-light);
-}
-
 .answer-content {
   margin-bottom: 1.5rem;
-  background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+  background: var(--color-bg-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 1.5rem;
+  padding: 2rem;
   border-left: 4px solid var(--color-primary);
   box-shadow: var(--shadow-sm);
-  position: relative;
 }
 
-.answer-content::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  right: -1px;
-  height: 1px;
-  background: linear-gradient(90deg, var(--color-primary), transparent);
-}
-
-.answer-content pre {
-  margin: 0;
+/* Markdown 样式 */
+.markdown-body {
   color: var(--color-text-primary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  font-family: var(--body-font);
-  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.markdown-body :deep(h1), 
+.markdown-body :deep(h2), 
+.markdown-body :deep(h3) {
+  color: var(--color-primary-light);
+  margin-top: 1.5em;
+  margin-bottom: 1em;
+  font-weight: 700;
+}
+
+.markdown-body :deep(p) {
+  margin-bottom: 1em;
+}
+
+.markdown-body :deep(ul), 
+.markdown-body :deep(ol) {
+  padding-left: 2em;
+  margin-bottom: 1em;
+}
+
+.markdown-body :deep(code) {
+  background: var(--color-bg-tertiary);
+  padding: 0.2em 0.4em;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  color: var(--color-accent);
+}
+
+.markdown-body :deep(pre) {
+  background: var(--color-bg-secondary);
+  padding: 1.5em;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  margin-bottom: 1em;
+  border: 1px solid var(--color-border);
+}
+
+.markdown-body :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-primary);
+}
+
+.markdown-body :deep(blockquote) {
+  border-left: 4px solid var(--color-border-cyber);
+  padding-left: 1em;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  margin: 1em 0;
 }
 
 /* 操作按钮 */

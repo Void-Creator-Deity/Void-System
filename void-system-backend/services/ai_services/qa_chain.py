@@ -7,7 +7,8 @@ Void System - QA Chain (RAG Pipeline)
 from pathlib import Path
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_chroma import Chroma
-from langchain_classic.prompts import ChatPromptTemplate
+#from langchain_classic.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any
@@ -34,37 +35,51 @@ def load_qa_chain() -> Any:
     # 初始化 LLM 模型
     llm = ChatOllama(
         model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
-        temperature=0.5
+        temperature=0.3
     )
+
+    # 定义混合检索逻辑
+    def get_context(x: Dict[str, Any]) -> str:
+        question = x["question"]
+        mode = x.get("mode", "vector")
+        
+        if mode == "hybrid":
+            # 尝试执行混合检索
+            # 注意：BM25通常需要所有文档。为了简化，我们暂时使用Chroma的多模态检索或简单的向量检索加码
+            # 这里我们通过增加k值并手动重排序来模拟混合检索的效果（或者如果支持BM25检索器则使用它）
+            # 由于当前环境限制，我们先通过向量检索获取更多内容
+            docs = db.similarity_search(question, k=6)
+        else:
+            docs = db.similarity_search(question, k=3)
+            
+        return "\n\n".join([d.page_content for d in docs])
+
     # 定义提示模板
     prompt = ChatPromptTemplate.from_template("""
     你是虚空系统的知识引擎。
-    基于以下资料回答用户问题：
-    ----------------
+    目标：根据【资料内容】精确回答【用户问题】。
+    
+    【资料内容】：
     {context}
-    ----------------
-    问题：{question}
-    要求：
-    - 逻辑清晰
-    - 精简直接
-    - 用系统风格回答（冷静、机械、精确）
+    
+    【用户问题】：
+    {question}
+    
+    【指令】：
+    1. 仅基于提供的资料回答。如果不确定，请告知无法从知识库中找到。
+    2. 保持系统风格：克制、专业、逻辑化。
+    3. 如果涉及技术、概念，请给出清晰的定义。
+    4. 使用 Markdown 格式增强可读性。
     """)
+
     def debug_input(x: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        调试输入（可选，用于开发阶段）
-        Args:
-            x: 输入数据
-        Returns:
-            原始输入数据
-        """
-        # 开发阶段可以启用调试输出
-        # print(f"[QA链] 实际收到的输入: {x}, 类型: {type(x)}")
         return x
+
     # 构建处理链
     chain = (
         RunnableLambda(debug_input)
         .assign(
-            context=lambda x: retriever.invoke(x["question"]),
+            context=get_context,
             question=lambda x: x["question"]
         )
         | prompt

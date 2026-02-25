@@ -1,21 +1,28 @@
 <template>
   <div id="app">
-    <!-- 加载遮罩 -->
-    <div v-if="isLoading" class="loading-overlay">
-      <div class="loading"></div>
-      <div class="loading-text">系统初始化中...</div>
+    <!-- 系统初始化遮罩 (虚空觉醒) -->
+    <div v-if="isLoading" class="system-initializer">
+      <div class="initializer-core">
+        <div class="core-orbit"></div>
+        <div class="core-glow"></div>
+      </div>
+      <div class="initializer-text">
+        <span class="glitch-text" data-text="INITIALIZING_VOID_CORE...">INITIALIZING_VOID_CORE...</span>
+      </div>
     </div>
     
     <!-- 系统顶栏 -->
-    <header class="header">
-      <div class="container header-container">
-        <div class="logo-area flex items-center gap-md">
-          <div class="logo">
-            <span class="logo-symbol">⟩</span>
+    <header class="system-header">
+      <div class="header-glass-backdrop"></div>
+      <div class="container header-content">
+        <div class="brand-area" @click="router.push('/')">
+          <div class="brand-v-icon">
+            <div class="v-inner"></div>
           </div>
-          <h1 class="system-title">
-            <span class="title-void-system">VOID-SYSTEM</span>
-          </h1>
+          <div class="brand-label">
+            <span class="brand-name">VOID</span>
+            <span class="brand-suffix">CORE 2.0</span>
+          </div>
         </div>
         <!-- 桌面端导航 -->
         <nav class="nav-links flex gap-md">
@@ -29,39 +36,36 @@
           <NavItem v-if="isAdmin" to="/admin/rag" icon="🔧">RAG管理</NavItem>
         </nav>
         
-        <!-- 用户认证状态显示 -->
-        <div v-if="!isAuthenticated && !isLoading" class="auth-status">
-          <RouterLink to="/login" class="auth-link">登录</RouterLink>
-          <RouterLink to="/register" class="auth-link">注册</RouterLink>
-        </div>
-        
-        <!-- 移动端菜单按钮 -->
-        <button class="mobile-menu-btn" @click="toggleMobileMenu">
-          <span class="menu-icon">☰</span>
-        </button>
-        
-        <!-- 用户信息 -->
-        <div v-if="isAuthenticated" class="user-area flex items-center gap-md">
-          
-          <!-- 用户信息 -->
-          <div class="user-profile flex items-center gap-sm">
-            <div class="user-details">
-              <div class="user-name">{{ userName }}</div>
-              <div class="user-level">Lv.{{ userLevel }}</div>
+        <!-- 操作中枢 (用户交互区) -->
+        <div class="central-ops">
+          <div v-if="isAuthenticated" class="user-node card-glass" @click="toggleUserMenu">
+            <div class="user-info-text">
+              <span class="user-label">{{ userName }}</span>
+              <span class="user-rank">等级: {{ userLevel }}</span>
             </div>
-            <div class="user-avatar">
-              <span>{{ userAvatar }}</span>
+            <div class="user-hex-avatar">
+              <span class="avatar-char">{{ userAvatar }}</span>
             </div>
-            <button class="user-menu-btn" @click="toggleUserMenu">
-              <span>▼</span>
-            </button>
+            
+            <transition name="dropdown">
+              <div v-if="showUserMenu" class="user-ops-menu card-glass">
+                <div class="menu-item" @click="goToProfile">
+                  <el-icon><User /></el-icon> 个人资料
+                </div>
+                <div class="menu-item" @click="goToSettings">
+                  <el-icon><Setting /></el-icon> 系统设置
+                </div>
+                <div class="menu-divider"></div>
+                <div class="menu-item logout" @click="logout">
+                  <el-icon><SwitchButton /></el-icon> 断开连接
+                </div>
+              </div>
+            </transition>
           </div>
           
-          <!-- 用户下拉菜单 -->
-          <div v-if="showUserMenu" class="user-dropdown">
-            <div class="dropdown-item" @click="goToProfile">个人资料</div>
-            <div class="dropdown-item" @click="goToSettings">系统设置</div>
-            <div class="dropdown-item logout" @click="logout">退出登录</div>
+          <div v-else-if="!isLoading" class="auth-gate flex gap-sm">
+            <el-button class="cyber-btn-outline" @click="router.push('/login')">接入连接</el-button>
+            <el-button class="cyber-btn-solid" @click="router.push('/register')">创建序列</el-button>
           </div>
         </div>
       </div>
@@ -79,7 +83,7 @@
       <div class="container">
         <div class="system-info">
           <div class="copyright text-center text-sm text-muted">
-            © {{ new Date().getFullYear() }} VOID SYSTEM — Neural Intelligence Framework
+            © {{ new Date().getFullYear() }} VOID SYSTEM — 虚空系统架构
           </div>
         </div>
       </div>
@@ -95,8 +99,9 @@
  */
 
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { ref, onMounted } from 'vue'
-import { getUserInfo, logout as logoutApi } from '@/api/user'
+import { ref, onMounted, computed, watch } from 'vue'
+import { User, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { authState, logout as logoutApi } from '@/api/user'
 import NavItem from '@/components/NavItem.vue'
 
 const router = useRouter()
@@ -104,61 +109,40 @@ const router = useRouter()
 // ==================== 响应式状态 ====================
 const isLoading = ref(false)
 const showUserMenu = ref(false)
-const userName = ref('')
-const userLevel = ref(1)
-const userAvatar = ref('U')
-const isAuthenticated = ref(false)
-const isAdmin = ref(false)
+
+// 使用计算属性连接全局状态
+const isAuthenticated = computed(() => authState.isLoggedIn)
+const userName = computed(() => {
+  const info = authState.userInfo
+  if (!info) return '用户'
+  return info.username || info.userName || info.user?.username || '用户'
+})
+const userLevel = computed(() => {
+  const info = authState.userInfo
+  if (!info) return 1
+  return info.level || info.userLevel || info.user?.level || 1
+})
+const userAvatar = computed(() => userName.value.charAt(0).toUpperCase())
+const isAdmin = computed(() => {
+  const info = authState.userInfo
+  return info?.user?.role === 'admin' || info?.role === 'admin'
+})
 
 // ==================== 业务逻辑 ====================
 
 /**
- * 加载用户信息
+ * 加载用户信息（初次挂载）
  */
 const loadUserInfo = async () => {
+  // 如果已经通过 reactive 初始化了，这里主要是为了处理可能的 loading 状态
+  isLoading.value = true
   try {
-    // 检查本地存储中是否有 token
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      isAuthenticated.value = false
-      return
-    }
-    
-    // 从本地存储获取缓存的用户信息
-    const cachedUserInfo = getUserInfo()
-    if (cachedUserInfo) {
-        updateUserInfo(cachedUserInfo)
-        isAuthenticated.value = true
-    } else {
-      isAuthenticated.value = false
-    }
+    // 可以在这里调用 getCurrentUser 同步最新的用户信息
   } catch (error) {
     console.error('获取用户信息失败:', error)
-    isAuthenticated.value = false
   } finally {
     isLoading.value = false
   }
-}
-
-/**
- * 更新用户信息显示
- * @param {Object} userData - 用户数据对象
- */
-const updateUserInfo = (userData) => {
-  userName.value = userData.username || userData.userName || '用户'
-  userLevel.value = userData.level || userData.userLevel || 1
-  // 生成头像文字（用户名的第一个字符）
-  userAvatar.value = userName.value.charAt(0).toUpperCase()
-  // 检查是否为管理员
-  isAdmin.value = userData.user?.role === 'admin' || userData.role === 'admin'
-}
-
-/**
- * 切换移动端菜单（待实现）
- */
-const toggleMobileMenu = () => {
-  // TODO: 实现移动端菜单的切换逻辑
-  console.log('移动端菜单切换（待实现）')
 }
 
 /**
@@ -173,8 +157,7 @@ const toggleUserMenu = () => {
  */
 const goToProfile = () => {
   showUserMenu.value = false
-  // TODO: 实现个人资料页面
-  alert('个人资料页面暂未开发完成') 
+  router.push('/settings')
 }
 
 /**
@@ -191,26 +174,13 @@ const goToSettings = () => {
 const logout = async () => {
   showUserMenu.value = false
   try {
-    // 调用登出 API
+    // 调用登出 API（内部会处理状态更新）
     await logoutApi()
-    
-    // 清理本地存储
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user_info')
-    localStorage.removeItem('persona_session_id')
-    
-    // 设置为未认证状态
-    isAuthenticated.value = false
     
     // 跳转到登录页
     router.push('/login')
   } catch (error) {
     console.error('退出登录失败:', error)
-    // 即使 API 调用失败，也清除本地信息并跳转
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user_info')
-    localStorage.removeItem('persona_session_id')
-    isAuthenticated.value = false
     router.push('/login')
   }
 }
@@ -224,556 +194,305 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 加载遮罩 */
-  .loading-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--color-bg-primary);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--spacing-lg);
-    z-index: 9999;
-  }
+/* 系统初始化遮罩 */
+.system-initializer {
+  position: fixed;
+  inset: 0;
+  background: var(--color-bg-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
 
-  .loading {
-    width: 60px;
-    height: 60px;
-    border: 4px solid var(--color-bg-tertiary);
-    border-top-color: var(--color-primary);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
+.initializer-core {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-bottom: 2rem;
+}
 
-  .loading-text {
-    color: var(--color-text-primary);
-    font-weight: 600;
-    font-size: 1.125rem;
-    color: var(--color-primary);
-  }
-/* 主题切换器 */
-  .theme-switcher {
-    position: fixed;
-    top: var(--spacing-lg);
-    right: var(--spacing-lg);
-    z-index: 100;
-    display: flex;
-    gap: var(--spacing-sm);
-    background-color: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-xs);
-  }
-
-  .theme-btn {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--color-text-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .theme-btn:hover {
-    background-color: var(--color-bg-tertiary);
-  }
-
-  .theme-btn.active {
-    background-color: var(--color-bg-tertiary);
-    border-color: var(--color-primary);
-  }
-
-.theme-dot {
-  width: 14px;
-  height: 14px;
+.core-orbit {
+  position: absolute;
+  inset: -10px;
+  border: 2px solid var(--color-primary);
   border-radius: 50%;
-  background-color: var(--theme-color);
-  box-shadow: 0 0 8px var(--theme-color);
+  border-top-color: transparent;
+  animation: spin 2s linear infinite;
 }
 
-.theme-name {
-  font-size: 0.875rem;
-  font-weight: 500;
+.core-glow {
+  width: 100%;
+  height: 100%;
+  background: var(--grad-cyber);
+  border-radius: 50%;
+  filter: blur(15px);
+  opacity: 0.6;
+  animation: pulse 2s ease-in-out infinite;
 }
 
-/* 顶栏样式 - 游戏化界面 */
-.header {
-  background: linear-gradient(135deg, 
-    rgba(17, 24, 39, 0.95), 
-    rgba(31, 41, 55, 0.9)
-  );
-  backdrop-filter: blur(15px);
-  border-bottom: 1px solid rgba(67, 97, 238, 0.2);
-  border-top: 2px solid transparent;
-  padding: var(--spacing-md) 0;
+.initializer-text {
+  font-family: var(--font-family-mono);
+  color: var(--color-primary-light);
+  letter-spacing: 4px;
+}
+
+/* 神经网络顶栏 (Neural Nexus) */
+.system-header {
+  height: 70px;
   position: sticky;
   top: 0;
-  z-index: 100;
-  box-shadow: 
-    0 4px 20px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  transition: all var(--transition-normal);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
 }
 
-.header-container {
+.header-glass-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header-content {
+  position: relative;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.header::before {
-  content: '';
-  position: absolute;
-    top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, 
-    transparent, 
-    var(--color-primary), 
-    var(--color-secondary),
-    var(--color-primary),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: shimmer 3s ease-in-out infinite;
-  opacity: 0.6;
-  }
-
-  .logo-area {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-  }
-
-  .logo {
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-md);
-    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1.625rem;
-    font-weight: bold;
-    box-shadow: 
-      0 0 20px rgba(67, 97, 238, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.2);
-    transition: all var(--transition-normal);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .logo::before {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    animation: spin 3s linear infinite;
-  }
-
-  .logo:hover {
-    transform: scale(1.1) rotate(5deg);
-    box-shadow: 
-      0 0 30px rgba(67, 97, 238, 0.7),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  }
-
-  .system-title {
-    font-size: 1.375rem;
-    font-weight: 700;
-    display: flex;
-    gap: var(--spacing-xs);
-    margin: 0;
-  }
-  .title-void-system {
-    color: var(--color-text-secondary);
-    font-weight: 600;
-  }
-
-/* 导航样式 */
-  .nav-links {
-    display: flex;
-    gap: var(--spacing-sm);
-    align-items: center;
-}
-
-/* 用户区域 */
-  .user-area {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-  }
-  
-  /* 认证状态区域 */
-  .auth-status {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-  }
-  
-  .auth-link {
-    padding: var(--spacing-sm) var(--spacing-md);
-    color: var(--color-text-primary);
-    text-decoration: none;
-    border-radius: var(--radius-md);
-    font-weight: 500;
-    transition: all var(--transition-fast);
-  }
-  
-  .auth-link:hover {
-    background-color: var(--color-bg-secondary);
-  }
-
-  .notification-btn {
-    position: relative;
-    background: transparent;
-    border: none;
-    font-size: 1.25rem;
-    cursor: pointer;
-    padding: var(--spacing-sm);
-    border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
-  }
-
-  .notification-btn:hover {
-    background-color: var(--color-bg-secondary);
-  }
-
-.notification-badge {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    background: var(--color-error);
-    color: white;
-    font-size: 0.75rem;
-    font-weight: 600;
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-.user-profile {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-xs);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .user-profile:hover {
-    background-color: var(--color-bg-secondary);
-  }
-
-  .user-details {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .user-name {
-    font-weight: 500;
-    color: var(--color-text-primary);
-    font-size: 0.875rem;
-  }
-
-  .user-level {
-    font-size: 0.75rem;
-    color: var(--color-primary);
-    font-weight: 600;
-  }
-
-  .user-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 1rem;
-    box-shadow: 
-      0 0 15px rgba(67, 97, 238, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.2);
-    transition: all var(--transition-normal);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .user-avatar::before {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
-    animation: float 3s ease-in-out infinite;
-  }
-
-  .user-profile:hover .user-avatar {
-    transform: scale(1.1);
-    box-shadow: 
-      0 0 25px rgba(67, 97, 238, 0.6),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  }
-
-.user-menu-btn {
-  background: transparent;
-  border: none;
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
+/* 品牌区域 */
+.brand-area {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
   cursor: pointer;
-  padding: var(--spacing-xs);
-  transition: all var(--transition-fast);
+  transition: transform 0.3s ease;
 }
 
-.user-menu-btn:hover {
-  color: var(--color-text-primary);
-  transform: translateY(1px);
+.brand-area:hover {
+  transform: scale(1.02);
 }
 
-/* 用户下拉菜单 */
-  .user-dropdown {
-    position: absolute;
-    top: calc(100% + var(--spacing-sm));
-    right: var(--spacing-md);
-    background-color: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-    padding: var(--spacing-xs) 0;
-    min-width: 180px;
-    z-index: 101;
-  }
-
-  .user-dropdown::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--color-primary);
-  }
-
-  .dropdown-item {
-    padding: var(--spacing-sm) var(--spacing-md);
-    color: var(--color-text-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    font-size: 0.875rem;
-  }
-
-  .dropdown-item:hover {
-    background-color: var(--color-bg-tertiary);
-  }
-
-.dropdown-divider {
-  height: 1px;
-  background-color: var(--color-border);
-  margin: var(--spacing-xs) 0;
-}
-
-.dropdown-item.logout {
-  color: var(--color-error);
-  font-weight: 500;
-}
-
-.dropdown-item.logout:hover {
-  background-color: rgba(239, 68, 68, 0.1);
-}
-
-/* 移动端菜单按钮 */
-  .mobile-menu-btn {
-    display: none;
-    background: transparent;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: var(--spacing-sm);
-    border-radius: var(--radius-md);
-    transition: background-color var(--transition-fast);
-  }
-
-.mobile-menu-btn:hover {
-  background-color: var(--color-bg-secondary);
-}
-
-/* 主内容区 */
-  .main {
-    flex: 1;
-    padding: var(--spacing-xl) 0;
-    background-color: var(--color-bg-primary);
-  }
-
-/* 底部样式 */
-  .footer {
-    background-color: var(--color-bg-primary);
-    border-top: 1px solid var(--color-border-light);
-    padding: var(--spacing-lg) 0;
-  }
-
-.system-info {
-  text-align: center;
-}
-
-/* 数据卡片样式 */
-  .stat-card {
-    background-color: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-lg);
-    transition: all var(--transition-normal);
-    box-shadow: var(--shadow-md);
-  }
-
-  .stat-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--color-primary);
-  }
-
-  .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
-  }
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--color-primary-light), var(--color-primary));
+.brand-v-icon {
+  width: 32px;
+  height: 32px;
+  background: var(--grad-cyber);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.5rem;
-  color: white;
-  box-shadow: 0 0 15px rgba(67, 97, 238, 0.2);
-  margin-bottom: var(--spacing-md);
+  box-shadow: var(--shadow-glow);
 }
 
-.stat-value {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin-bottom: var(--spacing-xs);
+.v-inner {
+  width: 16px;
+  height: 16px;
+  background: var(--color-bg-primary);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
 }
 
-.stat-label {
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
+.brand-label {
+  display: flex;
+  flex-direction: column;
 }
 
-.stat-change {
-  font-size: 0.75rem;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  display: inline-flex;
+.brand-name {
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: 2px;
+  background: linear-gradient(to right, #fff, var(--color-primary-light));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand-suffix {
+  font-size: 0.6rem;
+  font-weight: 300;
+  color: var(--color-text-muted);
+  letter-spacing: 4px;
+}
+
+/* 导航链接 */
+.nav-links {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* 操作中枢 */
+.central-ops {
+  display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1.5rem;
 }
 
-.stat-change.positive {
-  background-color: rgba(34, 197, 94, 0.1);
-  color: var(--color-success);
-}
-
-.stat-change.negative {
-  background-color: rgba(239, 68, 68, 0.1);
-  color: var(--color-error);
-}
-
-/* 移动端导航覆盖 */
-  .mobile-nav-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.5);
-    z-index: 200;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .mobile-nav {
-    background-color: var(--color-bg-primary);
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-lg);
-    width: 90%;
-    max-width: 400px;
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-.mobile-close-btn {
-  position: absolute;
-  top: var(--spacing-md);
-  right: var(--spacing-md);
-  background: transparent;
-  border: none;
-  font-size: 1.5rem;
+.user-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.4rem 0.4rem 1.2rem;
+  border-radius: 2rem;
   cursor: pointer;
-  padding: var(--spacing-xs);
+  transition: all 0.3s ease;
+  border: 1px solid var(--color-border-light);
+}
+
+.user-node:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 20px rgba(67, 97, 238, 0.2);
+}
+
+.user-info-text {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+}
+
+.user-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-text-primary);
+}
+
+.user-rank {
+  font-size: 0.7rem;
+  color: var(--color-primary);
+  font-family: var(--font-family-mono);
+  font-weight: 700;
+}
+
+.user-hex-avatar {
+  width: 38px;
+  height: 38px;
+  background: var(--grad-cyber);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  color: #fff;
+  font-weight: 900;
+}
+
+/* 用户详情菜单 */
+.user-ops-menu {
+  position: absolute;
+  top: calc(100% + 1rem);
+  right: 0;
+  width: 200px;
+  padding: 0.5rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+  z-index: 1001;
+  transform-origin: top right;
+  animation: slideDown 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
   border-radius: var(--radius-md);
-  transition: background-color var(--transition-fast);
+  color: var(--color-text-secondary);
+  transition: all 0.2s ease;
+  font-size: 0.9rem;
 }
 
-.mobile-close-btn:hover {
-  background-color: var(--color-bg-secondary);
+.menu-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+  transform: translateX(4px);
 }
 
-.mobile-nav-links {
-  margin-top: var(--spacing-lg);
+.menu-item.logout {
+  color: #ff4757;
 }
 
-.mobile-nav-links .nav-link {
-  padding: var(--spacing-md);
-  font-size: 1.125rem;
+.menu-item.logout:hover {
+  background: rgba(255, 71, 87, 0.1);
 }
 
-/* 基础样式优化 */
-  html {
-    scroll-behavior: smooth;
+.menu-divider {
+  height: 1px;
+  background: var(--color-border-light);
+  margin: 0.4rem 0;
+}
+
+/* 主内容区域 */
+.main {
+  padding-top: 2rem;
+  min-height: calc(100vh - 70px - 60px);
+}
+
+/* 全局动画 */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.glitch-text {
+  position: relative;
+  display: inline-block;
+}
+
+/* 移动端适配 */
+@media (max-width: 992px) {
+  .nav-links {
+    display: none;
   }
+}
 
-  ::selection {
-    background-color: rgba(67, 97, 238, 0.2);
-    color: var(--color-primary);
-  }
+/* 按钮组件重载 */
+.cyber-btn-outline {
+  border: 1px solid var(--color-primary-light);
+  background: transparent;
+  color: var(--color-primary-light);
+  border-radius: 2rem;
+  font-weight: 700;
+  padding: 0.5rem 1.5rem;
+}
 
-  button:focus, 
-  a:focus, 
-  input:focus, 
-  textarea:focus, 
-  select:focus {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
-  }
+.cyber-btn-solid {
+  background: var(--grad-cyber);
+  border: none;
+  color: #fff;
+  border-radius: 2rem;
+  font-weight: 700;
+  padding: 0.5rem 1.5rem;
+  box-shadow: var(--shadow-glow);
+}
+
+/* 统一底部 */
+.footer {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg-primary);
+}
+
+.copyright {
+  font-family: var(--font-family-mono);
+  font-size: 0.7rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
 </style>

@@ -12,7 +12,7 @@
             <el-input
               v-model="registerForm.username"
               placeholder="用户名"
-              prefix-icon="el-icon-user"
+              prefix-icon="User"
               :disabled="isLoading"
             />
           </div>
@@ -23,7 +23,7 @@
             <el-input
               v-model="registerForm.email"
               placeholder="邮箱（选填）"
-              prefix-icon="el-icon-message"
+              prefix-icon="Message"
               :disabled="isLoading"
             />
           </div>
@@ -34,7 +34,7 @@
             <el-input
               v-model="registerForm.nickname"
               placeholder="昵称（选填）"
-              prefix-icon="el-icon-user-solid"
+              prefix-icon="UserFilled"
               :disabled="isLoading"
             />
           </div>
@@ -46,7 +46,7 @@
               v-model="registerForm.password"
               type="password"
               placeholder="密码"
-              prefix-icon="el-icon-lock"
+              prefix-icon="Lock"
               show-password
               :disabled="isLoading"
             />

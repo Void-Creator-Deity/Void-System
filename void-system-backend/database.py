@@ -199,6 +199,47 @@ class Database:
         )
         ''')
 
+        # 聊天分组表
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_groups (
+            group_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        ''')
+
+        # 聊天会话表
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            session_name TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES chat_groups(group_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        ''')
+
+        # 聊天消息表
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            message_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tokens INTEGER DEFAULT 0,
+            reply_to_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        ''')
+
         # 用户文档表 - DeepSeek风格文档管理
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_documents (
@@ -257,6 +298,12 @@ class Database:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_status ON user_documents(parse_status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_created ON user_documents(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_document_versions_doc_id ON user_document_versions(doc_id)")
+        
+        # 聊天相关索引
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_groups_user_id ON chat_groups(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_group_id ON chat_sessions(group_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id)")
         
         conn.commit()
         conn.close()
@@ -1957,5 +2004,187 @@ class Database:
                 "total_size": total_size,
                 "completed_documents": status_stats.get("completed", 0)
             }
+        finally:
+            conn.close()
+
+    # ==================== 智能助手对话持久化方法 ====================
+    
+    def add_chat_group(self, user_id: str, group_name: str) -> str:
+        """创建新的对话分组"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        group_id = str(uuid.uuid4())
+        try:
+            cursor.execute(
+                "INSERT INTO chat_groups (group_id, user_id, group_name) VALUES (?, ?, ?)",
+                (group_id, user_id, group_name)
+            )
+            conn.commit()
+            return group_id
+        finally:
+            conn.close()
+
+    def get_chat_groups(self, user_id: str) -> List[Dict[str, Any]]:
+        """获取用户的所有对话分组（包含各组下的会话预览）"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM chat_groups WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,)
+            )
+            groups = [dict(row) for row in cursor.fetchall()]
+            
+            # 为每个组获取会话
+            for group in groups:
+                cursor.execute(
+                    "SELECT * FROM chat_sessions WHERE group_id = ? ORDER BY updated_at DESC",
+                    (group['group_id'],)
+                )
+                group['sessions'] = [dict(row) for row in cursor.fetchall()]
+            
+            return groups
+        finally:
+            conn.close()
+
+    def update_chat_group(self, group_id: str, user_id: str, name: str) -> bool:
+        """更新分组名称"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE chat_groups SET group_name = ? WHERE group_id = ? AND user_id = ?",
+                (name, group_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_chat_group(self, group_id: str, user_id: str) -> bool:
+        """删除分组"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM chat_groups WHERE group_id = ? AND user_id = ?",
+                (group_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def add_chat_session(self, user_id: str, group_id: str, session_name: str, session_id: Optional[str] = None) -> str:
+        """创建新的会话"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        sid = session_id or str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute(
+                """INSERT INTO chat_sessions (session_id, group_id, user_id, session_name, created_at, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (sid, group_id, user_id, session_name, now, now)
+            )
+            conn.commit()
+            return sid
+        finally:
+            conn.close()
+
+    def update_chat_session(self, session_id: str, user_id: str, name: Optional[str] = None, group_id: Optional[str] = None) -> bool:
+        """更新会话信息（重命名或移动分组）"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            fields = []
+            params = []
+            if name:
+                fields.append("session_name = ?")
+                params.append(name)
+            if group_id:
+                fields.append("group_id = ?")
+                params.append(group_id)
+            
+            if not fields: return False
+            
+            fields.append("updated_at = ?")
+            params.append(datetime.now().isoformat())
+            
+            params.extend([session_id, user_id])
+            query = f"UPDATE chat_sessions SET {', '.join(fields)} WHERE session_id = ? AND user_id = ?"
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_chat_session(self, session_id: str, user_id: str) -> bool:
+        """删除会话"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM chat_sessions WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def add_chat_message(self, user_id: str, session_id: str, role: str, content: str, 
+                         tokens: int = 0, reply_to_id: Optional[str] = None) -> str:
+        """添加新消息"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        msg_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute(
+                """INSERT INTO chat_messages (message_id, session_id, user_id, role, content, tokens, reply_to_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (msg_id, session_id, user_id, role, content, tokens, reply_to_id, now)
+            )
+            # 更新会话的最后活跃时间
+            cursor.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (now, session_id)
+            )
+            conn.commit()
+            return msg_id
+        finally:
+            conn.close()
+
+    def get_chat_messages(self, session_id: str, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取某会话的历史消息"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 获取消息并在连接时尝试带上被引用消息的预览
+            cursor.execute(
+                """SELECT m.*, r.content as reply_content 
+                   FROM chat_messages m
+                   LEFT JOIN chat_messages r ON m.reply_to_id = r.message_id
+                   WHERE m.session_id = ? AND m.user_id = ?
+                   ORDER BY m.created_at ASC LIMIT ?""",
+                (session_id, user_id, limit)
+            )
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def clear_chat_history(self, session_id: str, user_id: str) -> bool:
+        """清空某会话的历史记录"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM chat_messages WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id)
+            )
+            conn.commit()
+            return True
         finally:
             conn.close()

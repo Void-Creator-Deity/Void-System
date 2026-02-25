@@ -21,11 +21,11 @@ export const streamPersona = async (text, sessionId, onMessage, onError) => {
     const headers = {
       'Content-Type': 'application/json'
     };
-    
+
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    
+
     // 使用 Fetch API 的 ReadableStream 处理 POST 流式响应
     // 使用相对路径，让 Vite 代理自动处理 CORS
     const response = await fetch('/api/stream-chat', {
@@ -116,11 +116,11 @@ export const streamAdvisor = async (topic, onMessage, onError) => {
     const headers = {
       'Content-Type': 'application/json'
     };
-    
+
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    
+
     // 使用 Fetch API 的 ReadableStream 处理 POST 流式响应
     // 使用相对路径，让 Vite 代理自动处理 CORS
     const response = await fetch('/api/stream-chat', {
@@ -206,11 +206,11 @@ export const streamQA = async (question, onMessage, onError) => {
     const headers = {
       'Content-Type': 'application/json'
     };
-    
+
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    
+
     // 使用 Fetch API 的 ReadableStream 处理 POST 流式响应
     // 使用相对路径，让 Vite 代理自动处理 CORS
     const response = await fetch('/api/stream-chat', {
@@ -312,11 +312,9 @@ export const askPersona = async (text, cancelToken) => {
       cancelToken  // 传递取消令牌（用于取消请求）
     }
   )
-  
-  // 处理新的响应格式，提取净化后的内容
-  // 处理新的响应格式，提取净化后的内容
-  // 处理新的响应格式，提取净化后的内容
-  return res.data.output?.content || res.data.output?.content || res.data.output
+
+  // 处理响应格式，提取净化后的内容
+  return res.data.output?.content || res.data.output
 }
 
 /**
@@ -327,29 +325,24 @@ export const askPersona = async (text, cancelToken) => {
  */
 export const getAdvisor = async (topic, cancelToken) => {
   try {
-    // 使用简单的测试端点，而不是复杂的LangChain路由
     const res = await api.post(
-      "/api/test-advisor",
+      "/api/ai/advisor",
       {
         topic: topic
       },
       {
-        cancelToken
+        cancelToken,
+        timeout: 120000  // AI生成可能需要较长时间，设置2分钟超时
       }
     )
-    
-    console.log('完整响应:', res.data);
-    console.log('数据部分:', res.data.data);
-    console.log('数据类型:', typeof res.data.data);
-    
+
     // 直接返回结构化数据
     return res.data.data
   } catch (error) {
     // 打印详细错误信息，方便调试
     console.error('获取任务建议失败:', error)
     console.error('错误详情:', error.response?.data || error.message)
-    console.error('错误响应:', error.response)
-    
+
     // 重新抛出错误，让上层处理
     throw error
   }
@@ -358,21 +351,35 @@ export const getAdvisor = async (topic, cancelToken) => {
 /**
  * 调用知识问答（基于 RAG）
  * @param {string} question - 用户问题
- * @param {import('axios').CancelToken} [cancelToken] - 可选的取消令牌
+ * @param {Object} [options] - 可选的参数（如 mode）
  * @returns {Promise<string>} 问答结果
  */
-export const askQA = async (question, cancelToken) => {
+export const askQA = async (question, options = {}) => {
   const res = await api.post(
     "/api/lc/qa/invoke",
     {
-      input: { question }
-    },
-    {
-      cancelToken
+      input: {
+        question,
+        mode: options.mode || 'vector'
+      }
     }
   )
-  
+
   return res.data.output
+}
+
+/**
+ * 基于用户文档进行智能问答
+ * @param {string} question - 用户问题
+ * @param {Array} [documentIds] - 可选的文档ID列表，用于限定范围
+ * @returns {Promise<Object>} 问答结果和来源
+ */
+export const askUserQA = async (question, documentIds = null) => {
+  const res = await api.post("/api/user/qa/ask", {
+    question: question,
+    document_ids: documentIds
+  })
+  return res.data.data
 }
 
 

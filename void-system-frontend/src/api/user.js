@@ -4,7 +4,16 @@
  * 用户认证相关的 API 接口和工具函数
  */
 
+import { reactive } from 'vue'
 import api from './index.js'
+
+/**
+ * 全局认证状态管理（响应式）
+ */
+export const authState = reactive({
+  isLoggedIn: !!localStorage.getItem('access_token'),
+  userInfo: localStorage.getItem('user_info') ? JSON.parse(localStorage.getItem('user_info')) : null
+})
 
 /**
  * 设置认证拦截器
@@ -33,6 +42,8 @@ export const setupAuthInterceptor = () => {
         // Token 过期或无效，清除本地存储并跳转到登录页
         localStorage.removeItem('access_token')
         localStorage.removeItem('user_info')
+        authState.isLoggedIn = false
+        authState.userInfo = null
         window.location.href = '/login'
       }
       return Promise.reject(error)
@@ -51,20 +62,24 @@ export const login = async (username, password) => {
   const formData = new FormData()
   formData.append('username', username)
   formData.append('password', password)
-  
+
   const response = await api.post('/api/token', formData, {
     headers: {
       'Content-Type': undefined  // 让浏览器自动设置 Content-Type
     }
   })
-  
+
   // 处理 APIResponse 格式，实际数据在 data 字段中
   const authResult = response.data.data
-  
+
   // 保存 token 和用户信息到本地存储
   if (authResult.access_token) {
     localStorage.setItem('access_token', authResult.access_token)
     localStorage.setItem('user_info', JSON.stringify(authResult))
+
+    // 更新响应式状态
+    authState.isLoggedIn = true
+    authState.userInfo = authResult
   }
 
   return authResult
@@ -109,6 +124,10 @@ export const logout = async () => {
   localStorage.removeItem('access_token')
   localStorage.removeItem('user_info')
   localStorage.removeItem('persona_session_id')  // 清除会话 ID
+
+  // 更新响应式状态
+  authState.isLoggedIn = false
+  authState.userInfo = null
 }
 
 /**

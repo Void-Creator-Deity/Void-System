@@ -168,11 +168,11 @@ export default {
 .ai-content {
   flex: 1;
   padding: 12px 16px;
-  background-color: #1e293b;
+  background-color: transparent;
   border-radius: 8px;
   line-height: 1.6;
   word-break: break-word;
-  color: #ffffff;
+  color: #1e293b;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
@@ -185,12 +185,12 @@ export default {
 .ai-content h6 {
   margin: 12px 0;
   font-weight: 600;
-  color: #f1f5f9;
+  color: #1e293b;
 }
 
 .ai-content h1 {
   font-size: 1.5rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid #cbd5e1;
   padding-bottom: 4px;
 }
 
@@ -203,22 +203,23 @@ export default {
 }
 
 .ai-content pre {
-  background-color: #0f172a;
+  background-color: #f1f5f9;
   padding: 12px;
   border-radius: 6px;
   overflow-x: auto;
   margin: 12px 0;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.9rem;
+  color: #1e293b;
 }
 
 .ai-content code {
-  background-color: #0f172a;
+  background-color: #f1f5f9;
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.9rem;
-  color: #f472b6;
+  color: #dc2626;
 }
 
 .ai-content ul,
@@ -229,6 +230,7 @@ export default {
 
 .ai-content li {
   margin-bottom: 4px;
+  color: #1e293b;
 }
 
 .ai-content ul li::marker {
@@ -242,22 +244,22 @@ export default {
 
 .ai-content strong {
   font-weight: 600;
-  color: #f1f5f9;
+  color: #1e293b;
 }
 
 .ai-content em {
   font-style: italic;
-  color: #cbd5e1;
+  color: #475569;
 }
 
 .ai-content a {
-  color: #60a5fa;
+  color: #2563eb;
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .ai-content a:hover {
-  color: #3b82f6;
+  color: #1d4ed8;
   text-decoration: underline;
 }
 
@@ -265,14 +267,14 @@ export default {
   border-left: 4px solid #6366f1;
   padding-left: 12px;
   margin: 12px 0;
-  color: #cbd5e1;
+  color: #475569;
   font-style: italic;
 }
 
 .ai-content hr {
   border: none;
-  border-top: 1px solid #334155;
-  margin: 20px 0;
+  border-top: 1px solid #cbd5e1;
+  margin: 16px 0;
 }
 
 .ai-loading {

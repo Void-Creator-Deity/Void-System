@@ -1,945 +1,674 @@
 <template>
-  <div class="ai-console">
-    <!-- 控制台标题 -->
-    <div class="console-header">
-      <h2>AI 命令控制台</h2>
-      <div class="status-indicator">
-        <div class="status-dot" :class="{ 'online': !isLoading && messages.length > 0, 'loading': isLoading }"></div>
-        <span>{{ isLoading ? '连接中...' : (messages.length > 0 ? '在线' : '离线') }}</span>
-      </div>
-    </div>
-    
-    <!-- 会话信息 -->
-    <div v-if="conversationId" class="conversation-info">
-      <span class="conv-id">会话ID: {{ conversationId }}</span>
-      <span class="token-count">使用令牌: {{ totalTokens }}</span>
-    </div>
-    
-    <!-- 聊天面板 -->
-    <div class="chat-container">
-      <!-- 消息区域 -->
-      <div class="messages-container" ref="messagesContainer">
-        <div v-if="messages.length === 0" class="welcome-message">
-          <div class="system-icon">⟩</div>
-          <p>虚空系统已启动</p>
-          <p class="subtitle">你好，我是系统精灵。有什么可以帮助你的？</p>
-        </div>
-        
-        <div v-for="(msg, idx) in messages" :key="idx" 
-             :class="['message', msg.role, idx === messages.length - 1 ? 'fade-in' : '']">
-          
-          <!-- 用户消息 -->
-          <div v-if="msg.role === 'user'" class="user-message">
-            <div class="message-avatar">👤</div>
-            <div class="message-content">
-              <div class="message-header">
-                <span class="role-label">用户</span>
-                <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
-              </div>
-              <div class="message-text">{{ msg.text }}</div>
-            </div>
-          </div>
-          
-          <!-- 系统消息 -->
-          <div v-else class="system-message">
-            <div class="message-avatar">⚡</div>
-            <div class="message-content">
-              <div class="message-header">
-                <span class="role-label">系统精灵</span>
-                <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
-              </div>
-              <div class="message-text">{{ msg.text }}</div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 加载动画 -->
-        <div v-if="isLoading" class="loading-indicator">
-          <div class="loading-dots">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 输入区域 -->
-      <div class="input-container">
-        <div class="input-wrapper">
-          <div class="input-prefix">⟩</div>
-          <el-input
-            v-model="input"
-            placeholder="请输入..."
-            @keyup.enter="send"
-            :disabled="isLoading"
-          />
-        </div>
-        <!-- 文件上传按钮 -->
-        <label class="file-upload-btn" @click.prevent="fileInputRef?.click()">
-          <el-icon><Upload /></el-icon>
-        </label>
-        <input
-          ref="fileInputRef"
-          type="file"
-          :accept="acceptedFileTypes.map(type => '.' + type).join(',')"
-          style="display: none"
-          @change="handleFileUpload"
-        />
-        <el-button @click="send" :loading="isLoading" :disabled="isLoading || !input.trim()">
-          发送
+  <div class="ai-console-layout">
+    <!-- 左侧会话侧边栏 -->
+    <aside class="console-sidebar card-glass" :class="{ 'collapsed': isSidebarCollapsed }">
+      <div class="sidebar-header">
+        <h3 v-if="!isSidebarCollapsed">量子指令集</h3>
+        <el-button circle size="small" @click="isSidebarCollapsed = !isSidebarCollapsed">
+          <el-icon><Fold v-if="!isSidebarCollapsed"/><Expand v-else/></el-icon>
         </el-button>
       </div>
-    </div>
-    
-    <!-- 底部状态信息 -->
-    <div class="console-footer">
-      <div class="connection-info">
-        <span class="connection-status">连接状态: 稳定</span>
-        <span class="version">版本: v1.0.0</span>
+
+      <div class="sidebar-actions" v-if="!isSidebarCollapsed">
+        <el-button type="primary" class="new-btn" @click="createNewSession">
+          <el-icon><Plus /></el-icon> 开启新对话
+        </el-button>
+        <el-button type="info" plain class="new-group-btn" @click="createNewGroup">
+          <el-icon><FolderAdd /></el-icon> 新建组
+        </el-button>
       </div>
-    </div>
+
+      <div class="groups-list" v-if="!isSidebarCollapsed">
+        <div v-for="group in chatStore.groups" :key="group.group_id" class="group-item">
+          <div class="group-title" @click="toggleGroup(group.group_id)">
+            <el-icon><Collection /></el-icon>
+            <span>{{ group.group_name }}</span>
+            <el-dropdown @command="(cmd) => handleGroupCommand(cmd, group)">
+              <el-icon class="more-icon"><MoreFilled /></el-icon>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                  <el-dropdown-item command="delete" dir="rtl">删除组</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+          
+          <div class="session-items">
+            <div 
+              v-for="session in group.sessions" 
+              :key="session.session_id"
+              :class="['session-link', { 'active': chatStore.activeSessionId === session.session_id }]"
+              @click="switchSession(group.group_id, session.session_id)"
+            >
+              <el-icon><ChatLineRound /></el-icon>
+              <span class="session-name">{{ session.session_name }}</span>
+              <el-dropdown trigger="click" @command="(cmd) => handleSessionCommand(cmd, group.group_id, session)">
+                <el-icon class="session-more"><MoreFilled /></el-icon>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="rename"><el-icon><EditPen /></el-icon>重命名</el-dropdown-item>
+                    <el-dropdown-item v-if="chatStore.groups.length > 1" command="move"><el-icon><Rank /></el-icon>移动到组</el-dropdown-item>
+                    <el-dropdown-item command="delete" dir="rtl"><el-icon><Delete /></el-icon>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主对话区 -->
+    <main class="console-main">
+      <div class="console-header">
+        <div class="header-info">
+          <div class="active-path">
+            <span class="path-group">{{ currentGroup?.group_name }}</span>
+            <el-icon><ArrowRight /></el-icon>
+            <span class="path-session">{{ currentSession?.session_name }}</span>
+          </div>
+          <div class="status-indicator">
+            <div class="status-dot" :class="{ 'online': !isLoading, 'loading': isLoading }"></div>
+            <span>{{ isLoading ? '正在同步虚空指令...' : '虚空链路正常' }}</span>
+          </div>
+        </div>
+        <div class="header-ops">
+          <el-button-group>
+            <el-tooltip content="复制整个会话" placement="bottom">
+              <el-button size="small" @click="copyFullSession"><el-icon><DocumentCopy /></el-icon></el-button>
+            </el-tooltip>
+            <el-tooltip content="清除当前历史" placement="bottom">
+              <el-button size="small" @click="confirmClear"><el-icon><Delete /></el-icon></el-button>
+            </el-tooltip>
+          </el-button-group>
+        </div>
+      </div>
+
+      <!-- 聊天内容 -->
+      <div class="messages-viewport" ref="viewport">
+        <div v-if="!messages?.length" class="empty-state">
+          <div class="void-logo">V</div>
+          <h3>虚空系统 · 指令控制台</h3>
+          <p>请输入指令以开始。支持文件注入、跨会话引用与自动历史留档。</p>
+          <div class="quick-starts">
+            <div class="q-chip" @click="sendQuick('分析我目前的进化进度')">进度分析</div>
+            <div class="q-chip" @click="sendQuick('生成下一阶段任务建议')">任务建议</div>
+            <div class="q-chip" @click="sendQuick('系统性能自检')">系统自检</div>
+          </div>
+        </div>
+
+        <div 
+          v-for="(msg, idx) in messages" 
+          :key="msg.id"
+          :id="'msg-' + msg.id"
+          class="message-wrapper"
+          :class="[msg.role]"
+        >
+          <!-- 消息引用预览 -->
+          <div v-if="msg.replyToId" class="reply-context" @click="navigateToMessage(msg.replyToId)">
+            <el-icon><ChatDotSquare /></el-icon>
+            <span>{{ msg.reply_content?.substring(0, 40) }}...</span>
+          </div>
+
+          <div class="bubble-container">
+            <div class="avatar-cell">
+              <div class="avatar" :class="msg.role">
+                {{ msg.role === 'user' ? 'U' : 'V' }}
+              </div>
+            </div>
+            
+            <div class="bubble-content card-glass">
+              <div class="bubble-header">
+                <span class="role-tag">{{ msg.role === 'user' ? 'ME' : 'VOID_SYSTEM' }}</span>
+                <div class="bubble-actions">
+                  <el-button link size="small" @click="quoteMessage(msg)"><el-icon><ChatDotSquare /></el-icon></el-button>
+                  <el-button link size="small" @click="copyToClipboard(msg.text)"><el-icon><CopyDocument /></el-icon></el-button>
+                </div>
+              </div>
+              
+              <div class="text-area">
+                <div v-if="msg.role === 'system'" v-html="renderMarkdown(msg.text)" class="markdown-body"></div>
+                <div v-else class="text-raw">{{ msg.text }}</div>
+              </div>
+
+              <div class="bubble-footer">
+                <span class="time">{{ formatTime(msg.timestamp) }}</span>
+                <span v-if="msg.tokens" class="tokens">[{{ msg.tokens }} TKS]</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isLoading && !isStreamingMsg" class="message-wrapper system">
+          <div class="bubble-container">
+            <div class="avatar-cell"><div class="avatar system">V</div></div>
+            <div class="bubble-content card-glass">
+              <div class="typing"><span></span><span></span><span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 输入区 -->
+      <footer class="input-container">
+        <!-- 引用提示栏 -->
+        <div v-if="replyingMessage" class="reply-bar">
+          <div class="reply-info">
+            <el-icon><ChatDotSquare /></el-icon>
+            引用: {{ replyingMessage.text.substring(0, 50) }}...
+          </div>
+          <el-icon class="close-reply" @click="replyingMessage = null"><Close /></el-icon>
+        </div>
+
+        <div class="input-panel card-glass">
+          <div class="panel-left">
+            <el-tooltip content="注入本地文件" placement="top">
+              <div class="panel-icon" @click="fileInputRef?.click()">
+                <el-icon><Link /></el-icon>
+              </div>
+            </el-tooltip>
+            <input ref="fileInputRef" type="file" hidden @change="handleFileUpload" />
+          </div>
+          
+          <el-input
+            v-model="input"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 8 }"
+            placeholder="在此键入指令... (Shift+Enter 换行, Enter 发送)"
+            resize="none"
+            class="main-textarea"
+            @keydown.enter.prevent="handleKeyEnter"
+            :disabled="isLoading"
+          />
+
+          <div class="panel-right">
+            <el-button 
+              type="primary" 
+              circle 
+              class="glow-btn"
+              @click="handleSend"
+              :loading="isLoading"
+              :disabled="!input.trim() && !isLoading"
+            >
+              <el-icon v-if="!isLoading"><Promotion /></el-icon>
+            </el-button>
+          </div>
+        </div>
+      </footer>
+    </main>
   </div>
 </template>
 
 <script setup>
-/**
- * AI Console Component
- * ---------------------
- * 系统精灵对话控制台，支持多轮对话和会话历史
- */
-
-import { ref, nextTick, watch, onMounted } from "vue"
-import { ElMessage } from "element-plus"
-import { Upload } from "@element-plus/icons-vue"
-import { askPersona, streamPersona } from "@/api/ai"
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useChatStore } from '@/stores/chat'
+import { 
+  Fold, Expand, Plus, FolderAdd, Collection, MoreFilled, 
+  ChatLineRound, Close, ArrowRight, Delete, DocumentCopy,
+  ChatDotSquare, CopyDocument, Promotion, Link, EditPen, Rank
+} from '@element-plus/icons-vue'
+import { marked } from 'marked'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { streamPersona } from "@/api/ai"
 import { sessionApi } from "@/api/session"
 
-// ==================== 响应式状态 ====================
-const input = ref("")
-const messages = ref([])
-const isLoading = ref(false)  // 初始状态改为 false，避免显示加载状态
-const messagesContainer = ref(null)
-const conversationId = ref('')
-const totalTokens = ref(0)
-// 文件上传相关状态
+const chatStore = useChatStore()
+const isSidebarCollapsed = ref(false)
+const input = ref('')
+const isLoading = ref(false)
+const viewport = ref(null)
 const fileInputRef = ref(null)
-const acceptedFileTypes = ref(['txt', 'md', 'json', 'csv', 'py', 'js', 'html', 'css', 'xml']) // 与后端统一
+const replyingMessage = ref(null)
 
-// ==================== 工具函数 ====================
+// 当前状态
+const currentGroup = computed(() => chatStore.activeGroup)
+const currentSession = computed(() => chatStore.activeSession)
+const messages = computed(() => chatStore.messages)
+const isStreamingMsg = computed(() => {
+  if (!messages.value.length) return false
+  const last = messages.value[messages.value.length - 1]
+  return last.role === 'system' && isLoading.value
+})
 
-/**
- * 自动滚动消息容器到底部
- */
-const scrollToBottom = async () => {
-  await nextTick()
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  }
+// --- 动作 ---
+
+const switchSession = (gid, sid) => {
+  chatStore.switchGroup(gid)
+  chatStore.switchSession(sid)
 }
 
-/**
- * 格式化时间戳
- * @param {string} timestamp - ISO 时间字符串
- * @returns {string} 格式化后的时间字符串
- */
-const formatTime = (timestamp) => {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', { 
-    hour: '2-digit', 
-    minute: '2-digit' 
+const createNewSession = () => {
+  chatStore.createSession()
+}
+
+const createNewGroup = () => {
+  ElMessageBox.prompt('请输入组名称', '新建组', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    inputPlaceholder: '如：算法学习、系统自检等'
+  }).then(({ value }) => {
+    chatStore.createGroup(value || '新对话组')
+    ElMessage.success('组已创建')
   })
 }
 
-// ==================== 业务逻辑 ====================
-
-/**
- * 初始化会话
- */
-const initializeConversation = async () => {
-  try {
-    isLoading.value = true
-    // 模拟 API 调用延迟（实际项目中可以移除）
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    conversationId.value = 'conv_' + Date.now()
-    console.log('会话初始化成功:', conversationId.value)
-  } catch (error) {
-    console.error('会话初始化失败:', error)
-    ElMessage.error('系统连接失败，请稍后再试')
-  } finally {
-    isLoading.value = false
+const handleGroupCommand = (cmd, group) => {
+  if (cmd === 'rename') {
+    ElMessageBox.prompt('请输入分组新名称', '重命名组', {
+      inputValue: group.group_name,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消'
+    }).then(({ value }) => {
+      if (value) chatStore.renameGroup(group.group_id, value)
+    })
+  } else if (cmd === 'delete') {
+    ElMessageBox.confirm(`确定删除组 "${group.group_name}" 及其所有会话吗？`, '警告', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    }).then(() => chatStore.deleteGroup(group.group_id))
   }
 }
 
-/**
- * 发送消息
- */
-const send = async () => {
-  // 验证输入
-  if (!input.value.trim() || isLoading.value) return
-  
-  // 保存用户输入并清空输入框
-  const userInput = input.value.trim()
-  input.value = ""
-  
-  // 添加用户消息到消息列表
-  const userMessage = {
-    role: "user",
-    text: userInput,
-    timestamp: new Date().toISOString()
+const handleSessionCommand = (cmd, gid, session) => {
+  if (cmd === 'rename') {
+    ElMessageBox.prompt('请输入对话新名称', '重命名对话', {
+      inputValue: session.session_name,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消'
+    }).then(({ value }) => {
+      if (value) chatStore.renameSession(session.session_id, value)
+    })
+  } else if (cmd === 'delete') {
+    chatStore.deleteSession(session.session_id)
+  } else if (cmd === 'move') {
+    const otherGroups = chatStore.groups.filter(g => g.group_id !== gid)
+    if (!otherGroups.length) return
+    
+    ElMessageBox.confirm(`将此会话移动到 "${otherGroups[0].group_name}" 吗？`, '移动会话', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消'
+    }).then(() => {
+      chatStore.moveSession(session.session_id, otherGroups[0].group_id)
+      ElMessage.success(`已移动到 ${otherGroups[0].group_name}`)
+    })
   }
-  messages.value.push(userMessage)
+}
+
+const toggleGroup = (id) => {
+  // 可以在此处实现收起/展开组的逻辑，如果需要的话。
+}
+
+const navigateToMessage = (mid) => {
+  const el = document.getElementById('msg-' + mid)
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('highlight-flash')
+    setTimeout(() => el.classList.remove('highlight-flash'), 2000)
+  } else {
+    ElMessage.warning('引用的消息不在当前视图中')
+  }
+}
+
+const confirmClear = () => {
+  ElMessageBox.confirm('一键格式化当前会话历史？', '系统警告', {
+    type: 'warning'
+  }).then(() => chatStore.clearActiveSession())
+}
+
+const quoteMessage = (msg) => {
+  replyingMessage.value = msg
+}
+
+const copyToClipboard = (text) => {
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success('已复制到剪贴板')
+  })
+}
+
+const copyFullSession = () => {
+  const content = messages.value.map(m => `[${m.role.toUpperCase()}] ${m.text}`).join('\n\n')
+  copyToClipboard(content)
+}
+
+const handleKeyEnter = (e) => {
+  if (e.shiftKey) return
+  handleSend()
+}
+
+const sendQuick = (txt) => {
+  input.value = txt
+  handleSend()
+}
+
+const handleSend = async () => {
+  const text = input.value.trim()
+  if (!text || isLoading.value) return
+
+  const userMsg = {
+    role: 'user',
+    text: text,
+    replyTo: replyingMessage.value ? { id: replyingMessage.value.id, text: replyingMessage.value.text } : null
+  }
+
+  input.value = ''
+  replyingMessage.value = null
+  chatStore.addMessage(userMsg)
   
-  // 设置加载状态
   isLoading.value = true
   
-  // 添加一个空的系统消息占位符用于打字机效果
-  const systemMessage = {
-    role: "system",
-    text: "",
-    timestamp: new Date().toISOString(),
-    tokens: 0
-  }
-  const messageIndex = messages.value.length
-  messages.value.push(systemMessage)
-  
+  // 占位
+  chatStore.addMessage({ role: 'system', text: '', tokens: 0 })
+  scrollToBottom()
+
   try {
-    // 使用当前对话的会话 ID
-    let sessionId = localStorage.getItem('persona_session_id')
-    if (!sessionId) {
-      sessionId = 'user-' + Math.random().toString(36).substring(2, 11)
-      localStorage.setItem('persona_session_id', sessionId)
-    }
-    
-    // 调用流式 AI API 获取回复
-    let accumulatedContent = ""
-    
-    // 流式接收消息的回调函数
-    const onMessage = (content, finished) => {
-      if (finished) {
-        // 如果是结束信号，不处理内容
-        // 完成后计算令牌数并更新消息
-        const tokens = Math.floor(accumulatedContent.length / 4)
-        totalTokens.value += tokens
-        messages.value[messageIndex].tokens = tokens
+    let acc = ""
+    streamPersona(text, chatStore.activeSessionId, (content, done) => {
+      if (done) {
+        chatStore.saveLastMessage(acc, Math.floor(acc.length / 3))
         isLoading.value = false
-        ElMessage.success('消息发送成功')
       } else {
-        // 累积接收到的内容
-        accumulatedContent += content
-        messages.value[messageIndex].text = accumulatedContent
+        acc += content
+        // 临时更新UI展示
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg && lastMsg.role === 'system') lastMsg.text = acc
+        scrollToBottom()
       }
-    }
-    
-    // 错误处理函数
-    const onError = (error) => {
-      console.error('发送消息失败:', error)
-      const errorMessage = error.message || '消息发送失败，请检查网络连接'
-      messages.value[messageIndex] = {
-        role: "system",
-        text: `[系统错误] ${errorMessage}`,
-        timestamp: new Date().toISOString(),
-        isError: true
-      }
+    }, (err) => {
+      // 错误处理...
       isLoading.value = false
-      ElMessage.error(errorMessage)
-    }
-    
-    // 调用流式 API
-    streamPersona(userInput, sessionId, onMessage, onError)
-  } catch (error) {
-    console.error('发送消息失败:', error)
-    const errorMessage = error.message || '消息发送失败，请检查网络连接'
-    messages.value[messageIndex] = {
-      role: "system",
-      text: `[系统错误] ${errorMessage}`,
-      timestamp: new Date().toISOString(),
-      isError: true
-    }
+    })
+  } catch (e) {
     isLoading.value = false
-    ElMessage.error(errorMessage)
+    ElMessage.error('指令发送失败')
   }
 }
 
-/**
- * 处理文件上传
- */
-const handleFileUpload = async (event) => {
-  const file = event.target.files?.[0]
+const handleFileUpload = async (e) => {
+  const file = e.target.files?.[0]
   if (!file) return
   
   isLoading.value = true
+  const formData = new FormData()
+  formData.append('file', file)
   
   try {
-    // 准备 FormData
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    // 使用当前会话 ID 或创建新会话
-    let sessionId = conversationId.value
-    if (!sessionId) {
-      const sessionResult = await sessionApi.createSession()
-      sessionId = sessionResult.data.session_id
-      conversationId.value = sessionId
-    }
-    
-    // 调用临时文件上传 API
-    const uploadResult = await sessionApi.uploadTemporaryFile(sessionId, formData)
-    
-    if (uploadResult.data.success) {
-      // 添加文件上传成功消息到聊天记录
-      const fileMessage = {
+    const res = await sessionApi.uploadTemporaryFile(chatStore.activeSessionId, formData)
+    if (res.data.success) {
+      chatStore.addMessage({
         role: "system",
-        text: `📁 文件上传成功：${file.name}（${formatFileSize(file.size)}）\n预览：${uploadResult.data.data.content_preview}`,
-        timestamp: new Date().toISOString()
-      }
-      messages.value.push(fileMessage)
-      
-      ElMessage.success('文件上传成功')
-    } else {
-      ElMessage.error('文件上传失败：' + uploadResult.data.message)
+        text: `### 📁 外部数据注入成功\n---\n- **名称**: \`${file.name}\`\n- **大小**: \`${(file.size/1024).toFixed(1)} KB\`\n\n数据已解析并进入虚空缓存，现在可以针对此文件进行提问。`
+      })
+      ElMessage.success('注入成功')
     }
-  } catch (error) {
-    console.error('上传文件失败:', error)
-    ElMessage.error('文件上传失败：' + (error.response?.data?.message || error.message))
+  } catch (err) {
+    ElMessage.error('注入失败')
   } finally {
     isLoading.value = false
-    // 清空文件输入
-    if (fileInputRef.value) {
-      fileInputRef.value.value = ''
-    }
+    if (fileInputRef.value) fileInputRef.value.value = ''
   }
 }
 
-/**
- * 格式化文件大小
- */
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+// --- 工具 ---
+
+const renderMarkdown = (text) => marked.parse(text || '')
+const formatTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (viewport.value) {
+      viewport.value.scrollTop = viewport.value.scrollHeight
+    }
+  })
 }
 
-// ==================== 生命周期 ====================
-
-// 监听消息变化，自动滚动到底部
-watch(messages, scrollToBottom, { flush: 'post' })
-
-// 组件挂载时初始化
+watch(messages, () => scrollToBottom(), { deep: true })
 onMounted(() => {
-  console.log('AI 控制台初始化中...')
-  initializeConversation()
+  chatStore.initStore()
+  scrollToBottom()
 })
+
 </script>
 
 <style scoped>
-/* 控制台主容器 */
-.ai-console {
-  width: 100%;
-  max-width: 1000px;
+.ai-console-layout {
+  display: flex;
+  height: calc(100vh - 100px);
+  gap: 1.5rem;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: var(--spacing-xl);
-  min-height: calc(100vh - 120px);
+  padding: 0 1rem;
+}
+
+/* 侧边栏 */
+.console-sidebar {
+  width: 280px;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
-  position: relative;
-}
-
-.ai-console::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, 
-    transparent, 
-    var(--color-primary), 
-    var(--color-secondary),
-    var(--color-primary),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: borderGlow 3s linear infinite;
-  z-index: 1;
-}
-
-/* 控制台标题 */
-.console-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.console-header h2 {
-  font-size: 1.75rem;
-  margin: 0;
-  color: var(--color-primary);
-  font-weight: 600;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-full);
+  background: var(--color-bg-glass);
   border: 1px solid var(--color-border);
-}
-
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background-color: var(--color-text-muted);
-}
-
-.status-dot.online {
-  background-color: var(--color-success);
-}
-
-.status-dot.loading {
-  background-color: var(--color-primary);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-/* 会话信息 */
-.conversation-info {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
-}
-
-.conv-id, .token-count {
-  font-family: 'Courier New', monospace;
-}
-
-.token-count {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
-/* 系统和错误消息样式 */
-.system-message .message-text {
-  background: var(--color-bg-tertiary);
-  border-left: 3px solid var(--color-primary);
-}
-
-.message.isError .message-text {
-  background: rgba(231, 76, 60, 0.05);
-  border-left: 3px solid var(--color-error);
-  color: var(--color-error);
-}
-
-/* 聊天容器 */
-.chat-container {
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.8), 
-    rgba(55, 65, 81, 0.6)
-  );
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--color-border);
-  border-top: 2px solid var(--color-primary);
   border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
-  box-shadow: 
-    0 10px 30px rgba(0, 0, 0, 0.3),
-    0 0 20px rgba(67, 97, 238, 0.1);
-  flex: 1;
-  min-height: 600px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xl);
-  position: relative;
+  transition: width 0.3s ease;
   overflow: hidden;
 }
 
-.chat-container::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, 
-    transparent, 
-    var(--color-primary), 
-    transparent
-  );
-  animation: shimmer 3s ease-in-out infinite;
+.console-sidebar.collapsed { width: 60px; }
+
+.sidebar-header {
+  padding: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
-/* 消息容器 */
-.messages-container {
+.sidebar-header h3 {
+  font-size: 1.1rem;
+  color: var(--color-primary-light);
+  margin: 0;
+}
+
+.sidebar-actions {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.new-btn { width: 100%; font-weight: 700; box-shadow: var(--shadow-glow); }
+.new-group-btn { width: 100%; }
+
+.groups-list {
   flex: 1;
   overflow-y: auto;
-  padding-right: var(--spacing-md);
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
+  padding: 0.5rem;
 }
 
-.messages-container::-webkit-scrollbar {
-  width: 6px;
-}
+.group-item { margin-bottom: 1.5rem; }
 
-.messages-container::-webkit-scrollbar-track {
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-full);
-}
-
-.messages-container::-webkit-scrollbar-thumb {
-  background: var(--color-border-dark);
-  border-radius: var(--radius-full);
-  transition: background-color var(--transition-fast);
-}
-
-.messages-container::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
-
-/* 欢迎消息 */
-.welcome-message {
-  text-align: center;
-  padding: var(--spacing-2xl);
-  color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  margin: var(--spacing-xl) auto;
-  max-width: 80%;
-}
-
-.system-icon {
-  font-size: 3rem;
-  color: var(--color-primary);
-  margin-bottom: var(--spacing-lg);
-}
-
-.welcome-message p {
-  margin: var(--spacing-sm) 0;
-  font-size: 1.25rem;
-  color: var(--color-text-primary);
-  font-weight: 500;
-}
-
-.welcome-message .subtitle {
-  font-size: 1rem;
-  color: var(--color-text-secondary);
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-/* 消息样式 */
-.message {
-  margin-bottom: var(--spacing-xl);
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-md);
-  animation: fadeIn 0.3s ease-out;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.message-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, 
-    var(--color-bg-tertiary), 
-    var(--color-bg-secondary)
-  );
-  border: 2px solid var(--color-border);
+.group-title {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  flex-shrink: 0;
-  transition: all var(--transition-fast);
-  box-shadow: 0 0 10px rgba(67, 97, 238, 0.2);
-}
-
-.user-message .message-avatar {
-  background: linear-gradient(135deg, 
-    var(--color-primary), 
-    var(--color-primary-dark)
-  );
-  border-color: var(--color-primary);
-  box-shadow: 0 0 15px rgba(67, 97, 238, 0.4);
-}
-
-.system-message .message-avatar {
-  background: linear-gradient(135deg, 
-    var(--color-secondary), 
-    var(--color-primary-light)
-  );
-  border-color: var(--color-secondary);
-  box-shadow: 0 0 15px rgba(76, 201, 240, 0.4);
-  animation: pulseGlow 2s ease-in-out infinite;
-}
-
-.message:hover .message-avatar {
-  transform: translateY(-2px) scale(1.1);
-  box-shadow: 0 0 20px rgba(67, 97, 238, 0.6);
-  border-color: var(--color-primary);
-}
-
-.message-content {
-  flex: 1;
-  max-width: calc(100% - 60px);
-}
-
-.message-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-xs);
-  font-size: 0.875rem;
-  padding: 0 var(--spacing-xs);
-}
-
-.role-label {
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-size: 0.75rem;
-}
-
-.user-message .role-label {
-  color: var(--color-text-primary);
-}
-
-.system-message .role-label {
-  color: var(--color-primary);
-}
-
-.timestamp {
+  gap: 8px;
+  padding: 6px 12px;
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.message-text {
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.9), 
-    rgba(55, 65, 81, 0.7)
-  );
-  backdrop-filter: blur(5px);
-  border: 1px solid var(--color-border);
+.group-title:hover { color: var(--color-text-primary); }
+.more-icon { margin-left: auto; cursor: pointer; padding: 4px; border-radius: 4px; }
+.more-icon:hover { background: rgba(255,255,255,0.1); }
+
+.session-items { padding-left: 1rem; margin-top: 4px; }
+
+.session-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 2px 0;
   border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-  line-height: 1.6;
-  color: var(--color-text-primary);
-  font-weight: 400;
-  transition: all var(--transition-fast);
-  box-shadow: 
-    0 2px 8px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  position: relative;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.9rem;
+}
+
+.session-link:hover { background: rgba(255,255,255,0.05); color: var(--color-text-primary); }
+.session-link.active { background: rgba(99, 102, 241, 0.15); color: var(--color-primary-light); border-right: 3px solid var(--color-primary); }
+
+.session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-more { opacity: 0; font-size: 14px; transition: opacity 0.2s; padding: 4px; }
+.session-link:hover .session-more { opacity: 0.6; }
+.session-more:hover { opacity: 1 !important; color: var(--color-primary-light); }
+
+/* 主对话区 */
+.console-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-glass);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
-.message-text::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, 
-    transparent, 
-    rgba(67, 97, 238, 0.1), 
-    transparent
-  );
-  transition: left 0.5s ease;
-}
-
-.message:hover .message-text {
-  background: linear-gradient(135deg, 
-    rgba(31, 41, 55, 0.95), 
-    rgba(55, 65, 81, 0.8)
-  );
-  border-color: var(--color-primary);
-  box-shadow: 
-    0 4px 15px rgba(0, 0, 0, 0.3),
-    0 0 20px rgba(67, 97, 238, 0.2);
-  transform: translateY(-2px);
-}
-
-.message:hover .message-text::before {
-  left: 100%;
-}
-
-/* 用户消息特殊样式 */
-.user-message .message-text {
-  border-left: 3px solid var(--color-primary);
-}
-
-/* 系统消息特殊样式 */
-.system-message .message-text {
-  border-left: 3px solid var(--color-primary-light);
-  background: var(--color-bg-secondary);
-}
-
-/* 加载指示器 */
-.loading-indicator {
-  display: flex;
-  justify-content: center;
-  padding: var(--spacing-lg) 0;
-  animation: fadeIn 0.3s ease-out;
-}
-
-.loading-dots {
-  display: flex;
-  gap: 8px;
-}
-
-.loading-dots span {
-  width: 10px;
-  height: 10px;
-  background-color: var(--color-primary);
-  border-radius: 50%;
-  animation: loading 1.4s ease-in-out infinite both;
-}
-
-.loading-dots span:nth-child(1) {
-  animation-delay: -0.32s;
-}
-
-.loading-dots span:nth-child(2) {
-  animation-delay: -0.16s;
-}
-
-@keyframes loading {
-  0%, 80%, 100% { 
-    transform: scale(0.8);
-    opacity: 0.6;
-  } 
-  40% { 
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-/* 输入容器 */
-.input-container {
-  display: flex;
-  gap: var(--spacing-md);
-  align-items: stretch;
-}
-
-.input-wrapper {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-prefix {
-  position: absolute;
-  left: 18px;
-  color: var(--color-primary);
-  font-size: 1.25rem;
-  z-index: 1;
-  pointer-events: none;
-  font-family: 'Courier New', monospace;
-}
-
-.input-wrapper :deep(.el-input__wrapper) {
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: none;
-  transition: all var(--transition-fast);
-}
-
-.input-wrapper :deep(.el-input__wrapper:hover) {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
-}
-
-.input-wrapper :deep(.el-input__wrapper.is-focus) {
-  border-color: var(--color-primary);
-  box-shadow: 
-    0 0 0 3px rgba(67, 97, 238, 0.2),
-    0 0 20px rgba(67, 97, 238, 0.3);
-  animation: pulseGlow 2s ease-in-out infinite;
-}
-
-.input-wrapper :deep(.el-input__inner) {
-  background: transparent;
-  border: none;
-  color: var(--color-text-primary);
-  font-family: inherit;
-  padding-left: 40px;
-  font-size: 1rem;
-}
-
-.input-container :deep(.el-button) {
-  min-width: 90px;
-  background: var(--color-primary);
-  border: none;
-  color: white;
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-}
-
-.input-container :deep(.el-button:hover:not(:disabled)) {
-  background: var(--color-primary-dark);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
-}
-
-.input-container :deep(.el-button.is-disabled) {
-  opacity: 0.6;
-  transform: none;
-}
-
-/* 文件上传按钮样式 */
-.file-upload-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  color: var(--color-primary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  margin-right: 8px;
-}
-
-.file-upload-btn:hover {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
-  transform: translateY(-2px);
-}
-
-.file-upload-btn:active {
-  transform: translateY(0);
-}
-
-/* 底部信息 */
-.console-footer {
-  margin-top: var(--spacing-lg);
-  padding-top: var(--spacing-lg);
-  border-top: 1px solid var(--color-border);
+.console-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--spacing-md);
 }
 
-.connection-info {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  gap: var(--spacing-xl);
+.active-path { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+.path-group { color: var(--color-text-muted); }
+.path-session { color: var(--color-text-primary); font-weight: 700; }
+
+.status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--color-text-muted); margin-top: 4px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+.status-dot.online { background: var(--color-success); box-shadow: 0 0 8px var(--color-success); }
+.status-dot.loading { background: var(--color-primary); animation: pulse 1s infinite; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* 消息区 */
+.messages-viewport {
   flex: 1;
-}
-
-.connection-status {
-  color: var(--color-primary);
-  font-weight: 500;
+  overflow-y: auto;
+  padding: 2rem 1.5rem;
   display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
-.connection-status::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-success);
+.empty-state {
+  margin: auto;
+  text-align: center;
+  max-width: 500px;
 }
 
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .ai-console {
-    padding: var(--spacing-md);
-  }
-  
-  .console-header {
-    flex-direction: column;
-    gap: var(--spacing-md);
-    text-align: center;
-  }
-  
-  .console-header h2 {
-    font-size: 1.5rem;
-  }
-  
-  .chat-container {
-    padding: var(--spacing-md);
-    min-height: 500px;
-  }
-  
-  .welcome-message {
-    padding: var(--spacing-lg);
-    max-width: 100%;
-  }
-  
-  .system-icon {
-    font-size: 2.5rem;
-  }
-  
-  .connection-info {
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    text-align: center;
-  }
-  
-  .message-content {
-    max-width: calc(100% - 50px);
-  }
-  
-  .message-avatar {
-    width: 35px;
-    height: 35px;
-    font-size: 1.125rem;
-  }
+.void-logo {
+  width: 60px; height: 60px; background: var(--grad-cyber); color: #fff;
+  border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  font-size: 2rem; font-weight: 900; margin: 0 auto 1.5rem; animation: rotateLogo 10s linear infinite;
 }
+
+@keyframes rotateLogo { 0% {transform: rotateY(0)} 100% {transform: rotateY(360deg)} }
+
+.quick-starts { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 2rem; }
+.q-chip { padding: 6px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--color-border); border-radius: 20px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; }
+.q-chip:hover { border-color: var(--color-primary); color: var(--color-primary-light); background: rgba(99,102,241,0.1); }
+
+.message-wrapper { display: flex; flex-direction: column; width: 100%; transition: opacity 0.3s; }
+.message-wrapper.user { align-items: flex-end; }
+.message-wrapper.system { align-items: flex-start; }
+
+.reply-context {
+  margin-bottom: 4px; padding: 4px 12px; background: rgba(255,255,255,0.05);
+  border-left: 2px solid var(--color-primary); border-radius: 4px;
+  font-size: 0.75rem; color: var(--color-text-muted); display: flex; align-items: center; gap: 6px;
+  max-width: 300px;
+}
+
+.bubble-container { display: flex; gap: 12px; max-width: 85%; }
+.user .bubble-container { flex-direction: row-reverse; }
+
+.avatar {
+  width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 0.9rem;
+}
+.avatar.user { background: var(--color-primary); color: #fff; }
+.avatar.system { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); color: var(--color-primary); }
+
+.bubble-content {
+  padding: 12px 16px; border-radius: 12px; position: relative;
+  background: rgba(30, 41, 59, 0.4); border: 1px solid var(--color-border-light);
+}
+
+.user .bubble-content { background: var(--color-primary-dark); border-color: rgba(99, 102, 241, 0.3); }
+
+.bubble-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.role-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--color-text-muted); }
+.bubble-actions { opacity: 0; transition: 0.2s; display: flex; gap: 4px; }
+.bubble-content:hover .bubble-actions { opacity: 1; }
+
+.text-area { font-size: 0.95rem; line-height: 1.6; word-wrap: break-word; }
+.bubble-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; font-size: 0.7rem; color: var(--color-text-muted); }
+
+/* 输入栏 */
+.input-container { padding: 0 1.5rem 1.5rem; }
+
+.reply-bar {
+  background: rgba(99, 102, 241, 0.1); border: 1px solid var(--color-primary);
+  border-bottom: none; border-radius: 8px 8px 0 0; padding: 8px 12px;
+  display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;
+}
+.close-reply { cursor: pointer; color: var(--color-accent); }
+
+.input-panel {
+  display: flex; align-items: flex-end; padding: 6px 12px; gap: 10px;
+  background: rgba(15, 23, 42, 0.6); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+}
+
+.panel-icon { cursor: pointer; padding: 8px; color: var(--color-text-muted); transition: 0.2s; }
+.panel-icon:hover { color: var(--color-primary-light); transform: scale(1.1); }
+
+.main-textarea :deep(.el-textarea__inner) {
+  background: transparent; border: none; box-shadow: none; color: #fff; padding: 8px 0;
+}
+
+.glow-btn {
+  width: 44px; height: 44px; background: var(--grad-cyber) !important; border: none !important;
+  box-shadow: 0 0 15px rgba(99,102,241,0.3); transition: 0.3s;
+}
+.glow-btn:hover { transform: scale(1.05); box-shadow: 0 0 25px rgba(99,102,241,0.5); }
+
+/* Markdown */
+.markdown-body :deep(h1,h2,h3) { margin: 10px 0; color: var(--color-primary-light); }
+.markdown-body :deep(pre) { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; margin: 8px 0; }
+.markdown-body :deep(code) { font-family: var(--font-family-mono); background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; }
+
+/* Typing */
+.typing { display: flex; gap: 4px; margin: 4px 0; }
+.typing span { width: 6px; height: 6px; background: var(--color-primary); border-radius: 50%; animation: typAnim 1s infinite alternate; }
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typAnim { from {opacity: 0.3} to {opacity: 1} }
+
+.highlight-flash {
+  animation: flashBg 2s ease;
+}
+
+@keyframes flashBg {
+  0% { background: rgba(99, 102, 241, 0.3); }
+  100% { background: transparent; }
+}
+
+/* 滚动条 */
+.messages-viewport::-webkit-scrollbar { width: 6px; }
+.messages-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
 </style>

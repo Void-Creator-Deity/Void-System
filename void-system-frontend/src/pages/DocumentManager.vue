@@ -135,11 +135,11 @@
 
       <div v-if="loading" class="loading-container">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <span>连接虚空知识库...</span>
+        <span>加载文档中...</span>
       </div>
 
       <div v-else-if="documents.length === 0" class="empty-container card card-glass">
-        <el-empty description="虚空中空无一物" />
+        <el-empty description="暂无文档记录" />
       </div>
 
       <div v-else class="document-grid">
@@ -219,7 +219,7 @@
     </div>
 
     <!-- 对话框部分 -->
-    <el-dialog v-model="editDialogVisible" title="属性修订" width="440px" class="cyber-dialog">
+    <el-dialog v-model="editDialogVisible" title="编辑文档" width="440px" class="cyber-dialog">
       <el-form :model="editingDoc" label-position="top">
         <el-form-item label="核心标题">
           <el-input v-model="editingDoc.title" placeholder="输入新标题" />
@@ -234,13 +234,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="previewDialogVisible" title="核心快照" width="70%" class="cyber-dialog">
+    <el-dialog v-model="previewDialogVisible" title="内容预览" width="70%" class="cyber-dialog">
       <div class="preview-scroll">
         <pre class="code-block">{{ previewContent }}</pre>
       </div>
     </el-dialog>
 
-    <el-dialog v-model="qaDialogVisible" :title="`针对 《${selectedDocForQA?.title}》 的深度分析`" width="800px" class="cyber-dialog">
+    <el-dialog v-model="qaDialogVisible" :title="`文档分析: ${selectedDocForQA?.title}`" width="800px" class="cyber-dialog">
       <div class="qa-container">
         <div class="messages-area" ref="msgList">
           <div v-for="m in qaMessages" :key="m.id" class="qa-msg" :class="m.type">
@@ -619,7 +619,7 @@ const deleteDoc = async (doc) => {
     
     const response = await documentApi.delete(doc.doc_id)
     if (response.data.success) {
-      ElMessage.success('已从虚空中抹除')
+      ElMessage.success('文档已删除')
       await Promise.all([loadDocuments(), loadStats()])
     }
   } catch(e) { /* Cancel */ }
@@ -862,6 +862,7 @@ onMounted(() => {
   line-height: 1.6;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 12px;

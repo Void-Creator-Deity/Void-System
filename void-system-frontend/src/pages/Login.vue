@@ -12,8 +12,7 @@
             <el-input
               v-model="loginForm.username"
               placeholder="用户名"
-              prefix-icon="el-icon-user"
-              :prefix-icon-style="{ color: '#00ccff' }"
+              prefix-icon="User"
               :disabled="isLoading"
             />
           </div>
@@ -25,8 +24,7 @@
               v-model="loginForm.password"
               type="password"
               placeholder="密码"
-              prefix-icon="el-icon-lock"
-              :prefix-icon-style="{ color: '#00ccff' }"
+              prefix-icon="Lock"
               show-password
               :disabled="isLoading"
             />
@@ -105,47 +103,20 @@ const handleLogin = async () => {
     isLoading.value = true
     try {
       const result = await login(loginForm.username, loginForm.password)
-
-      console.log('登录响应数据:', result)
-      console.log('检查token存储:', localStorage.getItem('access_token'))
-      console.log('检查用户信息存储:', localStorage.getItem('user_info'))
-
+      
       // 处理"记住我"功能
       if (loginForm.rememberMe) {
         localStorage.setItem('remembered_user', loginForm.username)
       } else {
         localStorage.removeItem('remembered_user')
       }
-
-      // 验证数据是否正确存储
-      const storedToken = localStorage.getItem('access_token')
-      const storedUserInfo = localStorage.getItem('user_info')
-
-      if (!storedToken) {
-        throw new Error('Token存储失败')
-      }
-
+      
       ElMessage.success('登录成功')
-
-      // 短暂延迟确保数据持久化
-      await new Promise(resolve => setTimeout(resolve, 50))
       router.push('/')
     } catch (error) {
       console.error('登录失败:', error)
-      // 处理后端返回的错误格式
-      const errorData = error.response?.data
-      let errorMessage = '登录失败，请检查用户名和密码'
-
-      if (errorData) {
-        if (typeof errorData === 'string') {
-          errorMessage = errorData
-        } else if (errorData.message) {
-          errorMessage = errorData.message
-        } else if (errorData.detail) {
-          errorMessage = errorData.detail
-        }
-      }
-
+      const errorMessage = error.response?.data?.detail || 
+                          '登录失败，请检查用户名和密码'
       ElMessage.error(errorMessage)
     } finally {
       isLoading.value = false
