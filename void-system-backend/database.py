@@ -1399,24 +1399,54 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            if filter_tags:
-                # 使用标签过滤（简化实现，实际可能需要更复杂的JSON查询）
-                cursor.execute(
-                    "SELECT * FROM system_rag_documents WHERE is_active = 1 ORDER BY upload_time DESC"
-                )
-            else:
-                cursor.execute(
-                    "SELECT * FROM system_rag_documents WHERE is_active = 1 ORDER BY upload_time DESC"
-                )
+            cursor.execute(
+                "SELECT * FROM system_rag_documents WHERE is_active = 1 ORDER BY upload_time DESC"
+            )
             rows = cursor.fetchall()
             results = []
             for row in rows:
                 doc_dict = dict(row)
                 # 解析JSON字段
                 if doc_dict.get("tags"):
-                    doc_dict["tags"] = json.loads(doc_dict["tags"])
+                    try:
+                        doc_dict["tags"] = json.loads(doc_dict["tags"])
+                    except:
+                        doc_dict["tags"] = []
+                else:
+                    doc_dict["tags"] = []
+                
+                # 在Python中执行标签过滤
+                if filter_tags:
+                    if not all(tag in doc_dict["tags"] for tag in filter_tags):
+                        continue
+                
                 results.append(doc_dict)
             return results
+        finally:
+            conn.close()
+
+    def get_all_system_rag_tags(self) -> List[str]:
+        """
+        获取所有系统RAG文档中使用到的所有唯一标签
+        Returns:
+            标签列表
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT tags FROM system_rag_documents WHERE is_active = 1")
+            rows = cursor.fetchall()
+            all_tags = set()
+            for row in rows:
+                if row[0]:
+                    try:
+                        tags = json.loads(row[0])
+                        if isinstance(tags, list):
+                            for tag in tags:
+                                all_tags.add(tag)
+                    except:
+                        continue
+            return sorted(list(all_tags))
         finally:
             conn.close()
     
@@ -1755,6 +1785,7 @@ class Database:
     def update_user_document_status(self, doc_id: str, status: str,
                                    vector_collection: Optional[str] = None,
                                    chroma_ids: Optional[List[str]] = None,
+                                   content_preview: Optional[str] = None,
                                    error_message: Optional[str] = None) -> bool:
         """
         更新文档解析状态
@@ -1763,6 +1794,7 @@ class Database:
             status: 新状态
             vector_collection: 向量集合名
             chroma_ids: Chroma向量ID列表
+            content_preview: 内容预览
             error_message: 错误信息
         Returns:
             是否更新成功
@@ -1781,6 +1813,10 @@ class Database:
             if chroma_ids:
                 updates.append("chroma_ids = ?")
                 params.append(json.dumps(chroma_ids))
+
+            if content_preview:
+                updates.append("content_preview = ?")
+                params.append(content_preview)
 
             if error_message:
                 updates.append("error_message = ?")

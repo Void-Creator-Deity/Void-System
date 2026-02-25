@@ -664,13 +664,9 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
             }
         
         async def event_generator():
-            buffer = StringIO()
-            inside_think_block = False
-            
             # 尝试流式调用链
             try:
-                # 注意：RunnableLambda对象可能不直接支持astream方法，先尝试invoke
-                # 然后模拟流式输出，提供打字机效果
+                # 调用链获取完整结果
                 result = chain.invoke(input_data)
                 
                 # 确保result是字符串类型
@@ -684,18 +680,22 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
                 # 净化内容
                 purified_result = purify_ai_response(result_text)
                 
-                # 模拟打字机效果，逐个字符发送
+                # 优化：按词组发送，提升性能（避免逐字符发送导致的过多系统调用）
                 if purified_result:
-                    for char in purified_result:
+                    import re
+                    # 按标点和空格分割为词组，每次发送2-4个字符
+                    chunk_size = 3
+                    for i in range(0, len(purified_result), chunk_size):
+                        chunk = purified_result[i:i + chunk_size]
                         yield {
                             "event": "message",
                             "data": json.dumps({
-                                "content": char,
+                                "content": chunk,
                                 "finished": False
-                            })
+                            }, ensure_ascii=False)
                         }
-                        # 模拟打字机效果的延迟
-                        await asyncio.sleep(0.05)
+                        # 适当延迟，仍提供打字机效果但性能更好
+                        await asyncio.sleep(0.02)
             except Exception as e:
                 # 处理任何异常，返回错误信息
                 logger.error(f"流式响应处理失败: {e}")
@@ -704,7 +704,7 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
                     "data": json.dumps({
                         "content": f"抱歉，处理请求时出现错误: {str(e)}",
                         "finished": True
-                    })
+                    }, ensure_ascii=False)
                 }
                 return
             
@@ -714,7 +714,7 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
                 "data": json.dumps({
                     "content": "",
                     "finished": True
-                })
+                }, ensure_ascii=False)
             }
         
         return EventSourceResponse(event_generator())
@@ -763,25 +763,56 @@ try:
     add_routes(app, get_purified_chain(load_persona_chain()), path="/api/lc/persona")
     logger.info("✅ LangChain 服务路由已注册")
     
-    # 添加一个简单的测试端点，用于验证后端是否能正确返回结构化数据
-    @app.post("/api/test-advisor")
-    async def test_advisor_endpoint(request: Request):
-        """测试端点：直接返回结构化任务建议"""
+except ImportError as e:
+    logger.warning(f"⚠️ LangChain 服务未找到: {e}")
+except Exception as e:
+    logger.error(f"❌ LangChain 服务注册失败: {e}")
+
+# ==================== AI服务正式接口 ====================
+@app.post("/api/ai/advisor", summary="获取AI任务建议（正式接口）", tags=["AI服务"], response_model=APIResponse)
+async def get_ai_advisor(
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+) -> APIResponse:
+    """
+    正式的AI任务建议接口
+    根据用户指定的主题，生成结构化的任务建议列表
+    """
+    try:
         from services.ai_services.advisor_chain import safe_invoke_chain, load_task_chain
         
-        # 从请求体中获取topic
+        # 解析请求体
         request_data = await request.json()
-        topic = request_data.get("topic", "")
+        topic = request_data.get("topic", "").strip()
+        
+        if not topic:
+            raise VoidSystemException(
+                message="主题不能为空",
+                error_code="TOPIC_REQUIRED",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        logger.info(f"用户 {current_user['username']} 请求任务建议: {topic}")
         
         chain = load_task_chain()
         result = safe_invoke_chain(chain, topic)
         
         return create_success_response("任务建议生成成功", data=result)
-        
-except ImportError as e:
-    logger.warning(f"⚠️ LangChain 服务未找到: {e}")
-except Exception as e:
-    logger.error(f"❌ LangChain 服务注册失败: {e}")
+    except VoidSystemException:
+        raise
+    except ImportError:
+        raise VoidSystemException(
+            message="AI服务暂时不可用",
+            error_code="AI_SERVICE_UNAVAILABLE",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    except Exception as e:
+        logger.error(f"生成任务建议失败: {e}", exc_info=True)
+        raise VoidSystemException(
+            message=f"任务建议生成失败: {str(e)}",
+            error_code="ADVISOR_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 # ==================== 系统信息路由 ====================
 @app.get("/", summary="系统状态", tags=["系统"], response_model=APIResponse)
@@ -2078,6 +2109,29 @@ async def list_rag_documents(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+@app.get("/api/admin/rag/tags", summary="获取所有系统RAG标签", tags=["RAG管理"], response_model=APIResponse)
+async def get_rag_tags(
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取所有系统RAG文档中使用到的所有唯一标签（仅管理员）
+    """
+    try:
+        tags = db.get_all_system_rag_tags()
+        return APIResponse(
+            success=True,
+            message="获取RAG标签成功",
+            data={"tags": tags}
+        )
+    except Exception as e:
+        logger.error(f"获取RAG标签失败: {e}")
+        raise VoidSystemException(
+            message=f"获取RAG标签失败: {str(e)}",
+            error_code="RAG_TAGS_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
 @app.post("/api/admin/rag/documents", summary="上传系统RAG文档", tags=["RAG管理"], response_model=APIResponse)
 async def upload_rag_document(
     request: Request,
@@ -2366,6 +2420,33 @@ async def get_user_documents(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+# 注意：/api/user/documents/stats 必须在 /api/user/documents/{doc_id} 之前定义
+# 否则 FastAPI 会把 'stats' 当作 doc_id 参数处理，导致路由冲突
+@app.get("/api/user/documents/stats", summary="获取文档统计", tags=["用户文档"])
+async def get_user_document_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    """
+    获取用户文档统计信息
+    """
+    try:
+        stats = db.get_user_document_stats(current_user["user_id"])
+
+        return APIResponse(
+            success=True,
+            message="获取统计信息成功",
+            data=stats
+        )
+
+    except Exception as e:
+        logger.error(f"获取文档统计失败: {str(e)}")
+        raise VoidSystemException(
+            message=f"获取文档统计失败: {str(e)}",
+            error_code="GET_STATS_FAILED",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
 @app.get("/api/user/documents/{doc_id}", summary="获取文档详情", tags=["用户文档"])
 async def get_user_document(
     doc_id: str,
@@ -2485,31 +2566,6 @@ async def delete_user_document(
         raise VoidSystemException(
             message=f"删除文档失败: {str(e)}",
             error_code="DELETE_DOCUMENT_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.get("/api/user/documents/stats", summary="获取文档统计", tags=["用户文档"])
-async def get_user_document_stats(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    """
-    获取用户文档统计信息
-    """
-    try:
-        stats = db.get_user_document_stats(current_user["user_id"])
-
-        return APIResponse(
-            success=True,
-            message="获取统计信息成功",
-            data=stats
-        )
-
-    except Exception as e:
-        logger.error(f"获取文档统计失败: {str(e)}")
-        raise VoidSystemException(
-            message=f"获取文档统计失败: {str(e)}",
-            error_code="GET_STATS_FAILED",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -2654,201 +2710,6 @@ async def ask_with_user_documents(
         raise VoidSystemException(
             message=f"问答处理失败: {str(e)}",
             error_code="QA_ERROR",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-# ==================== 会话临时文件路由 ====================
-@app.post("/api/session/new", summary="创建新会话", tags=["会话管理"], response_model=APIResponse)
-async def create_new_session(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    创建新的会话
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        session_manager = SessionContextManager()
-        result = session_manager.create_new_session(current_user["user_id"])
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"],
-            data={
-                "session_id": result["session_id"],
-                "created_at": result["created_at"],
-                "expires_in": result["expires_in"]
-            }
-        )
-    except Exception as e:
-        logger.error(f"创建新会话失败: {e}")
-        raise VoidSystemException(
-            message=f"创建新会话失败: {str(e)}",
-            error_code="SESSION_CREATE_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.post("/api/session/upload-temporary", summary="上传临时文件", tags=["会话管理"], response_model=APIResponse)
-async def upload_temporary_file(
-    request: Request,
-    session_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    上传临时文件到会话
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        form = await request.form()
-        file = form["file"]
-        
-        # 读取文件数据
-        file_data = await file.read()
-        
-        # 调用会话管理器上传文件
-        session_manager = SessionContextManager()
-        result = session_manager.upload_temporary_file(
-            user_id=current_user["user_id"],
-            session_id=session_id,
-            file_data=file_data,
-            file_name=file.filename
-        )
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"],
-            data={
-                "file_id": result["file_id"],
-                "file_name": result["file_name"],
-                "file_size": result["file_size"],
-                "content_preview": result["content_preview"]
-            }
-        )
-    except Exception as e:
-        logger.error(f"上传临时文件失败: {e}")
-        raise VoidSystemException(
-            message=f"上传临时文件失败: {str(e)}",
-            error_code="FILE_UPLOAD_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.get("/api/session/context/{session_id}", summary="获取会话上下文", tags=["会话管理"], response_model=APIResponse)
-async def get_session_context(
-    session_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    获取会话上下文，包含临时文件
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        session_manager = SessionContextManager()
-        result = session_manager.get_session_context(
-            user_id=current_user["user_id"],
-            session_id=session_id
-        )
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"],
-            data={
-                "session_id": result["session_id"],
-                "files": result["files"],
-                "file_count": result["file_count"]
-            }
-        )
-    except Exception as e:
-        logger.error(f"获取会话上下文失败: {e}")
-        raise VoidSystemException(
-            message=f"获取会话上下文失败: {str(e)}",
-            error_code="SESSION_CONTEXT_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.get("/api/session/active", summary="获取活跃会话", tags=["会话管理"], response_model=APIResponse)
-async def get_active_sessions(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    获取用户的活跃会话列表
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        session_manager = SessionContextManager()
-        result = session_manager.get_active_sessions(current_user["user_id"])
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"],
-            data={
-                "sessions": result["sessions"],
-                "session_count": result["session_count"]
-            }
-        )
-    except Exception as e:
-        logger.error(f"获取活跃会话失败: {e}")
-        raise VoidSystemException(
-            message=f"获取活跃会话失败: {str(e)}",
-            error_code="ACTIVE_SESSIONS_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.get("/api/session/files/{file_id}", summary="获取临时文件内容", tags=["会话管理"], response_model=APIResponse)
-async def get_temp_file_content(
-    file_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    获取临时文件的内容预览
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        session_manager = SessionContextManager()
-        result = session_manager.get_file_content(current_user["user_id"], file_id)
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"],
-            data={
-                "content_type": result["content_type"],
-                "note": result["note"]
-            }
-        )
-    except Exception as e:
-        logger.error(f"获取临时文件内容失败: {e}")
-        raise VoidSystemException(
-            message=f"获取临时文件内容失败: {str(e)}",
-            error_code="FILE_CONTENT_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-@app.delete("/api/session/files/{file_id}", summary="删除临时文件", tags=["会话管理"], response_model=APIResponse)
-async def delete_temp_file(
-    file_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> APIResponse:
-    """
-    删除会话中的临时文件
-    """
-    from api.session_context_manager import SessionContextManager
-    
-    try:
-        session_manager = SessionContextManager()
-        result = session_manager.delete_session_file(current_user["user_id"], file_id)
-        
-        return APIResponse(
-            success=result["success"],
-            message=result["message"]
-        )
-    except Exception as e:
-        logger.error(f"删除临时文件失败: {e}")
-        raise VoidSystemException(
-            message=f"删除临时文件失败: {str(e)}",
-            error_code="FILE_DELETE_FAILED",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

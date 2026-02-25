@@ -1,21 +1,14 @@
 <template>
-  <div class="document-manager">
+  <div class="document-manager fade-in">
     <!-- 页面头部 -->
     <div class="page-header">
-      <h1>文档管理</h1>
-      <p class="page-description">上传和管理您的文档，开启个性化AI问答体验</p>
+      <h1 class="text-gradient">文档管理</h1>
+      <p class="text-secondary">上传和管理您的知识库，开启深度 AI 问答体验</p>
     </div>
 
     <!-- 文件上传区域 -->
     <div class="upload-section">
-      <el-card class="upload-card">
-        <template #header>
-          <div class="upload-header">
-            <el-icon class="upload-icon"><Upload /></el-icon>
-            <span>上传文档</span>
-          </div>
-        </template>
-
+      <div class="card upload-card card-glass">
         <div class="upload-area" @dragover="onDragOver" @drop="onDrop" @click="triggerFileSelect">
           <input
             ref="fileInput"
@@ -29,10 +22,9 @@
           <div v-if="!uploading" class="upload-placeholder">
             <el-icon class="upload-icon-large"><Plus /></el-icon>
             <div class="upload-text">
-              <p class="primary-text">拖拽文件到此处，或 <el-button type="primary" size="small">点击选择文件</el-button></p>
+              <p class="primary-text">拖拽文件到此处，或 <span class="text-primary">点击选择文件</span></p>
               <p class="secondary-text">
-                支持格式：PDF、Word、Excel、图片、文本文件<br>
-                单个文件最大 50MB，支持批量上传
+                支持 PDF、Word、Excel、图片、文本 (最大 50MB)
               </p>
             </div>
           </div>
@@ -43,9 +35,11 @@
               type="circle"
               :percentage="uploadProgress"
               :status="uploadStatus === 'success' ? 'success' : uploadStatus === 'error' ? 'exception' : undefined"
+              :stroke-width="8"
+              :width="120"
             />
             <p class="progress-text">{{ currentFileName }}</p>
-            <p class="progress-status">{{ uploadMessage }}</p>
+            <p class="progress-message">{{ uploadMessage }}</p>
           </div>
         </div>
 
@@ -53,330 +47,220 @@
         <div class="upload-config">
           <el-row :gutter="20">
             <el-col :span="12">
-              <el-form-item label="文档标题（可选）">
-                <el-input
-                  v-model="uploadTitle"
-                  placeholder="为文档设置一个易记的标题"
-                  clearable
-                />
-              </el-form-item>
+              <el-input
+                v-model="uploadTitle"
+                placeholder="文档标题 (可选)"
+                clearable
+              />
             </el-col>
             <el-col :span="12">
-              <el-form-item label="标签（可选）">
-                <el-select
-                  v-model="uploadTags"
-                  multiple
-                  filterable
-                  allow-create
-                  default-first-option
-                  placeholder="为文档添加标签"
-                  style="width: 100%"
-                />
-              </el-form-item>
+              <el-select
+                v-model="uploadTags"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="添加标签 (可选)"
+                style="width: 100%"
+              />
             </el-col>
           </el-row>
         </div>
-      </el-card>
+      </div>
+    </div>
+
+    <!-- 数据面板 -->
+    <div class="stats-grid" v-if="stats">
+      <div class="stat-card card">
+        <div class="stat-value">{{ stats.total_documents }}</div>
+        <div class="stat-label">总文档数</div>
+      </div>
+      <div class="stat-card card">
+        <div class="stat-value">{{ stats.completed_documents }}</div>
+        <div class="stat-label">已完成解析</div>
+      </div>
+      <div class="stat-card card">
+        <div class="stat-value text-warning">{{ stats.status_stats.processing || 0 }}</div>
+        <div class="stat-label">处理中</div>
+      </div>
+      <div class="stat-card card">
+        <div class="stat-value">{{ formatFileSize(stats.total_size) }}</div>
+        <div class="stat-label">存储容量</div>
+      </div>
     </div>
 
     <!-- 文档列表 -->
     <div class="documents-section">
-      <el-card class="documents-card">
-        <template #header>
-          <div class="documents-header">
-            <span>我的文档</span>
-            <div class="header-actions">
-              <el-select v-model="filterStatus" placeholder="筛选状态" style="width: 120px" @change="loadDocuments">
-                <el-option label="全部" value="" />
-                <el-option label="处理中" value="processing" />
-                <el-option label="已完成" value="completed" />
-                <el-option label="失败" value="failed" />
-              </el-select>
-              <el-button type="primary" @click="loadDocuments" :loading="loading">
-                <el-icon><RefreshRight /></el-icon>
-                刷新
-              </el-button>
-            </div>
-          </div>
-        </template>
-        
-        <!-- 向量搜索 -->
-        <div class="vector-search-section">
+      <div class="section-header">
+        <h2 class="section-title">我的知识库</h2>
+        <div class="header-actions">
           <el-input
             v-model="vectorSearchQuery"
-            placeholder="通过内容搜索文档..."
+            placeholder="搜索文档内容..."
             clearable
+            class="search-input"
             @keyup.enter="performVectorSearch"
           >
-            <template #append>
-              <el-button @click="performVectorSearch">
-                <el-icon><Search /></el-icon>
-                搜索
-              </el-button>
+            <template #prefix>
+              <el-icon><Search /></el-icon>
             </template>
           </el-input>
+          
+          <el-select v-model="filterStatus" placeholder="状态筛选" style="width: 120px" @change="loadDocuments">
+            <el-option label="全部状态" value="" />
+            <el-option label="解析中" value="processing" />
+            <el-option label="已完成" value="completed" />
+            <el-option label="解析失败" value="failed" />
+          </el-select>
+          
+          <el-button type="primary" link @click="loadDocuments" :loading="loading">
+            <el-icon><RefreshRight /></el-icon>
+          </el-button>
         </div>
-        
-        <!-- 向量搜索结果 -->
-        <div v-if="vectorSearchResults.length > 0" class="search-results-section">
-          <h3>搜索结果 ({{ vectorSearchResults.length }})</h3>
-          <div class="search-results-grid">
-            <el-card
-              v-for="result in vectorSearchResults"
-              :key="result.doc_id + '_' + Math.random()"
-              class="search-result-card"
-            >
-              <template #header>
-                <div class="result-header">
-                  <span class="result-score">匹配度: {{ (result.score * 100).toFixed(1) }}%</span>
-                </div>
-              </template>
-              <div class="result-content">
-                <p class="result-text">{{ result.content }}</p>
-                <p class="result-metadata" v-if="result.metadata">
-                  <span>文档ID: {{ result.doc_id }}</span>
-                  <span v-if="result.metadata.created_at">创建时间: {{ formatDate(result.metadata.created_at) }}</span>
-                </p>
-              </div>
-            </el-card>
+      </div>
+      
+      <!-- 搜索结果预览 -->
+      <div v-if="vectorSearchResults.length > 0" class="search-results-overlay card card-glass">
+        <div class="overlay-header">
+          <h3>内容命中 ({{ vectorSearchResults.length }})</h3>
+          <el-button link @click="vectorSearchResults = []">关闭</el-button>
+        </div>
+        <div class="results-list">
+          <div v-for="(result, i) in vectorSearchResults" :key="i" class="search-result-item">
+            <div class="result-meta">命中率: {{ (result.score ? (1 - result.score) * 100 : 95).toFixed(1) }}%</div>
+            <p class="result-text">{{ result.content }}</p>
           </div>
         </div>
-        
-        <!-- 无搜索结果提示 -->
-        <div v-else-if="vectorSearchQuery && !vectorSearchLoading" class="empty-search-results">
-          <el-empty description="未找到匹配的文档" :image-size="120">
-            <el-button type="primary" @click="vectorSearchQuery = ''">清空搜索</el-button>
-          </el-empty>
-        </div>
+      </div>
 
-        <!-- 统计信息 -->
-        <div class="stats-bar" v-if="stats">
-          <el-row :gutter="20">
-            <el-col :span="6">
-              <div class="stat-item">
-                <div class="stat-value">{{ stats.total_documents }}</div>
-                <div class="stat-label">总文档数</div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-item">
-                <div class="stat-value">{{ stats.completed_documents }}</div>
-                <div class="stat-label">已完成</div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-item">
-                <div class="stat-value">{{ stats.status_stats.processing || 0 }}</div>
-                <div class="stat-label">处理中</div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-item">
-                <div class="stat-value">{{ formatFileSize(stats.total_size) }}</div>
-                <div class="stat-label">总大小</div>
-              </div>
-            </el-col>
-          </el-row>
-        </div>
+      <div v-if="loading" class="loading-container">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>连接虚空知识库...</span>
+      </div>
 
-        <!-- 文档列表 -->
-        <div class="documents-list">
-          <div v-if="loading" class="loading-state">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <p>加载文档中...</p>
+      <div v-else-if="documents.length === 0" class="empty-container card card-glass">
+        <el-empty description="虚空中空无一物" />
+      </div>
+
+      <div v-else class="document-grid">
+        <div
+          v-for="doc in documents"
+          :key="doc.doc_id"
+          class="document-card card"
+          :class="getStatusClass(doc.parse_status)"
+        >
+          <div class="doc-header">
+            <div class="doc-type-icon">
+              <el-icon><component :is="getFileIcon(doc.file_type)" /></el-icon>
+            </div>
+            <div class="doc-main-info">
+              <h3 class="doc-title">{{ doc.title }}</h3>
+              <p class="doc-meta">{{ doc.original_name }} · {{ formatFileSize(doc.file_size) }}</p>
+            </div>
+            <el-tag :type="getStatusType(doc.parse_status)" size="small" effect="dark" class="status-tag">
+              {{ getStatusText(doc.parse_status) }}
+            </el-tag>
           </div>
 
-          <div v-else-if="documents.length === 0" class="empty-state">
-            <el-empty description="还没有上传任何文档">
-              <el-button type="primary" @click="triggerFileSelect">上传第一个文档</el-button>
-            </el-empty>
+          <div class="doc-body">
+            <p class="doc-preview">{{ doc.content_preview || '尚无解析预览内容...' }}</p>
+            <div class="doc-tags" v-if="doc.tags?.length">
+              <el-tag v-for="tag in doc.tags" :key="tag" size="small" class="tag-item">{{ tag }}</el-tag>
+            </div>
           </div>
 
-          <div v-else class="document-grid">
-            <el-card
-              v-for="doc in documents"
-              :key="doc.doc_id"
-              class="document-card"
-              :class="getStatusClass(doc.parse_status)"
-            >
-              <div class="document-header">
-                <div class="document-icon">
-                  <el-icon :size="24">
-                    <component :is="getFileIcon(doc.file_type)" />
-                  </el-icon>
-                </div>
-                <div class="document-info">
-                  <h3 class="document-title">{{ doc.title }}</h3>
-                  <p class="document-meta">
-                    {{ doc.original_name }} · {{ formatFileSize(doc.file_size) }} · {{ formatDate(doc.created_at) }}
-                  </p>
-                </div>
-                <div class="document-status">
-                  <el-tag :type="getStatusType(doc.parse_status)" size="small">
-                    {{ getStatusText(doc.parse_status) }}
-                  </el-tag>
-                </div>
-              </div>
+          <div class="doc-footer">
+            <div class="doc-time">{{ formatDate(doc.created_at) }}</div>
+            <div class="doc-actions">
+              <el-button
+                v-if="doc.parse_status === 'completed'"
+                type="primary"
+                size="small"
+                @click="askWithDocument(doc)"
+              >
+                智能问答
+              </el-button>
+              
+              <el-button size="small" circle @click="editDocument(doc)">
+                <el-icon><Edit /></el-icon>
+              </el-button>
 
-              <div class="document-content">
-                <p class="document-preview" v-if="doc.content_preview">
-                  {{ doc.content_preview }}
-                </p>
-                <div v-else class="no-preview">
-                  <el-text type="info">暂无预览内容</el-text>
-                </div>
-
-                <div class="document-tags" v-if="doc.tags && doc.tags.length > 0">
-                  <el-tag
-                    v-for="tag in doc.tags"
-                    :key="tag"
-                    size="small"
-                    class="tag-item"
-                  >
-                    {{ tag }}
-                  </el-tag>
-                </div>
-              </div>
-
-              <div class="document-actions">
-                <el-button
-                  v-if="doc.parse_status === 'completed'"
-                  type="primary"
-                  size="small"
-                  @click="askWithDocument(doc)"
-                >
-                  <el-icon><ChatLineRound /></el-icon>
-                  问答
+              <el-dropdown @command="(c) => handleDocumentAction(c, doc)">
+                <el-button size="small" circle>
+                  <el-icon><ArrowDown /></el-icon>
                 </el-button>
-
-                <el-button
-                  size="small"
-                  @click="editDocument(doc)"
-                  :disabled="doc.parse_status === 'processing'"
-                >
-                  <el-icon><Edit /></el-icon>
-                  编辑
-                </el-button>
-
-                <el-dropdown @command="handleDocumentAction" :disabled="doc.parse_status === 'processing'">
-                  <el-button size="small">
-                    更多操作 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="preview" :disabled="!doc.content_preview">
-                        <el-icon><View /></el-icon>
-                        预览内容
-                      </el-dropdown-item>
-                      <el-dropdown-item command="delete" divided>
-                        <el-icon><Delete /></el-icon>
-                        删除文档
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </div>
-
-              <!-- 处理进度条 -->
-              <div v-if="doc.parse_status === 'processing'" class="processing-bar">
-                <el-progress :percentage="50" :show-text="false" />
-                <span class="processing-text">正在解析文档内容...</span>
-              </div>
-            </el-card>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="preview">预览内容</el-dropdown-item>
+                    <el-dropdown-item command="delete" class="text-error">删除记录</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </div>
 
-          <!-- 分页 -->
-          <div class="pagination-wrapper" v-if="documents.length > 0">
-            <el-pagination
-              v-model:current-page="currentPage"
-              v-model:page-size="pageSize"
-              :total="totalCount"
-              :page-sizes="[10, 20, 50]"
-              layout="total, sizes, prev, pager, next, jumper"
-              @size-change="handleSizeChange"
-              @current-change="handleCurrentChange"
-            />
+          <!-- 解析进度条 -->
+          <div v-if="doc.parse_status === 'processing' || doc.parse_status === 'parsed'" class="doc-status-line">
+            <div class="progress-shimmer"></div>
           </div>
         </div>
-      </el-card>
+      </div>
+
+      <!-- 分页 -->
+      <div class="pagination-container" v-if="totalCount > pageSize">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="totalCount"
+          layout="prev, pager, next"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 
-    <!-- 编辑文档对话框 -->
-    <el-dialog v-model="editDialogVisible" title="编辑文档" width="500px">
-      <el-form :model="editingDoc" label-width="80px">
-        <el-form-item label="标题">
-          <el-input v-model="editingDoc.title" />
+    <!-- 对话框部分 -->
+    <el-dialog v-model="editDialogVisible" title="属性修订" width="440px" class="cyber-dialog">
+      <el-form :model="editingDoc" label-position="top">
+        <el-form-item label="核心标题">
+          <el-input v-model="editingDoc.title" placeholder="输入新标题" />
         </el-form-item>
-        <el-form-item label="标签">
-          <el-select
-            v-model="editingDoc.tags"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="添加标签"
-            style="width: 100%"
-          />
+        <el-form-item label="系统标签">
+          <el-select v-model="editingDoc.tags" multiple filterable allow-create placeholder="添加分类卷标" style="width: 100%" />
         </el-form-item>
       </el-form>
-
       <template #footer>
-        <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveDocumentEdit" :loading="saving">保存</el-button>
+        <el-button @click="editDialogVisible = false">丢弃更改</el-button>
+        <el-button type="primary" @click="saveDocumentEdit" :loading="saving">确认同步</el-button>
       </template>
     </el-dialog>
 
-    <!-- 预览对话框 -->
-    <el-dialog v-model="previewDialogVisible" title="文档预览" width="800px" :before-close="closePreview">
-      <div class="preview-content">
-        <pre>{{ previewContent }}</pre>
+    <el-dialog v-model="previewDialogVisible" title="核心快照" width="70%" class="cyber-dialog">
+      <div class="preview-scroll">
+        <pre class="code-block">{{ previewContent }}</pre>
       </div>
     </el-dialog>
 
-    <!-- 问答对话框 -->
-    <el-dialog v-model="qaDialogVisible" title="文档问答" width="800px" :before-close="closeQA">
-      <div class="qa-content">
-        <div class="selected-doc-info">
-          <el-tag>基于文档：{{ selectedDocForQA.title }}</el-tag>
-        </div>
-
-        <div class="qa-messages">
-          <div v-for="message in qaMessages" :key="message.id" class="message" :class="message.type">
-            <div class="message-content">
-              <p v-if="message.type === 'question'">{{ message.content }}</p>
-              <div v-else-if="message.type === 'answer'">
-                <p>{{ message.content }}</p>
-                <div class="answer-sources" v-if="message.sources && message.sources.length > 0">
-                  <p><strong>参考来源：</strong></p>
-                  <el-tag v-for="source in message.sources" :key="source.doc_id" size="small">
-                    {{ source.title }}
-                  </el-tag>
-                </div>
-              </div>
-              <div v-else class="typing">
-                <el-icon class="is-loading"><Loading /></el-icon>
-                {{ message.content }}
-              </div>
+    <el-dialog v-model="qaDialogVisible" :title="`针对 《${selectedDocForQA?.title}》 的深度分析`" width="800px" class="cyber-dialog">
+      <div class="qa-container">
+        <div class="messages-area" ref="msgList">
+          <div v-for="m in qaMessages" :key="m.id" class="qa-msg" :class="m.type">
+            <div class="msg-content">{{ m.content }}</div>
+            <div v-if="m.sources?.length" class="msg-sources">
+              <span class="source-label">关联来源:</span>
+              <el-tag v-for="(s, i) in m.sources" :key="i" size="small" class="source-tag">{{ s.title }}</el-tag>
             </div>
           </div>
         </div>
-
-        <div class="qa-input">
+        <div class="qa-input-wrapper">
           <el-input
             v-model="qaQuestion"
-            placeholder="请输入您的问题..."
+            placeholder="询问关于此文档的问题..."
             @keyup.enter="sendQuestion"
             :disabled="asking"
           >
             <template #suffix>
-              <el-button
-                type="primary"
-                :icon="ChatLineRound"
-                @click="sendQuestion"
-                :loading="asking"
-                :disabled="!qaQuestion.trim()"
-              >
-                发送
+              <el-button link @click="sendQuestion" :loading="asking">
+                <el-icon><Plus /></el-icon>
               </el-button>
             </template>
           </el-input>
@@ -397,10 +281,13 @@ import {
   Edit,
   ArrowDown,
   View,
-  Delete
+  Delete,
+  Search,
+  Document as DocumentIcon,
+  Picture as PictureIcon
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from '@/api/index.js'
+import { documentApi } from '@/api/document'
 
 // 响应式数据
 const fileInput = ref(null)
@@ -442,41 +329,43 @@ const vectorSearchLoading = ref(false)
 // 文件类型图标映射
 const getFileIcon = (fileType) => {
   const iconMap = {
-    'pdf': 'Document',
-    'doc': 'Document',
-    'docx': 'Document',
-    'xls': 'Document',
-    'xlsx': 'Document',
-    'csv': 'Document',
-    'txt': 'Document',
-    'md': 'Document',
-    'jpg': 'Picture',
-    'jpeg': 'Picture',
-    'png': 'Picture',
-    'gif': 'Picture'
+    'pdf': 'DocumentIcon',
+    'doc': 'DocumentIcon',
+    'docx': 'DocumentIcon',
+    'xls': 'DocumentIcon',
+    'xlsx': 'DocumentIcon',
+    'csv': 'DocumentIcon',
+    'txt': 'DocumentIcon',
+    'md': 'DocumentIcon',
+    'jpg': 'PictureIcon',
+    'jpeg': 'PictureIcon',
+    'png': 'PictureIcon',
+    'gif': 'PictureIcon'
   }
-  return iconMap[fileType] || 'Document'
+  return iconMap[fileType] || 'DocumentIcon'
 }
 
 // 状态相关方法
 const getStatusText = (status) => {
   const statusMap = {
-    'pending': '待处理',
-    'processing': '处理中',
-    'completed': '已完成',
-    'failed': '处理失败'
+    'pending': '等待中',
+    'processing': '正在解析',
+    'parsed': '正在向量化',
+    'completed': '处理完成',
+    'failed': '解析失败'
   }
   return statusMap[status] || status
 }
 
 const getStatusType = (status) => {
   const typeMap = {
-    'pending': '',
+    'pending': 'info',
     'processing': 'warning',
+    'parsed': 'primary',
     'completed': 'success',
     'failed': 'danger'
   }
-  return typeMap[status] || ''
+  return typeMap[status] || 'info'
 }
 
 const getStatusClass = (status) => {
@@ -485,7 +374,7 @@ const getStatusClass = (status) => {
 
 // 工具方法
 const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B'
+  if (!bytes) return '0 B'
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
@@ -493,6 +382,7 @@ const formatFileSize = (bytes) => {
 }
 
 const formatDate = (dateString) => {
+  if (!dateString) return '-'
   return new Date(dateString).toLocaleString('zh-CN')
 }
 
@@ -520,7 +410,6 @@ const handleFileUpload = async (files) => {
   if (files.length === 0) return
 
   const formData = new FormData()
-
   files.forEach(file => {
     formData.append('files', file)
   })
@@ -539,19 +428,13 @@ const handleFileUpload = async (files) => {
   uploadMessage.value = '准备上传...'
 
   try {
-    const response = await axios.post('/api/user/documents/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      onUploadProgress: (progressEvent) => {
-        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
-        uploadProgress.value = percentCompleted
-        uploadMessage.value = `上传中... ${percentCompleted}%`
-
-        // 模拟处理进度
-        if (percentCompleted === 100) {
-          uploadMessage.value = '上传完成，正在处理文档...'
-        }
+    const response = await documentApi.upload(formData, (progressEvent) => {
+      const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+      uploadProgress.value = percentCompleted
+      uploadMessage.value = `上传中... ${percentCompleted}%`
+      
+      if (percentCompleted === 100) {
+        uploadMessage.value = '上传完成，后台处理中...'
       }
     })
 
@@ -559,19 +442,17 @@ const handleFileUpload = async (files) => {
     if (data.success) {
       uploadStatus.value = 'success'
       uploadMessage.value = `成功上传 ${data.data.successful_count}/${data.data.total_count} 个文件`
-
+      
       // 清空表单
       uploadTitle.value = ''
       uploadTags.value = []
-
-      // 刷新文档列表
-      await loadDocuments()
-
+      
+      // 刷新数据
+      await Promise.all([loadDocuments(), loadStats()])
       ElMessage.success(data.message)
     } else {
       uploadStatus.value = 'error'
-      uploadMessage.value = data.message || '上传失败'
-      ElMessage.error(data.message || '上传失败')
+      uploadMessage.value = data.message || '上传异常'
     }
   } catch (error) {
     uploadStatus.value = 'error'
@@ -580,7 +461,7 @@ const handleFileUpload = async (files) => {
   } finally {
     setTimeout(() => {
       uploading.value = false
-    }, 2000)
+    }, 3000)
   }
 }
 
@@ -588,12 +469,10 @@ const handleFileUpload = async (files) => {
 const loadDocuments = async () => {
   loading.value = true
   try {
-    const response = await axios.get('/api/user/documents', {
-      params: {
-        status: filterStatus.value || undefined,
-        limit: pageSize.value,
-        offset: (currentPage.value - 1) * pageSize.value
-      }
+    const response = await documentApi.list({
+      status: filterStatus.value || undefined,
+      limit: pageSize.value,
+      offset: (currentPage.value - 1) * pageSize.value
     })
 
     if (response.data.success) {
@@ -601,7 +480,7 @@ const loadDocuments = async () => {
       totalCount.value = response.data.data.pagination?.total || documents.value.length
     }
   } catch (error) {
-    ElMessage.error('加载文档失败：' + (error.response?.data?.message || error.message))
+    console.error('加载文档失败:', error)
   } finally {
     loading.value = false
   }
@@ -609,30 +488,34 @@ const loadDocuments = async () => {
 
 const loadStats = async () => {
   try {
-    const response = await axios.get('/api/user/documents/stats')
+    const response = await documentApi.getStats()
     if (response.data.success) {
       stats.value = response.data.data
     }
   } catch (error) {
-    console.error('加载统计信息失败：', error)
+    console.error('加载统计失败:', error)
   }
 }
 
-// 编辑相关方法
+// 编辑相关
 const editDocument = (doc) => {
-  editingDoc.value = { ...doc }
+  editingDoc.value = { 
+    doc_id: doc.doc_id,
+    title: doc.title,
+    tags: [...(doc.tags || [])]
+  }
   editDialogVisible.value = true
 }
 
 const saveDocumentEdit = async () => {
   if (!editingDoc.value.title?.trim()) {
-    ElMessage.warning('请输入文档标题')
+    ElMessage.warning('请输入标题')
     return
   }
 
   saving.value = true
   try {
-    const response = await axios.put(`/api/user/documents/${editingDoc.value.doc_id}`, {
+    const response = await documentApi.update(editingDoc.value.doc_id, {
       title: editingDoc.value.title.trim(),
       tags: editingDoc.value.tags || []
     })
@@ -640,27 +523,25 @@ const saveDocumentEdit = async () => {
     if (response.data.success) {
       editDialogVisible.value = false
       await loadDocuments()
-      ElMessage.success('文档信息更新成功')
-    } else {
-      ElMessage.error(response.data.message || '更新失败')
+      ElMessage.success('更新成功')
     }
   } catch (error) {
-    ElMessage.error('更新失败：' + (error.response?.data?.message || error.message))
+    ElMessage.error('保存失败')
   } finally {
     saving.value = false
   }
 }
 
-// 预览相关方法
+// 预览相关
 const previewDocument = async (doc) => {
   try {
-    const response = await axios.get(`/api/user/documents/${doc.doc_id}`)
+    const response = await documentApi.get(doc.doc_id)
     if (response.data.success) {
-      previewContent.value = response.data.data.content_preview || '暂无预览内容'
+      previewContent.value = response.data.data.content_preview || '暂无内容'
       previewDialogVisible.value = true
     }
   } catch (error) {
-    ElMessage.error('预览失败：' + (error.response?.data?.message || error.message))
+    ElMessage.error('无法预览')
   }
 }
 
@@ -669,7 +550,7 @@ const closePreview = () => {
   previewContent.value = ''
 }
 
-// 问答相关方法
+// 问答相关
 const askWithDocument = (doc) => {
   selectedDocForQA.value = doc
   qaMessages.value = []
@@ -682,68 +563,30 @@ const sendQuestion = async () => {
 
   const question = qaQuestion.value.trim()
   qaQuestion.value = ''
-
-  // 添加用户问题到消息列表
-  qaMessages.value.push({
-    id: Date.now(),
-    type: 'question',
-    content: question
-  })
-
-  // 添加AI回答中状态
+  
+  qaMessages.value.push({ id: Date.now(), type: 'question', content: question })
+  
   const answerId = Date.now() + 1
-  qaMessages.value.push({
-    id: answerId,
-    type: 'typing',
-    content: '正在分析文档...'
-  })
-
+  qaMessages.value.push({ id: answerId, type: 'typing', content: '分析中...' })
+  
   asking.value = true
-
   try {
-    const response = await axios.post('/api/user/qa/ask', {
-      question: question,
-      document_ids: [selectedDocForQA.value.doc_id]
-    })
-
-    if (response.data.success) {
-      // 替换打字状态为实际回答
-      const answerIndex = qaMessages.value.findIndex(msg => msg.id === answerId)
-      if (answerIndex !== -1) {
-        qaMessages.value[answerIndex] = {
-          id: answerId,
-          type: 'answer',
-          content: response.data.data.answer,
-          sources: response.data.data.sources,
-          confidence: response.data.data.confidence
-        }
-      }
-    } else {
-      // 替换为错误消息
-      const answerIndex = qaMessages.value.findIndex(msg => msg.id === answerId)
-      if (answerIndex !== -1) {
-        qaMessages.value[answerIndex] = {
-          id: answerId,
-          type: 'answer',
-          content: response.data.data.answer || '回答生成失败',
-          sources: [],
-          confidence: 0
-        }
-      }
-    }
-  } catch (error) {
-    // 替换为错误消息
-    const answerIndex = qaMessages.value.findIndex(msg => msg.id === answerId)
-    if (answerIndex !== -1) {
+    const response = await documentApi.ask(question, [selectedDocForQA.value.doc_id])
+    const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
+    
+    if (response.data.success && answerIndex !== -1) {
       qaMessages.value[answerIndex] = {
         id: answerId,
         type: 'answer',
-        content: '抱歉，处理您的问题时出现了错误，请稍后重试。',
-        sources: [],
-        confidence: 0
+        content: response.data.data.answer,
+        sources: response.data.data.sources
       }
     }
-    ElMessage.error('问答失败：' + (error.response?.data?.message || error.message))
+  } catch (error) {
+    const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
+    if (answerIndex !== -1) {
+      qaMessages.value[answerIndex].content = '问答系统暂时不可用'
+    }
   } finally {
     asking.value = false
   }
@@ -752,501 +595,446 @@ const sendQuestion = async () => {
 const closeQA = () => {
   qaDialogVisible.value = false
   selectedDocForQA.value = null
-  qaMessages.value = []
-  qaQuestion.value = ''
 }
 
-// 操作处理方法
-const handleDocumentAction = async (command) => {
-  const doc = arguments[1] // 从dropdown传递的文档对象
-
+// 操作分发 (修复 Bug)
+const handleDocumentAction = async (command, doc) => {
   switch (command) {
     case 'preview':
       await previewDocument(doc)
       break
     case 'delete':
-      await deleteDocument(doc)
+      await deleteDoc(doc)
       break
   }
 }
 
-const deleteDocument = async (doc) => {
+const deleteDoc = async (doc) => {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除文档 "${doc.title}" 吗？此操作不可恢复。`,
-      '确认删除',
-      {
-        confirmButtonText: '确定删除',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-
-    const response = await axios.delete(`/api/user/documents/${doc.doc_id}`)
+    await ElMessageBox.confirm(`确定要彻底删除 "${doc.title}" 吗？`, '警告', {
+      type: 'warning',
+      confirmButtonText: '极其确定',
+      cancelButtonText: '手滑了'
+    })
+    
+    const response = await documentApi.delete(doc.doc_id)
     if (response.data.success) {
-      await loadDocuments()
-      await loadStats()
-      ElMessage.success('文档删除成功')
-    } else {
-      ElMessage.error(response.data.message || '删除失败')
+      ElMessage.success('已从虚空中抹除')
+      await Promise.all([loadDocuments(), loadStats()])
     }
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除失败：' + (error.response?.data?.message || error.message))
-    }
-  }
+  } catch(e) { /* Cancel */ }
 }
 
-// 向量搜索功能
+// 向量搜索
 const performVectorSearch = async () => {
-  if (!vectorSearchQuery.value.trim()) {
-    ElMessage.warning('请输入搜索关键词')
-    return
-  }
-
+  if (!vectorSearchQuery.value.trim()) return
+  
   vectorSearchLoading.value = true
   try {
-    const response = await axios.post('/api/vector/search', {
-      query: vectorSearchQuery.value.trim()
-    })
-
+    const response = await documentApi.search(vectorSearchQuery.value.trim())
     if (response.data.success) {
       vectorSearchResults.value = response.data.data.results || []
-    } else {
-      ElMessage.error(response.data.message || '搜索失败')
-      vectorSearchResults.value = []
     }
   } catch (error) {
-    ElMessage.error('搜索失败：' + (error.response?.data?.message || error.message))
-    vectorSearchResults.value = []
+    ElMessage.error('搜索异常')
   } finally {
     vectorSearchLoading.value = false
   }
 }
 
 // 分页处理
-const handleSizeChange = (newSize) => {
-  pageSize.value = newSize
+const handleSizeChange = (val) => {
+  pageSize.value = val
   currentPage.value = 1
   loadDocuments()
 }
 
-const handleCurrentChange = (newPage) => {
-  currentPage.value = newPage
+const handleCurrentChange = (val) => {
+  currentPage.value = val
   loadDocuments()
 }
 
-// 生命周期
-onMounted(async () => {
-  await Promise.all([loadDocuments(), loadStats()])
+// 初始化
+onMounted(() => {
+  loadDocuments()
+  loadStats()
 })
 </script>
 
 <style scoped>
 .document-manager {
-  padding: 20px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
+  padding: 40px 20px;
 }
 
+/* 页面头部 */
 .page-header {
-  margin-bottom: 30px;
+  margin-bottom: 40px;
   text-align: center;
 }
 
 .page-header h1 {
-  font-size: 28px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 8px;
+  font-size: 32px;
+  margin-bottom: 12px;
 }
 
-.page-description {
-  color: #6b7280;
-  font-size: 16px;
-}
-
-/* 上传区域样式 */
-.upload-section {
-  margin-bottom: 40px;
-}
-
+/* 上传卡片 */
 .upload-card {
-  border: 2px dashed #d1d5db;
-  transition: all 0.3s ease;
-}
-
-.upload-card:hover {
-  border-color: #3b82f6;
-}
-
-.upload-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.upload-icon {
-  color: #3b82f6;
-  font-size: 20px;
+  padding: 2px;
+  margin-bottom: 40px;
+  border: 1px solid var(--color-border);
 }
 
 .upload-area {
-  padding: 40px;
-  text-align: center;
+  padding: 60px 20px;
+  border: 2px dashed rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  border-radius: 8px;
-  transition: background-color 0.3s ease;
-  min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.upload-area:hover {
-  background-color: #f8fafc;
-}
-
-.upload-placeholder {
+  transition: all var(--transition-normal);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.upload-area:hover {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.05);
 }
 
 .upload-icon-large {
   font-size: 48px;
-  color: #9ca3af;
-}
-
-.upload-text {
-  text-align: center;
+  color: var(--color-primary);
+  margin-bottom: 24px;
+  opacity: 0.6;
 }
 
 .primary-text {
-  font-size: 16px;
-  color: #1f2937;
-  margin-bottom: 4px;
+  font-size: 18px;
+  font-weight: 500;
+  margin-bottom: 8px;
 }
 
 .secondary-text {
+  color: var(--color-text-dim);
   font-size: 14px;
-  color: #6b7280;
-  line-height: 1.5;
 }
 
 .upload-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  text-align: center;
 }
 
-.progress-text {
-  font-weight: 500;
-  color: #1f2937;
-}
-
-.progress-status {
+.progress-message {
+  margin-top: 16px;
+  color: var(--color-primary);
+  font-family: var(--font-mono);
   font-size: 14px;
-  color: #6b7280;
 }
 
 .upload-config {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #e5e7eb;
+  margin-top: 24px;
+  padding: 20px;
+  border-top: 1px solid var(--color-border);
 }
 
-/* 文档列表样式 */
-.documents-section {
-  margin-top: 40px;
+/* 统计面板 */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  margin-bottom: 40px;
 }
 
-.documents-header {
+.stat-card {
+  padding: 24px;
+  text-align: center;
+  border: 1px solid var(--color-border);
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* 列表头部 */
+.section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
+  margin-bottom: 24px;
+}
+
+.section-title {
+  font-size: 20px;
+  font-weight: 600;
+  border-left: 4px solid var(--color-primary);
+  padding-left: 12px;
 }
 
 .header-actions {
   display: flex;
   gap: 12px;
-  align-items: center;
 }
 
-.stats-bar {
-  margin-bottom: 24px;
-  padding: 20px;
-  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-  border-radius: 8px;
+.search-input :deep(.el-input__wrapper) {
+  background: var(--color-bg-light);
+  border-radius: var(--radius-full);
 }
 
-.stat-item {
-  text-align: center;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  color: #6b7280;
-}
-
-.documents-list {
-  min-height: 200px;
-}
-
-.loading-state,
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: #6b7280;
-}
-
+/* 文档网格 */
 .document-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 20px;
 }
 
 .document-card {
-  transition: all 0.3s ease;
-  border: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  transition: all var(--transition-normal);
 }
 
 .document-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
+  border-color: var(--color-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
 
-.document-card.status-processing {
-  border-color: #fbbf24;
-  background: linear-gradient(135deg, #fefce8 0%, #fffbeb 100%);
-}
-
-.document-card.status-completed {
-  border-color: #10b981;
-  background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
-}
-
-.document-card.status-failed {
-  border-color: #ef4444;
-  background: linear-gradient(135deg, #fef2f2 0%, #fef2f2 100%);
-}
-
-.document-header {
+.doc-header {
   display: flex;
-  gap: 12px;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.doc-type-icon {
+  width: 48px;
+  height: 48px;
+  background: var(--color-bg-light);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--color-primary);
+}
+
+.doc-main-info {
+  flex: 1;
+}
+
+.doc-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--color-text-bright);
+}
+
+.doc-meta {
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+
+.doc-body {
+  flex: 1;
+  margin-bottom: 24px;
+}
+
+.doc-preview {
+  font-size: 14px;
+  color: var(--color-text-dim);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   margin-bottom: 12px;
 }
 
-.document-icon {
-  flex-shrink: 0;
-  padding: 8px;
-  background: #f3f4f6;
-  border-radius: 6px;
-}
-
-.document-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.document-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.document-meta {
-  font-size: 12px;
-  color: #6b7280;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.document-status {
-  flex-shrink: 0;
-}
-
-.document-content {
-  margin-bottom: 16px;
-}
-
-.document-preview {
-  font-size: 14px;
-  color: #4b5563;
-  line-height: 1.5;
-  margin-bottom: 8px;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.no-preview {
-  font-style: italic;
-  color: #9ca3af;
-}
-
-.document-tags {
+.doc-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .tag-item {
-  margin: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.document-actions {
+.doc-footer {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.processing-bar {
-  margin-top: 12px;
-  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-top: 1px solid #e5e7eb;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
 }
 
-.processing-text {
+.doc-time {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-dim);
 }
 
-.pagination-wrapper {
-  margin-top: 24px;
+.doc-actions {
   display: flex;
-  justify-content: center;
+  gap: 8px;
 }
 
-/* 对话框样式 */
-.preview-content pre {
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  max-height: 400px;
-  overflow-y: auto;
-  background: #f8fafc;
-  padding: 16px;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
+/* 状态样式 */
+.status-tag {
+  border-radius: var(--radius-full);
 }
 
-.qa-content {
+.doc-status-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--color-primary);
+  opacity: 0.5;
+}
+
+.progress-shimmer {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* 问答对话框 */
+.qa-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  height: 60vh;
 }
 
-.selected-doc-info {
-  padding: 8px 12px;
-  background: #f0f9ff;
-  border-radius: 6px;
-  border-left: 4px solid #3b82f6;
+.messages-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
 }
 
-.qa-messages {
-  max-height: 300px;
+.qa-msg {
+  max-width: 80%;
+  padding: 16px;
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.qa-msg.question {
+  align-self: flex-end;
+  background: var(--color-primary);
+  color: white;
+  border-bottom-right-radius: 2px;
+}
+
+.qa-msg.answer {
+  align-self: flex-start;
+  background: var(--color-bg-light);
+  border: 1px solid var(--color-border);
+  border-bottom-left-radius: 2px;
+}
+
+.qa-msg.typing {
+  align-self: flex-start;
+  color: var(--color-text-dim);
+  font-style: italic;
+  padding: 8px 16px;
+}
+
+.msg-sources {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.source-label {
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+
+/* 对话框覆盖层 */
+.search-results-overlay {
+  margin-bottom: 24px;
+}
+
+.overlay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.results-list {
+  max-height: 400px;
   overflow-y: auto;
   padding: 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fafafa;
 }
 
-.message {
+.search-result-item {
+  padding: 16px;
   margin-bottom: 12px;
-  padding: 12px;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
-.message.question {
-  background: #3b82f6;
-  color: white;
-  margin-left: 20px;
+.result-meta {
+  font-size: 11px;
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  margin-bottom: 8px;
 }
 
-.message.answer {
-  background: white;
-  border: 1px solid #e5e7eb;
-  margin-right: 20px;
-}
-
-.message.typing {
-  background: #f3f4f6;
-  color: #6b7280;
-  font-style: italic;
-}
-
-.message-content {
-  line-height: 1.5;
-}
-
-.answer-sources {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #e5e7eb;
-}
-
-.qa-input {
-  margin-top: 16px;
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .document-manager {
-    padding: 16px;
+/* 响应式 */
+@media (max-width: 1024px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
+}
 
-  .documents-header {
-    flex-direction: column;
-    gap: 12px;
-    align-items: stretch;
+@media (max-width: 640px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
   }
-
-  .header-actions {
-    justify-content: space-between;
-  }
-
   .document-grid {
     grid-template-columns: 1fr;
   }
-
-  .stat-item {
-    margin-bottom: 16px;
-  }
-
-  .upload-area {
-    padding: 20px;
-  }
-
-  .upload-icon-large {
-    font-size: 32px;
-  }
 }
+
 </style>
 

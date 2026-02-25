@@ -401,10 +401,12 @@ class UserDocumentManager:
             content = parse_result.get("content", "")
             content_preview = content[:self.preview_length] + "..." if len(content) > self.preview_length else content
 
-            # 2. 更新预览内容
-            # 这里需要添加一个数据库方法来更新预览内容
-            # 暂时使用状态更新
-            self.db.update_user_document_status(doc_id, "parsed")
+            # 2. 更新预览内容及状态
+            self.db.update_user_document_status(
+                doc_id=doc_id, 
+                status="parsed", 
+                content_preview=content_preview
+            )
 
             # 3. 创建向量嵌入
             from .user_vector_manager import vector_manager

@@ -67,5 +67,13 @@ export const ragApi = {
    */
   syncDatabase() {
     return api.post('/api/admin/rag/sync')
+  },
+
+  /**
+   * 获取所有系统RAG标签
+   * @returns {Promise}
+   */
+  getTags() {
+    return api.get('/api/admin/rag/tags')
   }
 }
