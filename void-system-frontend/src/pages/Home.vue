@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="home-container">
     <!-- 页面标题 -->
     <div class="home-header">
@@ -121,72 +121,115 @@
     
     <!-- 任务面板 -->
     <div class="tasks-section">
-      <div class="section-header">
-        <h3>📋 学习任务</h3>
-        <el-button type="primary" size="small" @click="showAddTaskDialog = true">
-          + 创建任务
+      <!-- 任务分类标签 -->
+      <div class="task-tabs-container mb-lg flex justify-between items-center">
+        <el-tabs v-model="activeTab" class="cyber-tabs">
+          <el-tab-pane label="🌌 主线任务" name="main"></el-tab-pane>
+          <el-tab-pane label="📅 每日目标" name="daily"></el-tab-pane>
+          <el-tab-pane label="🌿 支线挑战" name="side"></el-tab-pane>
+        </el-tabs>
+        <el-button size="small" type="primary" class="cyber-btn-sm" @click="openAddTaskWithTab">
+          <span class="btn-icon">📝</span> 生成任务
         </el-button>
       </div>
-      
+
+      <!-- 任务链概览 (仅主线显示) -->
+      <div v-if="activeTab === 'main' && taskChains.length > 0" class="chains-overview-section mb-lg">
+        <div v-for="chain in taskChains" :key="chain.chain_id" class="chain-progress-card card">
+          <div class="chain-header flex justify-between items-center mb-sm">
+            <div class="flex items-center gap-sm">
+              <span class="chain-icon">🔗</span>
+              <span class="chain-title">{{ chain.chain_name }}</span>
+            </div>
+            <div class="chain-actions flex items-center gap-sm">
+              <span class="chain-count">{{ chain.completed_tasks }} / {{ chain.total_tasks }}</span>
+              <el-button size="small" link type="danger" @click="deleteTaskChain(chain.chain_id)" class="ml-sm">
+                <span style="font-size: 14px;">🗑️</span>
+              </el-button>
+            </div>
+          </div>
+          <el-progress 
+            :percentage="Math.round((chain.completed_tasks / chain.total_tasks) * 100) || 0" 
+            :stroke-width="10" 
+            :show-text="false"
+            color="var(--grad-cyber-reverse)"
+          />
+        </div>
+      </div>
+
       <div class="tasks-list grid grid-cols-1 md:grid-cols-2 gap-lg">
-        <div v-for="(task, index) in tasks" :key="index" class="task-card card">
+        <div v-for="task in filteredTasks" :key="task.task_id" class="task-card card" :class="{ 'chain-member': task.chain_id, 'is-optional': task.is_optional }">
           <div class="task-header">
-            <h4 class="task-title">{{ task.task_name || task.title }}</h4>
+            <h4 class="task-title" @click="viewTaskDetail(task.task_id)">
+              <span v-if="task.chain_id && activeTab !== 'main'" class="chain-icon" :title="getChainName(task.chain_id)">🔗</span>
+              {{ task.task_name || task.title }}
+              <el-tag v-if="task.is_optional || task.task_type === 'side'" size="small" type="info" effect="plain" class="ml-sm">支线</el-tag>
+              <el-tag v-if="task.task_type === 'daily' || task.is_daily" size="small" type="warning" effect="dark" class="ml-sm">每日</el-tag>
+              <div v-if="task.chain_id" class="task-chain-name">{{ getChainName(task.chain_id) }} (步骤 {{ task.chain_order }})</div>
+            </h4>
             <div class="task-priority" :class="task.priority || 'medium'">
-              {{ (task.priority || 'medium') === 'easy' ? '简单' : (task.priority || 'medium') === 'medium' ? '中等' : '困难' }}
+              {{ (task.priority || 'medium') === 'easy' ? '特一级' : (task.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
             </div>
           </div>
           
           <div class="task-body">
             <div class="task-info">
-              <span class="info-item">
+              <span class="info-item" title="预计时长">
                 <span class="info-icon">⏱️</span>
-                {{ task.estimated_time || task.duration || '未设置' }}
+                {{ task.estimated_time ? task.estimated_time + ' 分' : '未设置' }}
               </span>
-              <span class="info-item">
+              <span class="info-item" title="关联属性">
                 <span class="info-icon">🎯</span>
-                {{ task.related_attrs || task.attributeName || '未关联' }}
+                {{ getRelatedAttrsText(task.related_attrs) }}
               </span>
-              <span class="info-item">
+              <span class="info-item reward" title="经验/系统币奖励">
                 <span class="info-icon">💰</span>
-                +{{ task.reward_coins || task.rewardCoins || 0 }}
-              </span>
-              <span class="info-item">
+                +{{ task.reward_coins || 0 }}
+                <span class="sep">|</span>
                 <span class="info-icon">📊</span>
-                +{{ task.attribute_points || task.attributePoints || 0 }}点
+                +{{ task.attribute_points || 0 }}
               </span>
+              <span class="info-item type-tag">
+                <span class="type-icon">{{ task.completion_type === 'ai_eval' ? '🤖 AI' : task.completion_type === 'progress' ? '📉 进度' : task.completion_type === 'submission' ? '✍️ 证明' : '✅ 简单' }}</span>
+              </span>
+              <div v-if="task.prerequisites && task.prerequisites.length > 0" class="info-item prereqs-tag" title="前置依赖">
+                <span class="type-icon">⛓️ 前置: {{ getPrerequisitesNames(task.prerequisites) }}</span>
+              </div>
             </div>
             
-            <div class="task-progress">
+            <div class="task-progress-box">
               <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: (task.progress || 0) + '%' }"></div>
+                <div class="progress-fill" :style="{ width: (task.current_progress || 0) + '%' }"></div>
               </div>
-              <div class="progress-text">{{ task.progress || 0 }}%</div>
+              <div class="progress-ctrl" v-if="task.status === 'in_progress' && task.completion_type === 'progress'">
+                <el-slider 
+                  v-model="task.current_progress" 
+                  :min="0" :max="100" 
+                  size="small" 
+                  @change="(val) => updateProgress(task, val)"
+                />
+              </div>
+              <div class="progress-text">{{ task.current_progress || 0 }}%</div>
             </div>
           </div>
           
           <div class="task-footer">
-            <div class="task-status" :class="task.status || 'pending'">
-              {{ (task.status || 'pending') === 'pending' ? '待开始' : (task.status || 'pending') === 'in_progress' ? '进行中' : '已完成' }}
+            <div class="status-wrap">
+              <el-tag :type="getTaskStatusType(task.status)" size="small">
+                {{ getTaskStatusText(task.status) }}
+              </el-tag>
             </div>
             <div class="task-actions">
-              <el-button v-if="task.status === 'pending'" size="small" @click="startTask(task.task_id)">
-                开始任务
+              <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click="startTask(task.task_id)">
+                开始
               </el-button>
+              
               <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click="completeTask(task.task_id)">
-                {{ task.difficulty >= 3 ? '提交证明' : '完成任务' }}
+                {{ task.completion_type === 'ai_eval' ? '提交评判' : task.completion_type === 'submission' ? '提交证明' : '完成' }}
               </el-button>
-              <template v-if="task.status === 'pending_evaluation'">
-                <el-tag type="warning">待评估</el-tag>
-              </template>
-              <template v-if="task.status === 'completed'">
-                <el-tag type="success">已完成</el-tag>
-              </template>
-              <template v-if="task.status === 'failed'">
-                <el-tag type="danger">未通过</el-tag>
-              </template>
-              <el-button size="small" @click="viewTaskDetail(task.task_id)">查看详情</el-button>
-              <el-button size="small" type="danger" @click="deleteTask(task.task_id)">删除</el-button>
+
+              <el-button size="small" link @click="viewTaskDetail(task.task_id)">详情</el-button>
+              <el-button size="small" link type="danger" @click="deleteTask(task.task_id)">删除</el-button>
             </div>
           </div>
         </div>
@@ -327,52 +370,67 @@
       </template>
     </el-dialog>
     
-    <!-- 任务详情对话框 -->
-    <el-dialog v-model="showTaskDetailDialog" title="任务详情" width="600px">
+    <el-dialog v-model="showTaskDetailDialog" title="任务详情" width="650px" class="cyber-dialog" append-to-body>
       <div v-if="currentTask" class="task-detail">
-        <h4>{{ currentTask.task_name }}</h4>
-        <div class="detail-section">
-          <div class="detail-item">
-            <span class="detail-label">状态：</span>
-            <el-tag :type="getTaskStatusType(currentTask.status)">{{ getTaskStatusText(currentTask.status) }}</el-tag>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">优先级：</span>
-            <span :class="'priority-' + currentTask.priority">{{ getPriorityText(currentTask.priority) }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">预计时长：</span>
-            <span>{{ currentTask.estimated_time || '未设置' }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">关联属性：</span>
-            <span>{{ currentTask.related_attrs || '未关联' }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">系统币奖励：</span>
-            <span>+{{ currentTask.reward_coins || 0 }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">属性点数奖励：</span>
-            <span>+{{ currentTask.attribute_points || 0 }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">创建时间：</span>
-            <span>{{ formatDate(currentTask.created_at) }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">更新时间：</span>
-            <span>{{ formatDate(currentTask.updated_at) }}</span>
-          </div>
-          <div class="detail-item description">
-            <span class="detail-label">描述：</span>
-            <span>{{ currentTask.description || '暂无描述' }}</span>
+        <div class="task-header-detail">
+          <h4 class="detail-title">{{ currentTask.task_name }}</h4>
+          <el-tag :type="getTaskStatusType(currentTask.status)">{{ getTaskStatusText(currentTask.status) }}</el-tag>
+        </div>
+
+        <!-- 任务链详情展示 -->
+        <div v-if="currentChainTasks.length > 0" class="chain-stepper-container">
+          <div class="section-title">🔗 任务链进度：{{ getChainName(currentTask.chain_id) }}</div>
+          <div class="chain-steps">
+            <div v-for="step in currentChainTasks" :key="step.task_id" 
+                 class="step-item" 
+                 :class="{ 'active': step.task_id === currentTask.task_id, 'completed': step.status === 'completed' }">
+              <div class="step-dot"></div>
+              <div class="step-info">
+                <div class="step-name">{{ step.task_name }}</div>
+                <div class="step-status">{{ getTaskStatusText(step.status) }}</div>
+              </div>
+            </div>
           </div>
         </div>
-        <div v-if="currentTask.proof_data" class="proof-section">
+
+        <div class="detail-section">
+          <div class="detail-grid grid grid-cols-2 gap-sm">
+            <div class="detail-item">
+              <span class="detail-label">优先级：</span>
+              <span :class="'priority-' + currentTask.priority">{{ getPriorityText(currentTask.priority) }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">预计时长：</span>
+              <span>{{ currentTask.estimated_time ? currentTask.estimated_time + ' 分钟' : '未设置' }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">系统币奖励：</span>
+              <span class="reward-badge coin">+{{ currentTask.reward_coins || 0 }} 💰</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">属性奖励：</span>
+              <span class="reward-badge attr">+{{ currentTask.attribute_points || 0 }} 📊</span>
+            </div>
+          </div>
+          <div class="detail-item full-width">
+            <span class="detail-label">关联属性：</span>
+            <span>{{ getRelatedAttrsText(currentTask.related_attrs) }}</span>
+          </div>
+          <div class="detail-item full-width description">
+            <span class="detail-label">详细描述：</span>
+            <p>{{ currentTask.description || '暂无描述' }}</p>
+          </div>
+        </div>
+        <!-- AI/证明内容保持不变 -->
+        <div v-if="currentTask.proof_data?.content" class="proof-section">
           <h5>任务证明：</h5>
           <div class="proof-content">{{ currentTask.proof_data.content }}</div>
-          <div class="proof-time">{{ formatDate(currentTask.proof_data.timestamp) }}</div>
+        </div>
+        <div v-if="currentTask.ai_suggestion" class="ai-suggestion-section">
+          <h5>🤖 AI 虚空评定：</h5>
+          <div class="ai-eval-result" :class="{ 'passed': currentTask.ai_suggestion.status === 'pass' }">
+            <div class="ai-feedback">{{ currentTask.ai_suggestion.feedback }}</div>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -381,36 +439,138 @@
     </el-dialog>
     
     <!-- 创建任务对话框 -->
-    <el-dialog v-model="showAddTaskDialog" title="创建新任务" width="600px">
-      <el-form :model="newTask" label-width="80px">
-        <el-form-item label="任务名称">
-          <el-input v-model="newTask.title" placeholder="例如：完成3小时高数学习"></el-input>
+    <el-dialog v-model="showAddTaskDialog" :title="isChainMode ? '新阶段：虚空任务链' : '手动指令：创建记录'" width="650px" class="cyber-dialog" append-to-body>
+      <div class="mode-toggle">
+        <el-radio-group v-model="isChainMode" size="large" @change="handleModeChange">
+          <el-radio-button :label="false">单一任务</el-radio-button>
+          <el-radio-button :label="true">虚空任务链</el-radio-button>
+        </el-radio-group>
+      </div>
+
+      <el-form :model="newTask" label-width="100px" style="margin-top: 20px;">
+        <el-form-item :label="isChainMode ? '链名称' : '任务名称'">
+          <el-input v-model="newTask.title" :placeholder="isChainMode ? '例如：深入掌握高等数学' : '例如：完成高数第三章练习'"></el-input>
         </el-form-item>
-        <el-form-item label="关联属性">
-          <el-select v-model="newTask.attributeName" placeholder="选择属性">
-            <el-option v-for="attr in attributes" :key="attr.attr_name" :label="attr.attr_name" :value="attr.attr_name"></el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="预计时长">
-          <el-input v-model="newTask.duration" placeholder="例如：2小时"></el-input>
-        </el-form-item>
-        <el-form-item label="难度等级">
-          <el-select v-model="newTask.priority" placeholder="选择难度">
-            <el-option label="简单" value="easy"></el-option>
-            <el-option label="中等" value="medium"></el-option>
-            <el-option label="困难" value="hard"></el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="属性奖励">
-          <el-input-number v-model="newTask.attributePoints" :min="1" :max="20"></el-input-number>
-        </el-form-item>
-        <el-form-item label="系统币奖励">
-          <el-input-number v-model="newTask.rewardCoins" :min="1" :max="100"></el-input-number>
-        </el-form-item>
+
+        <template v-if="!isChainMode">
+          <el-form-item label="关联属性">
+            <el-select v-model="newTask.attrId" placeholder="选择关联属性（可选）" clearable style="width:100%">
+              <el-option v-for="attr in attributes" :key="attr.attr_id" :label="attr.attr_name" :value="attr.attr_id"></el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="任务描述">
+            <el-input v-model="newTask.description" type="textarea" :rows="2" placeholder="简要描述任务内容"></el-input>
+          </el-form-item>
+          <el-form-item label="前置任务">
+            <el-select v-model="newTask.prerequisites" multiple collapse-tags placeholder="选择必须先完成的任务(可选)" style="width:100%">
+              <el-option 
+                v-for="task in tasks.filter(t => t.status !== 'completed')" 
+                :key="task.task_id" 
+                :label="task.task_name" 
+                :value="task.task_id"
+              ></el-option>
+            </el-select>
+          </el-form-item>
+          <div class="form-row grid grid-cols-2 gap-md">
+            <el-form-item label="预计时长(分)">
+              <el-input-number v-model="newTask.duration" :min="1" :max="480" style="width:100%"></el-input-number>
+            </el-form-item>
+            <el-form-item label="难度等级">
+              <el-select v-model="newTask.priority" style="width:100%">
+                <el-option label="🟢 简单" value="easy"></el-option>
+                <el-option label="🟡 中等" value="medium"></el-option>
+                <el-option label="🔴 困难" value="hard"></el-option>
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item label="任务属性">
+            <el-radio-group v-model="newTask.taskType">
+              <el-radio label="main">🌌 主线</el-radio>
+              <el-radio label="daily">📅 每日</el-radio>
+              <el-radio label="side">🌿 支线</el-radio>
+            </el-radio-group>
+            <div class="mt-sm">
+              <el-checkbox v-model="newTask.isDaily" label="映射到每日页面 (跨模块同步)"></el-checkbox>
+              <el-checkbox v-model="newTask.isOptional" label="标记为支线选做"></el-checkbox>
+            </div>
+          </el-form-item>
+          <el-form-item label="奖励配置">
+            <div class="flex gap-md">
+              <el-input-number v-model="newTask.attributePoints" :min="0" :max="50" controls-position="right">
+                <template #prefix>📊</template>
+              </el-input-number>
+              <el-input-number v-model="newTask.rewardCoins" :min="0" :max="1000" controls-position="right">
+                <template #prefix>💰</template>
+              </el-input-number>
+            </div>
+          </el-form-item>
+          
+          <el-divider content-position="left">完成挑战</el-divider>
+          <el-form-item label="确认方式">
+            <el-select v-model="newTask.completionType" style="width:100%">
+              <el-option label="直接点击完成" value="simple"></el-option>
+              <el-option label="进度百分比追踪" value="progress"></el-option>
+              <el-option label="✍️ 手动提交文字证明" value="submission"></el-option>
+              <el-option label="🤖 AI 自动化评判" value="ai_eval"></el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="newTask.completionType === 'ai_eval'" label="评判标准">
+            <el-input v-model="newTask.completionCriteria" type="textarea" :rows="3" placeholder="描述AI应根据什么标准来评判你的成果（如：正确率80%以上）"></el-input>
+          </el-form-item>
+        </template>
+
+        <template v-else>
+          <el-form-item label="链同步模式">
+            <el-checkbox v-model="newTask.isAIEnabled">使用 AI 进行阶段自动拆解</el-checkbox>
+          </el-form-item>
+          <el-form-item label="链总说明">
+            <el-input v-model="newTask.description" type="textarea" :rows="2" placeholder="对整个任务链的简要描述"></el-input>
+          </el-form-item>
+          <el-form-item v-if="newTask.isAIEnabled" label="AI 引导目标">
+            <el-input v-model="newTask.targetGoal" type="textarea" :rows="5" placeholder="详细描述你想达成的目标，AI 将据此为您拆解任务步骤..."></el-input>
+          </el-form-item>
+          <el-form-item v-else label="手动目标">
+            <el-input v-model="newTask.targetGoal" type="textarea" :rows="3" placeholder="手动描述此任务链的最终目的（仅作记录）"></el-input>
+          </el-form-item>
+          <div class="ai-tip">
+            <p>💡 提示：AI 将自动生成 5-10 个有关联的子任务，并为你配置奖励。</p>
+          </div>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="showAddTaskDialog = false">取消</el-button>
-        <el-button type="primary" @click="addTask">创建</el-button>
+        <el-button type="primary" @click="addTask" :loading="isEvaluating">
+          {{ isChainMode ? '召唤任务链' : '发布任务' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- AI 评判确认对话框 -->
+    <el-dialog v-model="aiReviewVisible" title="🤖 提交 AI 虚空评判" width="550px">
+      <div v-if="currentTaskForAI">
+        <div class="eval-header">
+          <h4>{{ currentTaskForAI.task_name }}</h4>
+          <p class="criteria-label">评判标准：{{ currentTaskForAI.completion_criteria?.criteria || '无明确标准' }}</p>
+        </div>
+        <el-input
+          v-model="aiReviewContent"
+          type="textarea"
+          :rows="6"
+          placeholder="请详尽描述你完成任务的情况 (支持 Markdown 格式)..."
+        ></el-input>
+        <div class="media-urls mt-md">
+          <p class="section-label">媒体链接 (图片/链接，每行一个)：</p>
+          <el-input
+            v-model="aiReviewMedia"
+            type="textarea"
+            :rows="3"
+            placeholder="例如：https://image.com/proof.png"
+          ></el-input>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="aiReviewVisible = false">暂不提交</el-button>
+        <el-button type="primary" @click="submitAIReview" :loading="isEvaluating">提交 AI 评核</el-button>
       </template>
     </el-dialog>
   </div>
@@ -449,8 +609,8 @@
  * 系统主页，展示用户属性、任务、商店等核心功能
  */
 
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, onMounted, computed } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/index'
 import { getUserStats } from '@/api/user'
 
@@ -484,6 +644,55 @@ const tasks = ref([])
 // 商店商品列表
 const shopItems = ref([])
 
+const activeTab = ref('main')
+
+// 过滤后的任务列表：逻辑 - 处理任务链，仅显示当前活跃步骤
+const filteredTasks = computed(() => {
+  const currentTasksOnly = [];
+  const chainsFound = new Set();
+  
+  if (!tasks.value) return [];
+  
+  // 先排序，确保查找活跃步骤时逻辑正确
+  const sortedTasks = [...tasks.value].sort((a, b) => (a.chain_order || 0) - (b.chain_order || 0));
+  
+  for (const task of sortedTasks) {
+    if (!task.chain_id) {
+      currentTasksOnly.push(task);
+    } else {
+      if (!chainsFound.has(task.chain_id)) {
+        // 查找该任务链中第一个非完成状态的任务
+        const activeInChain = sortedTasks.find(t => t.chain_id === task.chain_id && t.status !== 'completed');
+        if (activeInChain) {
+          currentTasksOnly.push(activeInChain);
+        } else {
+          // 如果全部完成，显示该链的最后一个任务（作为已完成的最终节点）
+          const lastInChain = sortedTasks.filter(t => t.chain_id === task.chain_id).pop();
+          if (lastInChain) currentTasksOnly.push(lastInChain);
+        }
+        chainsFound.add(task.chain_id);
+      }
+    }
+  }
+  
+  // 按分类标签过滤
+  const typeFiltered = currentTasksOnly.filter(t => {
+    // 逻辑：如果任务标记为 is_daily 或 type 为 daily，在 daily 标签下都显示
+    if (activeTab.value === 'daily') {
+      return t.task_type === 'daily' || t.is_daily || t.data_tags?.includes('daily');
+    }
+    if (activeTab.value === 'side') return t.task_type === 'side';
+    // 默认主线显示
+    return t.task_type === 'main' || !t.task_type;
+  });
+
+  // 再按状态排序：进行中的排前面
+  return typeFiltered.sort((a, b) => {
+    const statusOrder = { 'in_progress': 0, 'pending': 1, 'pending_evaluation': 2, 'completed': 3, 'failed': 4 };
+    return statusOrder[a.status] - statusOrder[b.status];
+  });
+});
+
 // 新属性表单数据
 const newAttribute = reactive({
   name: '',
@@ -500,29 +709,60 @@ const editingAttribute = reactive({
   description: ''
 })
 
-// 新任务表单数据
-const newTask = reactive({
-  title: '',
-  attributeName: '',
-  duration: '',
-  priority: 'medium',
-  attributePoints: 1,
-  rewardCoins: 10
-})
-
 // 对话框状态
 const showAddAttributeDialog = ref(false)
 const showEditAttributeDialog = ref(false)
 const showAddTaskDialog = ref(false)
 const showTaskDetailDialog = ref(false)
+const proofDialogVisible = ref(false)
+const aiReviewVisible = ref(false)
+const currentTaskForProof = ref(null)
+const proofContent = ref('')
+const currentTaskForAI = ref(null)
+// 新建任务表单状态
+const newTask = reactive({
+  title: '',
+  description: '',
+  attrId: '',
+  duration: 30,
+  priority: 'medium',
+  attributePoints: 5,
+  rewardCoins: 10,
+  categoryId: null,
+  completionType: 'simple',
+  completionCriteria: '',
+  targetGoal: '',
+  prerequisites: [],
+  isOptional: false,
+  isDaily: false,
+  isAIEnabled: true,
+  taskType: 'main'
+})
+
+/**
+ * 确保弹窗在不同 Tab 下都能正常激活
+ */
+const openAddTaskWithTab = () => {
+  // 根据当前 activeTab 预设任务类型
+  newTask.taskType = activeTab.value === 'daily' || activeTab.value === 'side' ? activeTab.value : 'main'
+  showAddTaskDialog.value = true
+}
+
+const handleModeChange = (val) => {
+  isChainMode.value = val
+}
+
+const aiReviewContent = ref('')
+const aiReviewMedia = ref('')
+const isChainMode = ref(false) // 任务创建模式：单任务/任务链
+const taskChains = ref([])    // 任务链列表
 
 // 任务详情数据
 const currentTask = ref(null)
 
 // 任务证明相关
-const proofDialogVisible = ref(false)
-const currentTaskForProof = ref(null)
-const proofContent = ref('')
+const isEvaluating = ref(false)
+const currentChainTasks = ref([]) // 当前查看的任务链所有任务
 
 // ==================== 业务逻辑 ====================
 
@@ -587,6 +827,7 @@ const loadUserData = async () => {
     // 并行加载数据
     await Promise.all([
       loadTasks(),
+      loadTaskChains(),
       loadAttributes(),
       loadShopItems(),
       loadCoinHistory(),
@@ -643,24 +884,31 @@ const loadShopItems = async () => {
   }
 
 /**
+ * 加载任务链列表
+ */
+const loadTaskChains = async () => {
+  try {
+    const response = await api.get('/api/task-chains')
+    taskChains.value = response.data.data?.chains || []
+  } catch (error) {
+    console.error('加载任务链失败:', error)
+  }
+}
+
+/**
  * 加载任务列表
  */
 const loadTasks = async () => {
   try {
     const response = await api.get('/api/tasks')
-    // 确保tasks.value始终是数组，正确访问后端返回的数据结构
     tasks.value = Array.isArray(response.data?.data?.tasks) ? response.data.data.tasks : []
     
-    // 更新任务统计
+    // 更新统计
     systemData.taskCompleted = tasks.value.filter(t => t.status === 'completed').length
     systemData.taskInProgress = tasks.value.filter(t => t.status === 'in_progress').length
   } catch (error) {
     console.error('加载任务失败:', error)
     ElMessage.error('加载任务失败')
-    // API 调用失败时设置默认值
-    tasks.value = []
-    systemData.taskCompleted = 0
-    systemData.taskInProgress = 0
   }
 }
 
@@ -762,7 +1010,18 @@ const viewTaskDetail = async (task_id) => {
   try {
     const response = await api.get(`/api/tasks/${task_id}`)
     if (response.data.success && response.data.data) {
-      currentTask.value = response.data.data
+      const taskObj = response.data.data.task || response.data.data
+      currentTask.value = taskObj
+      
+      // 如果属于任务链，获取该链所有任务
+      if (taskObj.chain_id) {
+        currentChainTasks.value = tasks.value
+          .filter(t => t.chain_id === taskObj.chain_id)
+          .sort((a, b) => (a.chain_order || 0) - (b.chain_order || 0))
+      } else {
+        currentChainTasks.value = []
+      }
+      
       showTaskDetailDialog.value = true
     }
   } catch (error) {
@@ -778,8 +1037,9 @@ const deleteTask = async (task_id) => {
   try {
     const response = await api.delete(`/api/tasks/${task_id}`)
     if (response.data.success) {
-      // 重新加载任务列表
+      // 重新加载任务列表和任务链进度
       await loadTasks()
+      await loadTaskChains()
       ElMessage.success('任务删除成功')
     }
   } catch (error) {
@@ -793,11 +1053,11 @@ const deleteTask = async (task_id) => {
  */
 const getTaskStatusType = (status) => {
   const statusMap = {
-    pending: 'info',
-    in_progress: 'warning',
-    pending_evaluation: 'warning',
-    completed: 'success',
-    failed: 'danger'
+    'pending': 'info',
+    'in_progress': '',
+    'pending_evaluation': 'warning',
+    'completed': 'success',
+    'failed': 'danger'
   }
   return statusMap[status] || 'info'
 }
@@ -807,13 +1067,13 @@ const getTaskStatusType = (status) => {
  */
 const getTaskStatusText = (status) => {
   const statusMap = {
-    pending: '待开始',
-    in_progress: '进行中',
-    pending_evaluation: '待评估',
-    completed: '已完成',
-    failed: '未通过'
+    'pending': '等待开始',
+    'in_progress': '进行中',
+    'pending_evaluation': '待 AI 评估',
+    'completed': '已完成',
+    'failed': '失败'
   }
-  return statusMap[status] || '未知状态'
+  return statusMap[status] || status
 }
 
 /**
@@ -821,11 +1081,36 @@ const getTaskStatusText = (status) => {
  */
 const getPriorityText = (priority) => {
   const priorityMap = {
-    easy: '简单',
-    medium: '中等',
-    hard: '困难'
+    'easy': '简单',
+    'medium': '中等',
+    'hard': '困难'
   }
-  return priorityMap[priority] || '未知优先级'
+  return priorityMap[priority] || priority
+}
+
+/**
+ * 将关联属性字典 {attr_id: weight} 转为可读属性名列表
+ */
+const getRelatedAttrsText = (relatedAttrs) => {
+  if (!relatedAttrs || typeof relatedAttrs !== 'object' || Object.keys(relatedAttrs).length === 0) {
+    return '未关联'
+  }
+  const names = Object.keys(relatedAttrs).map(attrId => {
+    const found = attributes.value.find(a => a.attr_id === attrId)
+    return found ? found.attr_name : null
+  }).filter(Boolean)
+  return names.length > 0 ? names.join('、') : '未关联'
+}
+
+/**
+ * 获取前置任务名称列表
+ */
+const getPrerequisitesNames = (prereqIds) => {
+  if (!prereqIds || !Array.isArray(prereqIds) || prereqIds.length === 0) return ''
+  return prereqIds.map(id => {
+    const t = tasks.value.find(task => task.task_id === id)
+    return t ? t.task_name : '未知任务'
+  }).join(', ')
 }
 
 /**
@@ -838,43 +1123,105 @@ const formatDate = (dateString) => {
 }
 
 /**
- * 创建新任务
+ * 获取任务链名称
+ */
+const getChainName = (chainId) => {
+  if (!chainId) return ''
+  const chain = taskChains.value.find(c => c.chain_id === chainId)
+  return chain ? chain.chain_name : '未知任务链'
+}
+
+const deleteTaskChain = async (chainId) => {
+  try {
+    await ElMessageBox.confirm('确定要删除整个任务链吗？这不会删除其中的任务，但任务将不再归属于该链。', '警告', {
+      type: 'warning',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消'
+    })
+    const response = await api.delete(`/api/task-chains/${chainId}`)
+    if (response.data.success) {
+      await loadTaskChains()
+      await loadTasks()
+      ElMessage.success('任务链删除成功')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除任务链失败:', error)
+      ElMessage.error('删除任务链失败')
+    }
+  }
+}
+
+/**
+ * 创建新任务或任务链
  */
 const addTask = async () => {
+  // 模式 1：创建任务链（AI生成）
+  if (isChainMode.value) {
+    if (!newTask.title.trim()) {
+      ElMessage.warning('请输入名称')
+      return
+    }
+    try {
+      await api.post('/api/task-chains', {
+        chain_name: newTask.title,
+        description: newTask.description,
+        target_goal: newTask.isAIEnabled ? newTask.targetGoal : null
+      })
+      if (newTask.isAIEnabled) {
+        ElMessage.success('任务链创建中，请稍等 AI 生成子任务...')
+      } else {
+        ElMessage.success('任务链容器创建成功')
+      }
+      showAddTaskDialog.value = false
+      await loadTaskChains()
+      await loadTasks()
+    } catch (error) {
+      ElMessage.error('任务链创建失败')
+    }
+    return
+  }
+
+  // 模式 2：创建单任务
   if (!newTask.title.trim()) {
     ElMessage.warning('请输入任务名称')
     return
   }
   
   try {
-    // 构建关联属性字典（如果选择了属性）
-    const relatedAttrs = newTask.attributeName ? {
-      [attributes.value.find(a => a.attr_name === newTask.attributeName)?.attr_id]: 1
-    } : {}
+    const relatedAttrs = newTask.attrId ? { [newTask.attrId]: 1 } : {}
     
-    const response = await api.post('/api/tasks', {
+    await api.post('/api/tasks', {
       task_name: newTask.title,
-      description: '',
+      description: newTask.description,
       related_attrs: relatedAttrs,
-      estimated_time: parseInt(newTask.duration) || 30,
-      reward_coins: newTask.rewardCoins
+      estimated_time: newTask.duration,
+      reward_coins: newTask.rewardCoins,
+      priority: newTask.priority,
+      attribute_points: newTask.attributePoints,
+      category_id: newTask.categoryId,
+      completion_type: newTask.completionType,
+      completion_criteria: { criteria: newTask.completionCriteria },
+      prerequisites: newTask.prerequisites,
+      task_type: newTask.taskType,
+      is_optional: newTask.isOptional ? 1 : 0,
+      is_daily: newTask.isDaily ? 1 : 0
     })
     
-    // 重新加载任务列表
     await loadTasks()
-    
     showAddTaskDialog.value = false
-    ElMessage.success('任务创建成功')
+    ElMessage.success('任务创建成功！')
     
-    // 重置表单
-    newTask.title = ''
-    newTask.attributeName = ''
-    newTask.duration = ''
-    newTask.priority = 'medium'
-    newTask.attributePoints = 1
-    newTask.rewardCoins = 10
+    // 重置
+    Object.assign(newTask, {
+      title: '', attrId: '', description: '', duration: 30,
+      priority: 'medium', attributePoints: 5, rewardCoins: 10,
+      categoryId: null,
+      completionType: 'simple', completionCriteria: '', targetGoal: '',
+      prerequisites: [], taskType: activeTab.value, isOptional: false, isDaily: false,
+      isAIEnabled: true
+    })
   } catch (error) {
-    console.error('创建任务失败:', error)
     ElMessage.error(error.response?.data?.detail || '创建任务失败')
   }
 }
@@ -972,29 +1319,82 @@ const completeTask = async (task_id) => {
       ElMessage.error('任务不存在')
       return
     }
-    
-    // 检查任务是否需要证明（根据难度或其他条件）
-    if (task.estimated_time && task.estimated_time >= 120) {
-      // 预计时间超过2小时的任务需要提交证明
+    // 优先根据 completion_type 判断
+    if (task.completion_type === 'ai_eval') {
+      openAIReviewDialog(task_id)
+    } else if (task.completion_type === 'submission' || (task.estimated_time && task.estimated_time >= 120)) {
       openProofDialog(task_id)
-      } else {
-        // 简单任务直接完成
+    } else if (task.completion_type === 'progress' && (task.current_progress || 0) < 100) {
+      ElMessage.warning('任务进度尚未完成 (100%)')
+    } else {
       await api.put(`/api/tasks/${task_id}/status?status=completed`)
-        await loadTasks()
-      await loadUserData()  // 重新加载用户数据以更新余额
-        ElMessage.success('任务完成！获得奖励')
+      await loadTasks()
+      await loadUserData()
+      ElMessage.success('任务完成！')
     }
   } catch (error) {
-    console.error('完成任务失败:', error)
-    ElMessage.error(error.response?.data?.detail || '操作失败')
+    ElMessage.error('操作失败')
   }
 }
 
-// ==================== 生命周期 ====================
+/**
+ * 更新任务进度
+ */
+const updateProgress = async (task, val) => {
+  try {
+    await api.put(`/api/tasks/${task.task_id}/progress`, { progress: val })
+    task.current_progress = val
+  } catch (error) {
+    ElMessage.error('进度更新失败')
+  }
+}
+
+/**
+ * 打开 AI 评判对话框
+ */
+const openAIReviewDialog = (task_id) => {
+  const task = tasks.value.find(t => t.task_id === task_id)
+  if (task) {
+    currentTaskForAI.value = task
+    aiReviewContent.value = ''
+    aiReviewVisible.value = true
+  }
+}
+
+/**
+ * 提交 AI 评判
+ */
+const submitAIReview = async () => {
+  if (!aiReviewContent.value.trim()) {
+    ElMessage.warning('请输入完成描述')
+    return
+  }
+  isEvaluating.value = true
+  try {
+    const resp = await api.post(`/api/tasks/${currentTaskForAI.value.task_id}/ai-evaluate`, {
+      submission: aiReviewContent.value,
+      submission_type: 'markdown',
+      media_urls: aiReviewMedia.value.split('\n').filter(l => l.trim().startsWith('http'))
+    })
+    const evalData = resp.data.data
+    if (evalData.status === 'pass') {
+      ElMessage.success(`AI 评定通过！得分: ${evalData.score}`)
+    } else {
+      ElMessage.warning(`AI 评定未通过。反馈：${evalData.feedback}`)
+    }
+    aiReviewVisible.value = false
+    await loadTasks()
+  } catch (error) {
+    ElMessage.error('AI 评估请求失败')
+  } finally {
+    isEvaluating.value = false
+  }
+}
 
 // 组件挂载时加载数据
-onMounted(() => {
-  loadUserData()
+onMounted(async () => {
+    // 仅调用一次 loadUserData，它会并行启动所有子加载函数
+    await loadUserData()
 })
 </script>
 
@@ -1023,6 +1423,27 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.cyber-btn {
+  background: var(--grad-cyber) !important;
+  border: none !important;
+  font-weight: bold !important;
+  color: #000 !important;
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+  transition: all 0.3s;
+}
+
+.cyber-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
 }
 
 .header-main h2 {
@@ -1142,8 +1563,21 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-weight: 700;
-  font-size: 1.1em;
+  font-size: 11px;
   color: var(--color-warning);
+}
+
+.prereqs-tag {
+  background: rgba(230, 162, 60, 0.1);
+  border: 1px solid rgba(230, 162, 60, 0.2);
+  display: block;
+  margin-top: 5px;
+  width: 100%;
+}
+
+.prereqs-tag .type-icon {
+  color: var(--color-warning);
+  font-size: 11px;
 }
 
 /* 概览统计卡片 */
@@ -1375,6 +1809,7 @@ onMounted(() => {
 
 .task-info {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -1615,5 +2050,372 @@ onMounted(() => {
     flex-direction: column;
     text-align: center;
   }
+}
+
+/* ==================== 任务详情对话框 ==================== */
+.task-detail h4 {
+  font-size: 1.3em;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 20px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-light);
+}
+
+.detail-item.description {
+  align-items: flex-start;
+}
+
+.detail-label {
+  font-size: 0.8em;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+/* 优先级颜色 */
+.priority-easy  { color: var(--color-success); font-weight: 700; }
+.priority-medium { color: var(--color-warning); font-weight: 700; }
+.priority-hard  { color: var(--color-error);   font-weight: 700; }
+
+/* 奖励徽章 */
+.reward-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+  font-size: 0.95em;
+  font-family: var(--font-family-mono);
+}
+
+.reward-badge.coin {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.reward-badge.attr {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--color-primary-light);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+/* 任务证明区块 */
+.proof-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-cyber);
+}
+
+.proof-section h5 {
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--color-primary-light);
+  margin: 0 0 10px 0;
+}
+
+.proof-content {
+  font-size: 0.9em;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.proof-time {
+  margin-top: 8px;
+  font-size: 0.78em;
+  color: var(--color-text-muted);
+  font-family: var(--font-family-mono);
+}
+/* 任务链与进度控制样式 */
+.task-card.chain-member {
+  border-left: 4px solid var(--color-primary-light);
+  background: linear-gradient(to right, rgba(0, 255, 204, 0.05), transparent);
+}
+
+.chain-icon {
+  margin-right: 8px;
+  filter: drop-shadow(0 0 5px var(--color-primary));
+}
+
+.reward .sep {
+  margin: 0 8px;
+  opacity: 0.3;
+}
+
+.type-tag {
+  background: var(--color-bg-primary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75em !important;
+  border: 1px solid var(--color-border-light);
+}
+
+.task-progress-box {
+  margin-top: 15px;
+  margin-bottom: 15px;
+}
+
+.progress-ctrl {
+  margin: 10px 0;
+  padding: 0 5px;
+}
+
+.progress-text {
+  font-size: 0.8em;
+  color: var(--color-text-muted);
+  text-align: right;
+  font-family: var(--font-family-mono);
+}
+
+/* 创建任务对话框增强 */
+.mode-toggle {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.ai-tip {
+  margin-top: 15px;
+  padding: 12px;
+  background: rgba(0, 255, 204, 0.05);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-primary);
+  font-size: 0.85em;
+  color: var(--color-primary-light);
+}
+
+/* AI 评估对话框 */
+.eval-header {
+  margin-bottom: 20px;
+}
+
+.eval-header h4 {
+  margin: 0 0 10px 0;
+  color: var(--color-primary-light);
+}
+
+.criteria-label {
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+  background: var(--color-bg-tertiary);
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.prereqs-tag {
+  background: rgba(230, 162, 60, 0.1);
+  border: 1px solid rgba(230, 162, 60, 0.2);
+  display: block;
+  margin-top: 5px;
+  width: 100%;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.prereqs-tag .type-icon {
+  color: var(--color-warning);
+  font-size: 11px;
+}
+
+.task-chain-name {
+  font-size: 0.7em;
+  color: var(--color-primary-light);
+  opacity: 0.7;
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+/* AI 评定展示 */
+.ai-suggestion-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: rgba(0, 255, 204, 0.05);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 255, 204, 0.2);
+}
+
+.ai-suggestion-section h5 {
+  font-size: 0.9em;
+  color: var(--color-primary-light);
+  margin: 0 0 12px 0;
+}
+
+.ai-eval-result {
+  border-left: 3px solid var(--color-error);
+  padding-left: 12px;
+}
+
+.ai-eval-result.passed {
+  border-left-color: var(--color-success);
+}
+
+.ai-score {
+  font-size: 0.85em;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.ai-score span {
+  font-family: var(--font-family-mono);
+  font-size: 1.25em;
+  color: var(--color-primary-light);
+}
+
+.ai-feedback {
+  font-size: 0.9em;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  margin-bottom: 12px;
+}
+
+.ai-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-suggest-item {
+  font-size: 0.8em;
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* 详情页任务链步进器 */
+.chain-stepper-container {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: rgba(0, 255, 204, 0.03);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 255, 204, 0.1);
+}
+
+.section-title {
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--color-primary-light);
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.chain-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  padding-left: 20px;
+}
+
+.chain-steps::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: rgba(0, 255, 204, 0.15);
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  position: relative;
+  opacity: 0.6;
+  transition: all 0.3s ease;
+}
+
+.step-item.active {
+  opacity: 1;
+  transform: translateX(5px);
+}
+
+.step-item.completed {
+  opacity: 0.9;
+}
+
+.step-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-border);
+  border: 2px solid var(--color-bg-primary);
+  z-index: 1;
+  transition: all 0.3s ease;
+}
+
+.step-item.active .step-dot {
+  background: var(--color-primary-light);
+  box-shadow: 0 0 10px var(--color-primary);
+  animation: pulse 2s infinite;
+}
+
+.step-item.completed .step-dot {
+  background: var(--color-success);
+}
+
+.step-info {
+  display: flex;
+  justify-content: space-between;
+  flex: 1;
+}
+
+.step-name {
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.step-status {
+  font-size: 0.8em;
+  color: var(--color-text-muted);
+}
+
+.task-header-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-title {
+  font-size: 1.4em;
+  margin: 0;
+  color: var(--color-primary-light);
+}
+
+.detail-grid {
+  margin-bottom: 12px;
+}
+
+.full-width {
+  grid-column: span 2;
 }
 </style>

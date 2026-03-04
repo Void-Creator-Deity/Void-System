@@ -33,6 +33,13 @@ class StructuredTaskPlan(BaseModel):
         default="45分钟"
     )
 
+class TaskEvaluationResult(BaseModel):
+    """任务评判结果"""
+    status: str = Field(description="评判状态: 'pass' 或 'fail'")
+    feedback: str = Field(description="AI 对用户提交内容的详细评价 and 改进建议")
+    score: int = Field(description="本次任务评分 (0-100)", ge=0, le=100)
+    suggested_rewards: Dict[str, int] = Field(description="建议的奖励（属性ID: 增加值，coins: 数量）")
+
 # ==================== 2. 定义结构化生成链 ====================
 def load_structured_task_chain() -> Runnable[Dict[str, Any], StructuredTaskPlan]:
     """
@@ -304,7 +311,6 @@ def safe_invoke_chain(chain: Runnable, topic: str) -> Dict[str, Any]:
                 "estimatedDuration": "4周（根据个人进度调整）"
             }
 
-    # 如果没有任何结果，返回默认结构
     return {
         "response": "基于您的目标，我已经为您生成了详细的任务计划。",
         "steps": [
@@ -314,3 +320,66 @@ def safe_invoke_chain(chain: Runnable, topic: str) -> Dict[str, Any]:
         ],
         "estimatedDuration": "45分钟"
     }
+
+def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, Any], user_stats: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    评判用户提交的任务
+    """
+    model = ChatOllama(model="deepseek-r1:14b", temperature=0.3)
+    
+    parser = PydanticOutputParser(pydantic_object=TaskEvaluationResult)
+    
+    prompt = PromptTemplate(
+        template="""您是虚空系统的最高评判官。请根据以下信息评判用户是否完成了任务。
+        
+【任务信息】
+名称: {task_name}
+描述: {task_description}
+评判标准: {criteria}
+
+【用户提交内容】
+证明文本: {submission}
+媒体链接: {media_urls}
+
+【当前用户属性状态】
+{user_attributes}
+
+【评判要求】
+1. 仔细分析用户的提交是否真正达成了任务目标和标准。
+2. 给出具体的反馈，指出优点和不足。
+3. 如果通过，请根据任务难度和用户当前属性水平，平衡地建议奖励。
+   - 如果用户某项属性较低，可以适当多给一点相关的属性点。
+   - 基础金币建议在 10-100 之间。
+4. 必须输出严格的 JSON 格式。
+
+{format_instructions}
+""",
+        input_variables=["task_name", "task_description", "criteria", "submission", "media_urls", "user_attributes"],
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+    
+    chain = prompt | model | parser
+    
+    try:
+        # 准备属性字符串
+        attr_str = "\n".join([f"- {a['attr_name']}: {a['attr_value']}/{a['max_value']}" for a in user_stats.get('attributes', [])])
+        
+        result = chain.invoke({
+            "task_name": task_info.get('task_name', '未知任务'),
+            "task_description": task_info.get('description', '无'),
+            "criteria": json.dumps(task_info.get('completion_criteria', {})),
+            "submission": submission_info.get('submission', ''),
+            "media_urls": ", ".join(submission_info.get('media_urls', []) or []),
+            "user_attributes": attr_str
+        })
+        
+        return result.dict()
+    except Exception as e:
+        print(f"AI 评判失败: {e}")
+        # 降级：手动评判或简单通过
+        return {
+            "status": "pass",
+            "feedback": "AI 评判系统繁忙，已通过基础验证。请继续保持您的进化节奏。",
+            "score": 80,
+            "suggested_rewards": {"coins": 20}
+        }

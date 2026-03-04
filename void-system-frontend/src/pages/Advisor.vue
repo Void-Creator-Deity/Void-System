@@ -735,107 +735,43 @@ const publishTask = async () => {
     const estimatedTime = parseInt(advisorResult.value.estimatedDuration)
     const finalEstimatedTime = isNaN(estimatedTime) ? 45 : estimatedTime
     
-    // 确保description是一个字符串，而不是一个对象
+    // 确保description是一个字符串
     let description = ''
     if (advisorResult.value.response) {
-      if (typeof advisorResult.value.response === 'string') {
-        description = advisorResult.value.response
-      } else if (typeof advisorResult.value.response === 'object') {
-        // 如果是对象，尝试获取content字段或转换为字符串
-        if (advisorResult.value.response.content) {
-          description = advisorResult.value.response.content
-        } else {
-          description = JSON.stringify(advisorResult.value.response)
-        }
-      } else {
-        description = String(advisorResult.value.response)
-      }
+      description = typeof advisorResult.value.response === 'string' 
+        ? advisorResult.value.response 
+        : JSON.stringify(advisorResult.value.response)
     }
     
-    // 构建任务数据，确保与后端API期望的格式匹配
-    // 移除related_attrs字段，让后端使用默认值None
-    const taskData = {
-      task_name: taskName,
-      description: description || '',
-      // related_attrs: null,  // 移除这个字段，让后端使用默认值None
-      estimated_time: finalEstimatedTime,  // 确保是有效的整数
-      reward_coins: 20  // 默认奖励，确保是有效的整数
+    // 构建任务链数据，包含所有生成的步骤
+    const chainData = {
+      chain_name: taskName,
+      description: description || '由 AI 助手生成的学习任务链',
+      steps: advisorResult.value.steps.map(step => ({
+        title: step.title,
+        description: step.description,
+        completion_type: 'ai_eval' // 默认开启 AI 评判
+      }))
     }
     
-    console.log('发布任务数据:', taskData)
+    console.log('发布任务链数据:', chainData)
     
-    // 调用 API 创建任务
-    const response = await api.post('/api/tasks', taskData)
+    // 调用 API 创建任务链
+    const response = await api.post('/api/task-chains', chainData)
     
-    console.log('发布任务响应:', response)
+    console.log('发布任务链响应:', response)
     
-    successMessage.value = '任务发布成功！'
-    ElMessage.success('任务已成功发布到任务系统，您可以在首页查看和管理该任务')
+    successMessage.value = '任务链发布成功！'
+    ElMessage.success('任务链已成功发布，包含 ' + chainData.steps.length + ' 个联动的子任务，您可以在首页查看')
     
     // 清空结果，准备下一个查询
     advisorResult.value = null
     userQuery.value = ''
   } catch (error) {
-    console.error('发布任务失败:', error)
-    // 显示详细的错误信息，包括后端返回的具体错误
-    let errorDetail = '未知错误'
-    
-    // 打印完整的错误对象，用于调试
-    console.log('完整错误对象:', error)
-    
-    if (error.response) {
-      // 服务器返回了错误响应
-      console.log('错误响应状态码:', error.response.status)
-      console.log('错误响应头:', error.response.headers)
-      console.log('错误响应数据:', error.response.data)
-      console.log('错误响应数据类型:', typeof error.response.data)
-      console.log('错误响应数据详细:', JSON.stringify(error.response.data, null, 2))
-      
-      // 确保error.response.data是字符串或对象
-      const responseData = error.response.data
-      
-      if (typeof responseData === 'string') {
-        // 如果是字符串，直接使用
-        errorDetail = responseData
-      } else if (typeof responseData === 'object') {
-        // 如果是对象，尝试获取详细信息
-        if (responseData.detail) {
-          errorDetail = responseData.detail
-        } else if (responseData.errors) {
-          // 处理 Pydantic 验证错误
-          const errors = responseData.errors
-          if (Array.isArray(errors)) {
-            errorDetail = errors.map(err => `${err.loc.join('.')}: ${err.msg}`).join('; ')
-          } else {
-            errorDetail = JSON.stringify(errors, null, 2)
-          }
-        } else {
-          // 尝试将对象转换为字符串
-          try {
-            errorDetail = JSON.stringify(responseData, null, 2)
-          } catch (e) {
-            errorDetail = '无法解析的错误对象'
-          }
-        }
-      } else {
-        // 其他类型，转换为字符串
-        errorDetail = String(responseData)
-      }
-    } else if (error.request) {
-      // 请求已发送但没有收到响应
-      errorDetail = '服务器没有响应'
-    } else if (error.message) {
-      // 请求配置出错
-      errorDetail = error.message
-    } else {
-      // 其他错误
-      errorDetail = String(error)
-    }
-    
-    console.log('最终错误信息:', errorDetail)
-    
-    errorMessage.value = `发布任务失败: ${errorDetail}`
-    ElMessage.error(`发布任务失败: ${errorDetail}`)
+    console.error('发布任务链失败:', error)
+    const errorDetail = error.response?.data?.message || error.response?.data?.detail || error.message || '未知错误'
+    errorMessage.value = `发布失败: ${errorDetail}`
+    ElMessage.error(`发布失败: ${errorDetail}`)
   } finally {
     setTimeout(() => {
       isLoading.value = false

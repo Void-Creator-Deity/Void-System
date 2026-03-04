@@ -98,19 +98,53 @@ class Database:
             task_id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             category_id TEXT,
+            chain_id TEXT,
+            chain_order INTEGER DEFAULT 0,
             task_name TEXT NOT NULL,
             description TEXT,
             related_attrs TEXT,
             estimated_time INTEGER,
             reward_coins INTEGER DEFAULT 10,
+            priority TEXT DEFAULT 'medium',
+            attribute_points INTEGER DEFAULT 0,
+            completion_type TEXT DEFAULT 'simple',
+            completion_criteria TEXT,
+            current_progress INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
+            prerequisites TEXT,  -- JSON 格式存储的前置任务 ID 列表
+            task_type TEXT DEFAULT 'main', -- 'main', 'side', 'daily'
+            is_optional INTEGER DEFAULT 0, -- 0: 必须, 1: 可选
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             completed_at TEXT,
             proof_data TEXT,
             self_evaluation TEXT,
             ai_suggestion TEXT,
+            is_daily INTEGER DEFAULT 0, -- 0: 否, 1: 是 (映射到每日任务)
             FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
             FOREIGN KEY (category_id) REFERENCES task_categories(category_id) ON DELETE SET NULL
+        )
+        ''')
+
+        # 确保旧数据库也有 is_daily 字段
+        try:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN is_daily INTEGER DEFAULT 0")
+        except:
+            pass
+
+        # 任务链表
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS task_chains (
+            chain_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            chain_name TEXT NOT NULL,
+            description TEXT,
+            total_tasks INTEGER DEFAULT 0,
+            completed_tasks INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
         )
         ''')
         
@@ -305,6 +339,41 @@ class Database:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id)")
         
+        # 兼容性迁移：为已有数据库添加新字段（忽略已存在的列错误）
+        for col, definition in [
+            ("priority",             "TEXT DEFAULT 'medium'"),
+            ("attribute_points",     "INTEGER DEFAULT 0"),
+            ("updated_at",           "TEXT"),
+            ("chain_id",             "TEXT"),
+            ("chain_order",          "INTEGER DEFAULT 0"),
+            ("completion_type",      "TEXT DEFAULT 'simple'"),
+            ("completion_criteria",  "TEXT"),
+            ("current_progress",     "INTEGER DEFAULT 0"),
+            ("prerequisites",        "TEXT"),
+            ("task_type",            "TEXT DEFAULT 'main'"),
+            ("is_optional",          "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
+            except Exception:
+                pass
+        
+        # 确保 updated_at 有值
+        try:
+            cursor.execute("UPDATE tasks SET updated_at = created_at WHERE updated_at IS NULL")
+        except Exception:
+            pass
+        
+        # 兼容性迁移：为 task_chains 表添加外键（如果需要）
+        # 注意：SQLite不支持直接ALTER TABLE ADD FOREIGN KEY，通常需要重建表或在创建时就定义
+        # 这里假设如果表已存在，外键会在创建时就定义好，或者通过其他方式处理
+        # 如果需要添加外键，通常需要更复杂的迁移逻辑，例如：
+        # 1. 创建新表，包含外键
+        # 2. 从旧表复制数据到新表
+        # 3. 删除旧表
+        # 4. 重命名新表为旧表名
+        # 对于简单的列添加，上述for循环足够。
+
         conn.commit()
         conn.close()
     
@@ -863,7 +932,17 @@ class Database:
         related_attrs: Optional[Dict[str, Any]] = None,
         estimated_time: int = 30,
         reward_coins: int = 10,
-        category_id: Optional[str] = None
+        priority: str = "medium",
+        attribute_points: int = 0,
+        category_id: Optional[str] = None,
+        chain_id: Optional[str] = None,
+        chain_order: int = 0,
+        prerequisites: Optional[List[str]] = None,
+        completion_type: str = "simple",
+        completion_criteria: Optional[Dict[str, Any]] = None,
+        task_type: str = "main",
+        is_optional: int = 0,
+        is_daily: int = 0
     ) -> str:
         """
         创建新任务
@@ -874,23 +953,33 @@ class Database:
             related_attrs: 关联的属性字典（属性ID: 权重）
             estimated_time: 预计耗时（分钟）
             reward_coins: 奖励系统币数量
+            priority: 任务优先级 (easy/medium/hard)
+            attribute_points: 属性点奖励数量
             category_id: 任务类别ID
+            prerequisites: 前置任务ID列表
+            is_daily: 是否映射到每日任务
         Returns:
             新创建的任务ID
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         task_id = str(uuid.uuid4())
-        # 将关联属性转换为JSON字符串
+        now = datetime.now().isoformat()
+        # 将关联属性和前置任务转换为JSON字符串
         related_attrs_json = json.dumps(related_attrs or {})
+        prerequisites_json = json.dumps(prerequisites or [])
         try:
             cursor.execute(
                 """INSERT INTO tasks
-                   (task_id, user_id, category_id, task_name, description, 
-                    related_attrs, estimated_time, reward_coins)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, user_id, category_id, task_name, description, 
-                 related_attrs_json, estimated_time, reward_coins)
+                   (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
+                    related_attrs, estimated_time, reward_coins, priority, attribute_points,
+                    prerequisites, completion_type, completion_criteria, task_type, is_optional, 
+                    is_daily, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
+                 related_attrs_json, estimated_time, reward_coins, priority, attribute_points,
+                 prerequisites_json, completion_type, json.dumps(completion_criteria or {}), 
+                 task_type, is_optional, is_daily, now, now)
             )
             conn.commit()
             return task_id
@@ -979,6 +1068,14 @@ class Database:
                 except json.JSONDecodeError:
                     task_dict["ai_suggestion"] = {}
                 
+                try:
+                    if task_dict.get("prerequisites"):
+                        task_dict["prerequisites"] = json.loads(task_dict["prerequisites"])
+                    else:
+                        task_dict["prerequisites"] = []
+                except json.JSONDecodeError:
+                    task_dict["prerequisites"] = []
+                
                 result.append(task_dict)
             
             return result
@@ -997,18 +1094,19 @@ class Database:
         """
         conn = self.get_connection()
         cursor = conn.cursor()
+        now = datetime.now().isoformat()
         try:
             # 如果状态是完成，记录完成时间
             if status == 'completed':
                 cursor.execute(
-                    """UPDATE tasks SET status = ?, completed_at = ?
+                    """UPDATE tasks SET status = ?, completed_at = ?, updated_at = ?
                        WHERE task_id = ? AND user_id = ?""",
-                    (status, datetime.now().isoformat(), task_id, user_id)
+                    (status, now, now, task_id, user_id)
                 )
             else:
                 cursor.execute(
-                    "UPDATE tasks SET status = ? WHERE task_id = ? AND user_id = ?",
-                    (status, task_id, user_id)
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND user_id = ?",
+                    (status, now, task_id, user_id)
                 )
             conn.commit()
             return cursor.rowcount > 0
@@ -2186,5 +2284,160 @@ class Database:
             )
             conn.commit()
             return True
+        finally:
+            conn.close()
+
+    # ==================== 任务链相关方法 ====================
+
+    def create_task_chain(self, user_id: str, chain_name: str, description: str = "") -> str:
+        """创建任务链，返回 chain_id"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        chain_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute(
+                """INSERT INTO task_chains (chain_id, user_id, chain_name, description, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (chain_id, user_id, chain_name, description, now, now)
+            )
+            conn.commit()
+            return chain_id
+        finally:
+            conn.close()
+
+    def get_user_task_chains(self, user_id: str) -> List[Dict[str, Any]]:
+        """获取用户所有任务链（含进度统计）"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT tc.*,
+                          COUNT(t.task_id) as total_tasks,
+                          SUM(CASE WHEN t.status='completed' THEN 1 ELSE 0 END) as completed_tasks
+                   FROM task_chains tc
+                   LEFT JOIN tasks t ON t.chain_id = tc.chain_id
+                   WHERE tc.user_id = ?
+                   GROUP BY tc.chain_id
+                   ORDER BY tc.created_at DESC""",
+                (user_id,)
+            )
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_task_chain(self, chain_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """获取单个任务链详情"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM task_chains WHERE chain_id = ? AND user_id = ?",
+                (chain_id, user_id)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def delete_task_chain(self, chain_id: str, user_id: str) -> bool:
+        """删除任务链（同时把链中任务的 chain_id 置 NULL）"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE tasks SET chain_id = NULL, chain_order = 0 WHERE chain_id = ? AND user_id = ?",
+                (chain_id, user_id)
+            )
+            cursor.execute(
+                "DELETE FROM task_chains WHERE chain_id = ? AND user_id = ?",
+                (chain_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def add_task_to_chain(self, task_id: str, chain_id: str, chain_order: int) -> bool:
+        """将任务加入任务链"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute(
+                "UPDATE tasks SET chain_id = ?, chain_order = ?, updated_at = ? WHERE task_id = ?",
+                (chain_id, chain_order, now, task_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    # ==================== 任务进度 & 完成配置 ====================
+
+    def update_task_progress(self, task_id: str, user_id: str, progress: int) -> bool:
+        """更新任务当前进度（0-100），达到100时自动更新状态"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        progress = max(0, min(100, progress))
+        try:
+            # 更新进度
+            cursor.execute(
+                "UPDATE tasks SET current_progress = ?, updated_at = ? WHERE task_id = ? AND user_id = ?",
+                (progress, now, task_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def update_task_completion_config(
+        self,
+        task_id: str,
+        user_id: str,
+        completion_type: str,
+        completion_criteria: Optional[Dict[str, Any]] = None,
+        prerequisites: Optional[List[str]] = None
+    ) -> bool:
+        """更新任务完成类型和标准"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            cursor.execute(
+                """UPDATE tasks SET completion_type = ?, completion_criteria = ?, prerequisites = ?, updated_at = ?
+                   WHERE task_id = ? AND user_id = ?""",
+                (completion_type, json.dumps(completion_criteria or {}), 
+                 json.dumps(prerequisites or []), now, task_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def save_ai_evaluation(
+        self, task_id: str, user_id: str,
+        ai_result: Dict[str, Any], passed: bool
+    ) -> bool:
+        """保存AI评判结果，如果通过则标记任务为待完成"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        try:
+            new_status = "pending_evaluation"  # 始终让用户或管理员最终确认
+            cursor.execute(
+                """UPDATE tasks SET ai_suggestion = ?, proof_data = ?, status = ?, updated_at = ?
+                   WHERE task_id = ? AND user_id = ?""",
+                (
+                    json.dumps(ai_result),
+                    json.dumps({"ai_evaluated": True, "passed": passed, "timestamp": now}),
+                    new_status, now,
+                    task_id, user_id
+                )
+            )
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()

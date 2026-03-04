@@ -156,35 +156,40 @@ export const useChatStore = defineStore('chat', () => {
     /**
      * 添加消息到活跃会话
      */
-    const addMessage = async (message) => {
+    const addMessage = async (message, save = true) => {
         if (!activeSessionId.value) return
-        try {
-            const msgId = await chatApi.addChatMessage(activeSessionId.value, {
-                role: message.role,
-                content: message.text,
-                tokens: message.tokens || 0,
-                replyToId: message.replyToId
-            })
 
-            const newMessage = {
-                id: msgId,
-                ...message,
-                timestamp: new Date().toISOString()
+        let msgId = message.id || `temp-${Date.now()}`
+
+        if (save) {
+            try {
+                msgId = await chatApi.addChatMessage(activeSessionId.value, {
+                    role: message.role,
+                    content: message.text,
+                    tokens: message.tokens || 0,
+                    replyToId: message.replyToId
+                })
+            } catch (error) {
+                console.error('添加消息失败:', error)
+                return null
             }
-            messages.value.push(newMessage)
-
-            // 如果是第一条用户消息，尝试更新会话名称
-            const session = activeSession.value
-            if (messages.value.filter(m => m.role === 'user').length === 1 && message.role === 'user') {
-                const title = message.text.substring(0, 15)
-                const newName = title + (message.text.length > 15 ? '...' : '')
-                await renameSession(activeSessionId.value, newName)
-            }
-
-            return msgId
-        } catch (error) {
-            console.error('添加消息失败:', error)
         }
+
+        const newMessage = {
+            id: msgId,
+            ...message,
+            timestamp: new Date().toISOString()
+        }
+        messages.value.push(newMessage)
+
+        // 如果是第一条用户消息且已保存，尝试更新会话名称
+        if (save && message.role === 'user' && messages.value.filter(m => m.role === 'user').length === 1) {
+            const title = message.text.substring(0, 15)
+            const newName = title + (message.text.length > 15 ? '...' : '')
+            await renameSession(activeSessionId.value, newName)
+        }
+
+        return msgId
     }
 
     /**
@@ -197,12 +202,13 @@ export const useChatStore = defineStore('chat', () => {
         if (lastMsg && lastMsg.role === 'assistant') {
             lastMsg.text = content
             lastMsg.tokens = tokens
-            // 正式保存到后端
-            await chatApi.addChatMessage(activeSessionId.value, {
+            // 正式保存到后端并获取真实 ID
+            const msgId = await chatApi.addChatMessage(activeSessionId.value, {
                 role: 'assistant',
                 content: content,
                 tokens: tokens
             })
+            if (msgId) lastMsg.id = msgId
         }
     }
 
