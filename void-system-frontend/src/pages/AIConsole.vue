@@ -34,20 +34,24 @@
             </el-dropdown>
           </div>
           
-          <div class="session-items">
-            <div 
-              v-for="session in group.sessions" 
-              :key="session.session_id"
-              :class="['session-link', { 'active': chatStore.activeSessionId === session.session_id }]"
-              @click="switchSession(group.group_id, session.session_id)"
-            >
-              <el-icon><ChatLineRound /></el-icon>
+          <div class="session-items-box">
+              <div 
+                v-for="session in group.sessions" 
+                :key="session.session_id"
+                class="session-link"
+                :class="{ 'active': chatStore.activeSessionId === session.session_id }"
+                @click="switchSession(group.group_id, session.session_id)"
+                draggable="true"
+                @dragstart="e => e.dataTransfer.setData('sessionId', session.session_id)"
+              >
+              <el-icon class="session-icon"><ChatLineRound /></el-icon>
               <span class="session-name">{{ session.session_name }}</span>
               <el-dropdown trigger="click" @command="(cmd) => handleSessionCommand(cmd, group.group_id, session)">
                 <el-icon class="session-more"><MoreFilled /></el-icon>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="rename"><el-icon><EditPen /></el-icon>重命名</el-dropdown-item>
+                    <el-dropdown-item command="duplicate"><el-icon><DocumentCopy /></el-icon>拷贝对话</el-dropdown-item>
                     <el-dropdown-item v-if="chatStore.groups.length > 1" command="move"><el-icon><Rank /></el-icon>移动到组</el-dropdown-item>
                     <el-dropdown-item command="delete" dir="rtl"><el-icon><Delete /></el-icon>删除</el-dropdown-item>
                   </el-dropdown-menu>
@@ -72,16 +76,6 @@
             <div class="status-dot" :class="{ 'online': !isLoading, 'loading': isLoading }"></div>
             <span>{{ isLoading ? '正在同步虚空指令...' : '虚空链路正常' }}</span>
           </div>
-        </div>
-        <div class="header-ops">
-          <el-button-group>
-            <el-tooltip content="复制整个会话" placement="bottom">
-              <el-button size="small" @click="copyFullSession"><el-icon><DocumentCopy /></el-icon></el-button>
-            </el-tooltip>
-            <el-tooltip content="清除当前历史" placement="bottom">
-              <el-button size="small" @click="confirmClear"><el-icon><Delete /></el-icon></el-button>
-            </el-tooltip>
-          </el-button-group>
         </div>
       </div>
 
@@ -184,29 +178,69 @@
 
           <div class="panel-right">
             <el-button 
+              v-if="!isLoading"
               type="primary" 
               circle 
               class="glow-btn"
               @click="handleSend"
-              :loading="isLoading"
-              :disabled="!input.trim() && !isLoading"
+              :disabled="!input.trim()"
             >
-              <el-icon v-if="!isLoading"><Promotion /></el-icon>
+              <el-icon><Promotion /></el-icon>
+            </el-button>
+            <el-button 
+              v-else
+              type="danger" 
+              circle 
+              class="stop-btn"
+              @click="stopGeneration"
+            >
+              <el-icon><VideoPause /></el-icon>
             </el-button>
           </div>
         </div>
       </footer>
     </main>
+
+    <!-- 移动会话对话框 -->
+    <el-dialog
+      v-model="moveDialog.show"
+      title="转移虚空会话"
+      width="300px"
+      custom-class="void-dialog"
+      append-to-body
+    >
+      <div class="move-dialog-body">
+        <p class="dialog-tip">选择目标任务组：</p>
+        <el-radio-group v-model="moveDialog.targetGroupId" class="move-radio-group">
+          <el-radio 
+            v-for="g in moveDialog.otherGroups" 
+            :key="g.group_id" 
+            :label="g.group_id"
+            border
+          >
+            <el-icon><Collection /></el-icon> {{ g.group_name }}
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="moveDialog.show = false">取消</el-button>
+          <el-button type="primary" :disabled="!moveDialog.targetGroupId" @click="executeMove">
+            确认转移
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, reactive } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { 
   Fold, Expand, Plus, FolderAdd, Collection, MoreFilled, 
   ChatLineRound, Close, ArrowRight, Delete, DocumentCopy,
-  ChatDotSquare, CopyDocument, Promotion, Link, EditPen, Rank
+  ChatDotSquare, CopyDocument, Promotion, Link, EditPen, Rank, VideoPause
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -220,6 +254,14 @@ const isLoading = ref(false)
 const viewport = ref(null)
 const fileInputRef = ref(null)
 const replyingMessage = ref(null)
+const abortController = ref(null)
+
+const moveDialog = reactive({
+  show: false,
+  sessionId: '',
+  targetGroupId: '',
+  otherGroups: []
+})
 
 // 当前状态
 const currentGroup = computed(() => chatStore.activeGroup)
@@ -243,14 +285,7 @@ const createNewSession = () => {
 }
 
 const createNewGroup = () => {
-  ElMessageBox.prompt('请输入组名称', '新建组', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    inputPlaceholder: '如：算法学习、系统自检等'
-  }).then(({ value }) => {
-    chatStore.createGroup(value || '新对话组')
-    ElMessage.success('组已创建')
-  })
+  chatStore.createGroup()
 }
 
 const handleGroupCommand = (cmd, group) => {
@@ -282,18 +317,29 @@ const handleSessionCommand = (cmd, gid, session) => {
     })
   } else if (cmd === 'delete') {
     chatStore.deleteSession(session.session_id)
+  } else if (cmd === 'duplicate') {
+    chatStore.duplicateSession(session.session_id)
+      .then(() => ElMessage.success('会话已克隆并自动切换'))
   } else if (cmd === 'move') {
     const otherGroups = chatStore.groups.filter(g => g.group_id !== gid)
-    if (!otherGroups.length) return
-    
-    ElMessageBox.confirm(`将此会话移动到 "${otherGroups[0].group_name}" 吗？`, '移动会话', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消'
-    }).then(() => {
-      chatStore.moveSession(session.session_id, otherGroups[0].group_id)
-      ElMessage.success(`已移动到 ${otherGroups[0].group_name}`)
-    })
+    if (!otherGroups.length) {
+      ElMessage.warning('暂无其他任务组可供转移')
+      return
+    }
+    moveDialog.sessionId = session.session_id
+    moveDialog.otherGroups = otherGroups
+    moveDialog.targetGroupId = otherGroups[0].group_id
+    moveDialog.show = true
   }
+}
+
+const executeMove = () => {
+  if (!moveDialog.sessionId || !moveDialog.targetGroupId) return
+  chatStore.moveSession(moveDialog.sessionId, moveDialog.targetGroupId)
+    .then(() => {
+      ElMessage.success('虚空会话已跨组转移')
+      moveDialog.show = false
+    })
 }
 
 const toggleGroup = (id) => {
@@ -315,6 +361,15 @@ const confirmClear = () => {
   ElMessageBox.confirm('一键格式化当前会话历史？', '系统警告', {
     type: 'warning'
   }).then(() => chatStore.clearActiveSession())
+}
+
+const stopGeneration = () => {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+    isLoading.value = false
+    ElMessage.info('指令已强行中断')
+  }
 }
 
 const quoteMessage = (msg) => {
@@ -358,16 +413,19 @@ const handleSend = async () => {
   
   isLoading.value = true
   
-  // 占位
-  chatStore.addMessage({ role: 'system', text: '', tokens: 0 })
+  // 占位响应（不立即保存到数据库，等流结束后统一保存）
+  chatStore.addMessage({ role: 'system', text: '', tokens: 0 }, false)
   scrollToBottom()
 
   try {
     let acc = ""
+    abortController.value = new AbortController()
+    
     streamPersona(text, chatStore.activeSessionId, (content, done) => {
       if (done) {
         chatStore.saveLastMessage(acc, Math.floor(acc.length / 3))
         isLoading.value = false
+        abortController.value = null
       } else {
         acc += content
         // 临时更新UI展示
@@ -376,9 +434,13 @@ const handleSend = async () => {
         scrollToBottom()
       }
     }, (err) => {
-      // 错误处理...
+      // 如果是手动取消，不报错
+      if (err.name === 'AbortError') return
+      
       isLoading.value = false
-    })
+      abortController.value = null
+      ElMessage.error('虚空链路中断: ' + (err.message || '未知错误'))
+    }, abortController.value.signal)
   } catch (e) {
     isLoading.value = false
     ElMessage.error('指令发送失败')
@@ -493,28 +555,43 @@ onMounted(() => {
   gap: 8px;
   padding: 6px 12px;
   color: var(--color-text-muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
+  letter-spacing: 0.5px;
+}
+.group-title .el-icon:first-child { 
+  width: 20px; 
+  display: flex; 
+  justify-content: center; 
+  font-size: 15px; 
+  opacity: 0.7; 
 }
 
 .group-title:hover { color: var(--color-text-primary); }
 .more-icon { margin-left: auto; cursor: pointer; padding: 4px; border-radius: 4px; }
 .more-icon:hover { background: rgba(255,255,255,0.1); }
 
-.session-items { padding-left: 1rem; margin-top: 4px; }
+.session-items-box { padding-left: 1.5rem; margin-top: 4px; }
 
 .session-link {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  margin: 2px 0;
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 1px 0;
+  border-radius: 6px;
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all 0.2s ease;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+}
+.session-icon { 
+  width: 20px; 
+  display: flex; 
+  justify-content: center; 
+  font-size: 15px; 
+  flex-shrink: 0; 
 }
 
 .session-link:hover { background: rgba(255,255,255,0.05); color: var(--color-text-primary); }
@@ -646,6 +723,18 @@ onMounted(() => {
   box-shadow: 0 0 15px rgba(99,102,241,0.3); transition: 0.3s;
 }
 .glow-btn:hover { transform: scale(1.05); box-shadow: 0 0 25px rgba(99,102,241,0.5); }
+
+.stop-btn {
+  width: 44px; height: 44px; background: rgba(239, 68, 68, 0.2) !important; border: 1px solid #ef4444 !important;
+  color: #ef4444 !important; transition: 0.3s;
+}
+.stop-btn:hover { background: rgba(239, 68, 68, 0.3) !important; transform: scale(1.05); }
+
+/* 移动对话框样式 */
+.move-radio-group { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.move-radio-group :deep(.el-radio) { margin-right: 0; width: 100%; height: auto; padding: 12px; display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.02); }
+.move-radio-group :deep(.el-radio.is-bordered.is-checked) { border-color: var(--color-primary); background: rgba(99,102,241,0.1); }
+.dialog-tip { font-size: 13px; color: var(--color-text-secondary); margin-bottom: 15px; }
 
 /* Markdown */
 .markdown-body :deep(h1,h2,h3) { margin: 10px 0; color: var(--color-primary-light); }

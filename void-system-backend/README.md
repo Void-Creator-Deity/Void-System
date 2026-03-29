@@ -234,7 +234,7 @@ open http://localhost:8000/docs
 # 或使用curl测试
 curl -X POST http://localhost:8000/api/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"test","password":"test123","nickname":"测试用户"}'
+  -d '{"username":"test","password":"test123","username":"测试用户"}'
 ```
 
 ## 🚀 部署运行

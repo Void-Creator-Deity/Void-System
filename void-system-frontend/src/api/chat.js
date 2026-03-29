@@ -64,6 +64,14 @@ export const deleteChatSession = async (sessionId) => {
 }
 
 /**
+ * 拷贝对话会话（生成完整副本）
+ */
+export const duplicateChatSession = async (sessionId) => {
+    const res = await api.post(`/api/chat/sessions/${sessionId}/duplicate`)
+    return res.data.data.session_id
+}
+
+/**
  * 获取会话历史记录
  */
 export const getChatMessages = async (sessionId, limit = 100) => {

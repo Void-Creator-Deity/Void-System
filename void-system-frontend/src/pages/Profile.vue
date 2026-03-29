@@ -2,469 +2,240 @@
   <div class="settings-container">
     <!-- 页面标题 -->
     <div class="settings-header">
-      <h2><span class="glitch">系统</span> <span class="system-text">设置</span></h2>
-      <p class="subtitle">配置您的虚空学习系统参数</p>
+      <h2><span class="glitch">个人</span> <span class="system-text">资料</span></h2>
+      <p class="subtitle">管理您的档案和学习目标</p>
     </div>
     
-    <!-- 设置标签页导航 -->
-    <el-tabs v-model="activeTab" class="settings-tabs">
-
-      
-      <el-tab-pane label="系统配置" name="config">
-        <!-- 系统配置卡片 -->
-        <div class="settings-card system-config">
-          <div class="config-content">
-            <div class="config-group">
-              <div class="config-header">
-                <h4>AI 助手设置</h4>
-                <el-switch v-model="systemConfig.aiAssistantEnabled" />
-              </div>
-              
-              <div class="config-details" v-if="systemConfig.aiAssistantEnabled">
-                <div class="detail-group">
-                  <label>回复风格</label>
-                  <el-radio-group v-model="systemConfig.responseStyle">
-                    <el-radio-button label="专业">专业</el-radio-button>
-                    <el-radio-button label="友好">友好</el-radio-button>
-                    <el-radio-button label="详细">详细</el-radio-button>
-                  </el-radio-group>
-                </div>
-                
-                <div class="detail-group">
-                  <label>响应速度</label>
-                  <el-slider
-                    v-model="systemConfig.responseSpeed"
-                    :min="1"
-                    :max="3"
-                    :marks="{ 1: '快', 2: '中', 3: '详细' }"
-                  />
-                </div>
-              </div>
-            </div>
-            
-            <div class="config-group">
-              <div class="config-header">
-                <h4>界面设置</h4>
-                <el-switch v-model="systemConfig.themeEnabled" />
-              </div>
-              
-              <div class="config-details" v-if="systemConfig.themeEnabled">
-                <div class="detail-group">
-                  <label>主题颜色</label>
-                  <div class="color-options">
-                    <span 
-                      v-for="color in colorOptions" 
-                      :key="color.value"
-                      class="color-option"
-                      :class="{ active: systemConfig.themeColor === color.value }"
-                      :style="{ backgroundColor: color.value }"
-                      @click="systemConfig.themeColor = color.value"
-                      :title="color.value"
-                    ></span>
-                  </div>
-                </div>
-                
-                <div class="detail-group">
-                  <label>动画效果</label>
-                  <el-checkbox-group v-model="systemConfig.animations">
-                    <el-checkbox label="glow">发光效果</el-checkbox>
-                    <el-checkbox label="float">浮动效果</el-checkbox>
-                    <el-checkbox label="pulse">脉冲效果</el-checkbox>
-                  </el-checkbox-group>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="card-actions">
-            <el-button type="primary" @click="saveSystemConfig" :loading="loading.config">应用设置</el-button>
+    <div class="profile-layout">
+      <!-- 左侧身份卡 -->
+      <div class="settings-card id-card">
+        <div class="id-card-header">
+          <span class="id-label">VOID_ID_AUTH</span>
+          <span class="id-status online"></span>
+        </div>
+        <div class="avatar-container">
+          <div class="avatar">
+            <span class="avatar-text">{{ userInfo.username ? userInfo.username.charAt(0).toUpperCase() : 'U' }}</span>
           </div>
         </div>
-      </el-tab-pane>
+        
+        <h3 class="user-display-name">{{ userInfo.username || '未知执行者' }}</h3>
+        <p class="user-major-badge">{{ majorOptions.find(o => o.value === userInfo.major)?.label || '未定专业' }}</p>
+        
+        <div class="user-goal-display">
+          <span class="goal-label">当前运行指令:</span>
+          <p class="goal-text">"{{ userInfo.learningGoal || '尚未设定目标指令...' }}"</p>
+        </div>
+        
+        <div class="cyber-lines">
+          <div class="line"></div>
+          <div class="line short"></div>
+          <div class="line"></div>
+        </div>
+      </div>
       
-      <el-tab-pane label="学习偏好" name="preferences">
-        <!-- 学习偏好卡片 -->
-        <div class="settings-card learning-prefs">
-          <div class="preferences-content">
-            <div class="detail-group">
-              <label>学习时间偏好</label>
-              <div class="time-pref">
-                <el-time-select
-                  v-model="learningPrefs.preferredTime"
-                  :picker-options="{ start: '09:00', step: '00:30', end: '21:00' }"
-                  placeholder="选择学习时间"
-                />
-              </div>
+      <!-- 右侧设定表单 -->
+      <div class="settings-card profile-main">
+        <div class="card-header">
+          <div class="header-icon">🛡️</div>
+          <h3>实体档案设定</h3>
+        </div>
+        
+        <div class="user-details" style="flex:1;">
+          <div class="detail-row" style="display:flex; gap:1.5rem; margin-bottom:1.5rem;">
+            <div class="detail-group" style="flex:1;">
+              <label>系统编号(UID)</label>
+              <el-input 
+                v-model="userInfo.uid" 
+                readonly
+                disabled
+                class="form-input read-only-input"
+              />
             </div>
-            
-            <div class="detail-group">
-              <label>学习资源类型</label>
-              <el-checkbox-group v-model="learningPrefs.resourceTypes">
-                <el-checkbox label="视频">视频</el-checkbox>
-                <el-checkbox label="文档">文档</el-checkbox>
-                <el-checkbox label="互动练习">互动练习</el-checkbox>
-                <el-checkbox label="音频">音频</el-checkbox>
-              </el-checkbox-group>
-            </div>
-            
-            <div class="detail-group">
-              <label>学习难度</label>
-              <el-rate v-model="learningPrefs.difficultyLevel" show-score />
-            </div>
-            
-            <div class="detail-group">
-              <label>学习频率</label>
-              <el-slider
-                v-model="learningPrefs.studyFrequency"
-                :min="1"
-                :max="7"
-                :marks="{ 1: '每周1次', 4: '每周4次', 7: '每天' }"
-                show-input
+            <div class="detail-group" style="flex:1;">
+              <label>接入邮箱</label>
+              <el-input 
+                v-model="userInfo.email" 
+                readonly
+                disabled
+                class="form-input read-only-input"
               />
             </div>
           </div>
-          
-          <div class="card-actions">
-            <el-button type="primary" @click="saveLearningPrefs" :loading="loading.preferences">保存偏好</el-button>
-          </div>
-        </div>
-      </el-tab-pane>
-      
-      <el-tab-pane label="系统信息" name="info">
-        <!-- 系统信息卡片 -->
-        <div class="settings-card system-info">
-          <div class="info-content">
-            <div class="info-item">
-              <span class="info-label">系统版本</span>
-              <span class="info-value">{{ systemInfo.version }}</span>
-            </div>
-            
-            <div class="info-item">
-              <span class="info-label">AI 模型</span>
-              <span class="info-value">{{ systemInfo.aiModel }}</span>
-            </div>
-            
-            <div class="info-item">
-              <span class="info-label">向量存储</span>
-              <span class="info-value">{{ systemInfo.vectorStore }}</span>
-            </div>
-            
-            <div class="info-item">
-              <span class="info-label">运行时间</span>
-              <span class="info-value">{{ systemInfo.uptime }}</span>
-            </div>
-            
-            <div class="info-item">
-              <span class="info-label">后端状态</span>
-              <span class="info-value" :class="{ 'status-online': systemInfo.status === 'online', 'status-offline': systemInfo.status === 'offline' }">
-                {{ systemInfo.status === 'online' ? '在线' : '离线' }}
-              </span>
-            </div>
+
+          <div class="detail-group">
+            <label>用户名</label>
+            <el-input 
+              v-model="userInfo.username" 
+              placeholder="输入对外显示的档案代号" 
+              class="form-input"
+              :validate-event="false"
+            />
+            <div v-if="errors.username" class="error-message">{{ errors.username }}</div>
           </div>
           
-          <div class="card-actions">
-            <el-button @click="checkForUpdates" :loading="loading.update">检查更新</el-button>
-            <el-button type="warning" plain @click="clearCache" :loading="loading.clearCache">清除缓存</el-button>
-            <el-button type="danger" plain @click="confirmLogout">退出登录</el-button>
+          <div class="detail-group">
+            <label>目标指令 (Learning Objective)</label>
+            <el-input 
+              v-model="userInfo.learningGoal" 
+              placeholder="输入最高优先级的学习目标..." 
+              class="form-input"
+              type="textarea"
+              :rows="3"
+            />
+          </div>
+          
+          <div class="detail-group">
+            <label>专精领域 (Expertise Area) *</label>
+            <el-select 
+              v-model="userInfo.major" 
+              placeholder="选择你的进阶修习领域" 
+              class="form-select"
+              :validate-event="false"
+            >
+              <el-option v-for="option in majorOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+            <div v-if="errors.major" class="error-message">{{ errors.major }}</div>
           </div>
         </div>
-      </el-tab-pane>
-    </el-tabs>
+        
+        <div class="card-actions" style="margin-top: 2rem; justify-content: flex-end;">
+          <el-button type="primary" @click="saveUserInfo" :loading="loading.profile" class="cyber-btn" size="large">同步更新档案</el-button>
+        </div>
+      </div>
+    </div>
     
   </div>
 </template>
 
 <script setup>
 /**
- * Settings Component
+ * Profile Component
  * ------------------
- * 系统设置页面，包含用户信息、系统配置、学习偏好等设置选项
+ * 用户资料页面
  */
 
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from "vue"
-import { useRouter, useRoute } from "vue-router"
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { logout as logoutApi } from '../api/user.js'
-
-const router = useRouter()
-const route = useRoute()
+import { reactive, onMounted } from "vue"
+import { ElMessage } from 'element-plus'
+import { getCurrentUser, updateUserProfile } from '../api/user.js'
 
 // ==================== 响应式状态 ====================
-const activeTab = ref(route.query.tab || 'config')
-
-// 监听路由变化，如果在页面内直接切换路由参数则自动跳标签
-watch(() => route.query.tab, (newTab) => {
-  if (newTab) {
-    activeTab.value = newTab
-  }
-})
 const loading = reactive({
-  profile: false,
-  config: false,
-  preferences: false,
-  update: false,
-  clearCache: false
+  profile: false
 })
+const errors = reactive({
+  username: '',
+  major: ''
+})
+
 // ==================== 数据模型 ====================
 
-// 系统配置
-const systemConfig = reactive({
-  aiAssistantEnabled: true,
-  responseStyle: "友好",
-  responseSpeed: 2,
-  themeEnabled: true,
-  themeColor: "#00ccff",
-  animations: ["glow", "float"]
+// 用户信息
+const userInfo = reactive({
+  username: '',
+  email: '',
+  learningGoal: '',
+  major: '',
+  uid: ''
 })
-
-// 学习偏好
-const learningPrefs = reactive({
-  preferredTime: "14:00",
-  resourceTypes: ["视频", "文档"],
-  difficultyLevel: 3,
-  studyFrequency: 5
-})
-
-// 系统信息
-const systemInfo = reactive({
-  version: "1.0.0",
-  aiModel: "Ollama LLM",
-  vectorStore: "Chroma DB",
-  uptime: "00:00:00",
-  status: 'online'
-})
-
-// 确认对话框状态
-const confirmLogoutVisible = ref(false)
 
 // ==================== 配置选项 ====================
 
-// 颜色选项
-const colorOptions = [
-  { value: "#00ccff" },
-  { value: "#00ff66" },
-  { value: "#ff6b6b" },
-  { value: "#ffcc00" },
-  { value: "#9966ff" }
+// 专业选项
+const majorOptions = [
+  { label: "计算机科学", value: "computer_science" },
+  { label: "数学", value: "mathematics" },
+  { label: "物理学", value: "physics" },
+  { label: "生物学", value: "biology" },
+  { label: "化学", value: "chemistry" },
+  { label: "经济学", value: "economics" },
+  { label: "心理学", value: "psychology" },
+  { label: "其他", value: "other" }
 ]
-
-// ==================== 工具函数 ====================
-
-// 系统运行时间相关
-let startTime = new Date()
-let uptimeInterval = null
-
-/**
- * 更新系统运行时间
- */
-const updateUptime = () => {
-  const currentTime = new Date()
-  const diff = Math.floor((currentTime - startTime) / 1000)
-  
-  const hours = Math.floor(diff / 3600).toString().padStart(2, '0')
-  const minutes = Math.floor((diff % 3600) / 60).toString().padStart(2, '0')
-  const seconds = (diff % 60).toString().padStart(2, '0')
-  
-  systemInfo.uptime = `${hours}:${minutes}:${seconds}`
-}
 
 // ==================== 业务逻辑 ====================
 
 /**
- * 保存系统配置
+ * 验证表单
+ * @returns {boolean} 表单是否有效
  */
-const saveSystemConfig = async () => {
-  loading.config = true
+const validateForm = () => {
+  let isValid = true
+  
+  // 重置错误信息
+  errors.username = ''
+  errors.major = ''
+  
+  // 验证用户名
+  if (!userInfo.username || userInfo.username.trim() === '') {
+    errors.username = '用户名不能为空'
+    isValid = false
+  }
+  
+  // 验证专业领域
+  if (!userInfo.major) {
+    errors.major = '请选择专业领域'
+    isValid = false
+  }
+  
+  return isValid
+}
+
+/**
+ * 保存用户信息
+ */
+const saveUserInfo = async () => {
+  if (!validateForm()) {
+    ElMessage.warning('请修正表单中的错误后再保存')
+    return
+  }
+  
+  loading.profile = true
   try {
-    // TODO: 调用实际的 API
-    // await api.updateSystemConfig(systemConfig)
-    
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // 应用主题颜色 - 修正为全局使用的主要颜色变量
-    if (systemConfig.themeEnabled) {
-      document.documentElement.style.setProperty('--color-primary', systemConfig.themeColor)
-      document.documentElement.style.setProperty('--accent-primary', systemConfig.themeColor)
+    const response = await updateUserProfile(userInfo)
+    if (response.success) {
+      ElMessage.success('用户信息保存成功')
+    } else {
+      ElMessage.error(response.message || '保存失败')
     }
-    
-    // 保存到本地存储
-    localStorage.setItem('settings_cache', JSON.stringify({
-      systemConfig,
-      learningPrefs
-    }))
-    
-    ElMessage.success('系统配置应用成功')
   } catch (error) {
-    console.error('保存系统配置失败:', error)
-    ElMessage.error('保存失败，请稍后重试')
+    console.error('保存用户信息失败:', error)
+    ElMessage.error('保存失败，请检查网络或稍后重试')
   } finally {
-    loading.config = false
+    loading.profile = false
   }
 }
 
+
+
+
+
 /**
- * 保存学习偏好
+ * 加载用户信息
  */
-const saveLearningPrefs = async () => {
-  loading.preferences = true
+const loadUserInfo = async () => {
   try {
-    // TODO: 调用实际的 API
-    // await api.updateLearningPreferences(learningPrefs)
+    const userData = await getCurrentUser()
     
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // 保存到本地存储
-    localStorage.setItem('settings_cache', JSON.stringify({
-      systemConfig,
-      learningPrefs
-    }))
-    
-    ElMessage.success('学习偏好保存成功')
+    // 更新用户信息 (数据已经是接口返回的 data 内容)
+    userInfo.username = userData.username || '学习者'
+    userInfo.email = userData.email || ''
+    userInfo.uid = userData.user_id || ''
+    userInfo.learningGoal = userData.learning_goal || ''
+    userInfo.major = userData.specialization || ''
   } catch (error) {
-    console.error('保存学习偏好失败:', error)
-    ElMessage.error('保存失败，请稍后重试')
-  } finally {
-    loading.preferences = false
+    console.error('加载用户信息失败:', error)
+    // 失败时保持现有的或使用默认占位
+    if (!userInfo.username) userInfo.username = '学习者'
   }
 }
-
-/**
- * 检查系统更新
- */
-const checkForUpdates = async () => {
-  loading.update = true
-  try {
-    // TODO: 调用实际的 API
-    // const response = await api.checkUpdates()
     
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    ElMessage.success('已是最新版本')
-  } catch (error) {
-    console.error('检查更新失败:', error)
-    ElMessage.error('检查更新失败，请稍后重试')
-  } finally {
-    loading.update = false
-  }
-}
-
-/**
- * 清除缓存
- */
-const clearCache = async () => {
-  loading.clearCache = true
-  try {
-    // 清除本地缓存
-    localStorage.removeItem('settings_cache')
-    sessionStorage.clear()
-    
-    // TODO: 调用实际的 API（如果需要）
-    // await api.clearServerCache()
-    
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 500))
-    ElMessage.success('缓存清除成功')
-  } catch (error) {
-    console.error('清除缓存失败:', error)
-    ElMessage.error('清除缓存失败，请稍后重试')
-  } finally {
-    loading.clearCache = false
-  }
-}
-
-/**
- * 确认退出登录（显示确认对话框）
- */
-const confirmLogout = () => {
-  ElMessageBox.confirm(
-    '确定要退出当前登录吗？',
-    '确认退出登录',
-    {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }
-  ).then(() => {
-    logout()
-  }).catch(() => {
-    // 用户取消，不做任何操作
-  })
-}
-
-/**
- * 退出登录
- */
-const logout = async () => {
-  try {
-    // 调用后端 logout API
-    await logoutApi()
-    
-    // 清除本地存储
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user_info')
-    localStorage.removeItem('persona_session_id')
-    
-    // 跳转到登录页
-    router.push('/login')
-    
-    ElMessage.success('已成功退出登录')
-  } catch (error) {
-    console.error('退出登录失败:', error)
-    // 即使 API 调用失败，仍然清除本地信息并跳转
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user_info')
-    localStorage.removeItem('persona_session_id')
-    router.push('/login')
-  }
-}
-
-/**
- * 加载系统设置
- */
-const loadSettings = () => {
-  const savedSettings = localStorage.getItem('settings_cache')
-  if (savedSettings) {
-    try {
-      const parsedSettings = JSON.parse(savedSettings)
-      if (parsedSettings.systemConfig) {
-        Object.assign(systemConfig, parsedSettings.systemConfig)
-      }
-      if (parsedSettings.learningPrefs) {
-        Object.assign(learningPrefs, parsedSettings.learningPrefs)
-      }
-    } catch (e) {
-      console.error('解析保存的设置失败:', e)
-    }
-  }
-}
-
-/**
- * 清理资源（清除定时器）
- */
-const cleanup = () => {
-  if (uptimeInterval) {
-    clearInterval(uptimeInterval)
-    uptimeInterval = null
-  }
-}
-
 // ==================== 生命周期 ====================
 
 // 组件挂载时
 onMounted(() => {
-  // 加载系统设置
-  loadSettings()
-  
-  // 启动运行时间更新定时器
-  updateUptime()
-  uptimeInterval = setInterval(updateUptime, 1000)
-})
-
-// 组件卸载前清理资源
-onBeforeUnmount(() => {
-  cleanup()
+  // 加载用户信息
+  loadUserInfo()
 })
 </script>
 
@@ -646,60 +417,77 @@ onBeforeUnmount(() => {
   }
 }
 
-.settings-tabs {
-  background: transparent;
-  margin-bottom: 2.5rem;
-  position: relative;
-  display: flex;
-  justify-content: center;
-}
-
-.settings-tabs :deep(.el-tabs__header) {
-  margin: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* clean slim bottom line */
-}
-
-.settings-tabs :deep(.el-tabs__nav-wrap::after) {
-  display: none; /* remove default element-plus border */
-}
-
-.settings-tabs :deep(.el-tabs__nav) {
-  display: flex;
-  gap: 2.5rem;
-  border: none;
-}
-
 .settings-tabs :deep(.el-tabs__item) {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(200, 200, 220, 0.7);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  padding: 1rem 0.5rem;
+  padding: 0.85rem 2.25rem;
   margin: 0;
-  font-weight: 600;
-  font-size: 1.15rem;
-  letter-spacing: 1px;
+  font-weight: 500;
+  font-size: 1rem;
   position: relative;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+  overflow: hidden;
+  border-radius: 10px;
+  backdrop-filter: blur(5px);
+}
+
+.settings-tabs :deep(.el-tabs__item)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: -1;
+}
+
+.settings-tabs :deep(.el-tabs__item::after) {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: var(--accent-primary);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(-50%);
+  box-shadow: 0 0 10px var(--accent-primary);
 }
 
 .settings-tabs :deep(.el-tabs__item:hover) {
-  color: var(--color-primary);
-  text-shadow: 0 0 10px rgba(0, 153, 255, 0.5);
-  transform: translateY(-2px);
+  color: var(--accent-primary);
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.settings-tabs :deep(.el-tabs__item:hover::before) {
+  opacity: 1;
+}
+
+.settings-tabs :deep(.el-tabs__item:hover::after) {
+  width: 80%;
 }
 
 .settings-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--color-primary);
-  text-shadow: 0 0 15px var(--glow-primary);
-  transform: translateY(-2px);
+  color: var(--accent-primary);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 4px 15px rgba(0, 0, 0, 0.3),
+    0 0 15px var(--accent-glow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  transform: translateY(-1px);
+}
+
+.settings-tabs :deep(.el-tabs__item.is-active::after) {
+  width: 80%;
 }
 
 .settings-tabs :deep(.el-tabs__active-bar) {
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
-  box-shadow: 0 -2px 10px var(--glow-primary);
+  display: none;
 }
 
 /* 设置卡片 - 玻璃态设计 */
@@ -1066,12 +854,131 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-/* 用户资料区域 */
-.profile-content {
+.profile-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 2.5rem;
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .profile-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.id-card {
   display: flex;
-  gap: 2rem;
-  margin-bottom: 2rem;
+  flex-direction: column;
   align-items: center;
+  padding: 2.5rem 2rem;
+}
+
+.id-card-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  font-family: monospace;
+  color: var(--accent-primary);
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+}
+
+.id-status.online {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #00ff66;
+  box-shadow: 0 0 10px #00ff66;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; box-shadow: 0 0 20px #00ff66; } 100% { opacity: 0.6; } }
+
+.user-display-name {
+  font-size: 2rem;
+  font-weight: 800;
+  margin-top: 2rem;
+  color: #fff;
+  text-shadow: 0 0 10px var(--accent-glow);
+  letter-spacing: 2px;
+}
+
+.user-major-badge {
+  margin-top: 0.75rem;
+  padding: 0.4rem 1.25rem;
+  border-radius: 20px;
+  background: rgba(0, 153, 255, 0.15);
+  border: 1px solid var(--accent-primary);
+  color: var(--accent-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.user-goal-display {
+  margin-top: 3rem;
+  width: 100%;
+  background: rgba(10, 13, 32, 0.5);
+  padding: 1.5rem;
+  border-radius: 10px;
+  border-left: 3px solid var(--accent-primary);
+}
+
+.goal-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.goal-text {
+  margin-top: 0.8rem;
+  font-size: 1.1rem;
+  color: rgba(200, 200, 220, 0.9);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.cyber-lines {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 4rem;
+  opacity: 0.4;
+}
+
+.cyber-lines .line {
+  height: 2px;
+  background: var(--accent-primary);
+  box-shadow: 0 0 5px var(--accent-glow);
+}
+
+.cyber-lines .line.short {
+  width: 60%;
+}
+
+.profile-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.cyber-btn {
+  font-weight: bold;
+  letter-spacing: 2px;
+  padding: 1.5rem 3rem !important;
+  text-transform: uppercase;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(0,153,255,0.8), rgba(0,255,102,0.8));
+  border: none;
+  box-shadow: 0 0 20px rgba(0,153,255,0.4);
+}
+.cyber-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(0,153,255,0.6);
 }
 
 .avatar-container {

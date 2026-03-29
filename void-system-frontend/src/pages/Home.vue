@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="home-container">
     <!-- 页面标题 -->
     <div class="home-header">
@@ -133,109 +133,136 @@
         </el-button>
       </div>
 
-      <!-- 任务链概览 (仅主线显示) -->
-      <div v-if="activeTab === 'main' && taskChains.length > 0" class="chains-overview-section mb-lg">
-        <div v-for="chain in taskChains" :key="chain.chain_id" class="chain-progress-card card">
-          <div class="chain-header flex justify-between items-center mb-sm">
-            <div class="flex items-center gap-sm">
-              <span class="chain-icon">🔗</span>
-              <span class="chain-title">{{ chain.chain_name }}</span>
-            </div>
-            <div class="chain-actions flex items-center gap-sm">
-              <span class="chain-count">{{ chain.completed_tasks }} / {{ chain.total_tasks }}</span>
-              <el-button size="small" link type="danger" @click="deleteTaskChain(chain.chain_id)" class="ml-sm">
-                <span style="font-size: 14px;">🗑️</span>
-              </el-button>
-            </div>
-          </div>
-          <el-progress 
-            :percentage="Math.round((chain.completed_tasks / chain.total_tasks) * 100) || 0" 
-            :stroke-width="10" 
-            :show-text="false"
-            color="var(--grad-cyber-reverse)"
-          />
-        </div>
-      </div>
-
-      <div class="tasks-list grid grid-cols-1 md:grid-cols-2 gap-lg">
-        <div v-for="task in filteredTasks" :key="task.task_id" class="task-card card" :class="{ 'chain-member': task.chain_id, 'is-optional': task.is_optional }">
-          <div class="task-header">
-            <h4 class="task-title" @click="viewTaskDetail(task.task_id)">
-              <span v-if="task.chain_id && activeTab !== 'main'" class="chain-icon" :title="getChainName(task.chain_id)">🔗</span>
-              {{ task.task_name || task.title }}
-              <el-tag v-if="task.is_optional || task.task_type === 'side'" size="small" type="info" effect="plain" class="ml-sm">支线</el-tag>
-              <el-tag v-if="task.task_type === 'daily' || task.is_daily" size="small" type="warning" effect="dark" class="ml-sm">每日</el-tag>
-              <div v-if="task.chain_id" class="task-chain-name">{{ getChainName(task.chain_id) }} (步骤 {{ task.chain_order }})</div>
-            </h4>
-            <div class="task-priority" :class="task.priority || 'medium'">
-              {{ (task.priority || 'medium') === 'easy' ? '特一级' : (task.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
-            </div>
-          </div>
+      <!-- 改进后的长条形任务列表：混合显示独立任务与任务组 -->
+      <div class="tasks-list grid grid-cols-1 gap-lg">
+        <template v-for="item in displayItems" :key="item.type + '_' + (item.type === 'group' ? item.data.chain_id : item.data.task_id)">
           
-          <div class="task-body">
-            <div class="task-info">
-              <span class="info-item" title="预计时长">
-                <span class="info-icon">⏱️</span>
-                {{ task.estimated_time ? task.estimated_time + ' 分' : '未设置' }}
-              </span>
-              <span class="info-item" title="关联属性">
-                <span class="info-icon">🎯</span>
-                {{ getRelatedAttrsText(task.related_attrs) }}
-              </span>
-              <span class="info-item reward" title="经验/系统币奖励">
-                <span class="info-icon">💰</span>
-                +{{ task.reward_coins || 0 }}
-                <span class="sep">|</span>
-                <span class="info-icon">📊</span>
-                +{{ task.attribute_points || 0 }}
-              </span>
-              <span class="info-item type-tag">
-                <span class="type-icon">{{ task.completion_type === 'ai_eval' ? '🤖 AI' : task.completion_type === 'progress' ? '📉 进度' : task.completion_type === 'submission' ? '✍️ 证明' : '✅ 简单' }}</span>
-              </span>
-              <div v-if="task.prerequisites && task.prerequisites.length > 0" class="info-item prereqs-tag" title="前置依赖">
-                <span class="type-icon">⛓️ 前置: {{ getPrerequisitesNames(task.prerequisites) }}</span>
+          <!-- 任务组显示 -->
+          <div v-if="item.type === 'group'" class="task-group-container">
+            <div class="task-group-bar card" :class="{ 'is-completed': item.data.completed_tasks > 0 && item.data.completed_tasks === item.data.total_tasks }" @click="toggleGroup(item.data.chain_id)">
+              <!-- 背景进度条层 -->
+              <div class="group-bg-progress" :style="{ width: `${item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100)}%` }"></div>
+              
+              <div class="group-header flex justify-between items-center" style="position: relative; z-index: 1;">
+                <div class="flex items-center gap-md">
+                  <span class="group-icon" style="font-size: 1.4rem; filter: drop-shadow(0 0 5px rgba(0, 255, 204, 0.4));">🗂️</span>
+                  <div>
+                    <span class="group-title" style="display: block; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.5px;">{{ item.data.chain_name }}</span>
+                    <span class="group-subtitle text-muted text-sm" style="display: block; margin-top: 4px;">
+                      节点完成：<span class="text-primary">{{ item.data.completed_tasks }}</span> / {{ item.data.total_tasks }}  
+                      <span class="mx-xs">|</span> 
+                      完成度：{{ item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100) }}%
+                    </span>
+                  </div>
+                </div>
+                <!-- 动作区留出足够的间距，并且按钮做成更精美的样式 -->
+                <div class="group-actions flex items-center gap-sm">
+                  <el-button size="small" type="primary" plain class="cyber-btn-sm" @click.stop="viewGroupDetail(item.data)">
+                    节点拓扑
+                  </el-button>
+                  <el-button size="small" type="danger" plain class="cyber-btn-sm" @click.stop="deleteTaskGroup(item.data.chain_id)">
+                    <span style="font-size: 14px;">删除🗑️</span>
+                  </el-button>
+                  <div class="toggle-icon-wrap ml-sm" style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,0.05);">
+                    <span class="toggle-icon" style="font-size: 12px; color: var(--color-primary-light);">{{ expandedGroups.has(item.data.chain_id) ? '▲' : '▼' }}</span>
+                  </div>
+                </div>
               </div>
             </div>
             
-            <div class="task-progress-box">
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: (task.current_progress || 0) + '%' }"></div>
+            <!-- 子任务列表 (展开时显示) -->
+            <el-collapse-transition>
+              <div v-show="expandedGroups.has(item.data.chain_id)" class="subtasks-container">
+                <div v-for="task in item.subtasks" :key="task.task_id" class="subtask-item" :class="{ 'is-active': task.status === 'in_progress' || task.status === 'pending_evaluation', 'is-completed': task.status === 'completed' }" @click="viewTaskDetail(task.task_id)">
+                  <div class="subtask-left">
+                    <span class="subtask-diamond"></span>
+                    <span class="subtask-name" :class="{'line-through': task.status === 'completed'}">{{ task.task_name || task.title }}</span>
+                    <el-tag v-if="task.status === 'in_progress'" size="small" type="warning" effect="dark" class="ml-sm pulse-tag">当前进行</el-tag>
+                    <el-tag v-if="task.status === 'completed'" size="small" type="success" class="ml-sm">已完成</el-tag>
+                  </div>
+                  
+                  <div class="subtask-right">
+                    <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click.stop="startTask(task.task_id)">
+                      开始
+                    </el-button>
+                    <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click.stop="completeTask(task.task_id)">
+                      提交
+                    </el-button>
+                    <el-button size="small" link type="danger" @click.stop="deleteTask(task.task_id)"><span style="font-size: 14px;">🗑️</span></el-button>
+                  </div>
+                </div>
               </div>
-              <div class="progress-ctrl" v-if="task.status === 'in_progress' && task.completion_type === 'progress'">
-                <el-slider 
-                  v-model="task.current_progress" 
-                  :min="0" :max="100" 
-                  size="small" 
-                  @change="(val) => updateProgress(task, val)"
-                />
+            </el-collapse-transition>
+          </div>
+
+          <!-- 独立任务显示 -->
+          <div v-if="item.type === 'task'" class="task-card standalone-card card" :class="{ 'is-optional': item.data.is_optional }">
+            <div class="task-header">
+              <h4 class="task-title" @click="viewTaskDetail(item.data.task_id)">
+                {{ item.data.task_name || item.data.title }}
+                <el-tag v-if="item.data.is_optional || item.data.task_type === 'side'" size="small" type="info" effect="plain" class="ml-sm">支线</el-tag>
+                <el-tag v-if="item.data.task_type === 'daily' || item.data.is_daily" size="small" type="warning" effect="dark" class="ml-sm">每日</el-tag>
+              </h4>
+              <div class="task-priority" :class="item.data.priority || 'medium'">
+                {{ (item.data.priority || 'medium') === 'easy' ? '特一级' : (item.data.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
               </div>
-              <div class="progress-text">{{ task.current_progress || 0 }}%</div>
+            </div>
+            
+            <div class="task-body flex-1">
+              <div class="task-info">
+                <span class="info-item" title="预计时长">
+                  <span class="info-icon">⏱️</span>
+                  {{ item.data.estimated_time ? item.data.estimated_time + ' 分' : '未设置' }}
+                </span>
+                <span class="info-item" title="关联属性">
+                  <span class="info-icon">🎯</span>
+                  {{ getRelatedAttrsText(item.data.related_attrs) }}
+                </span>
+                <span class="info-item reward" title="经验/系统币奖励">
+                  <span class="info-icon">💰</span>
+                  +{{ item.data.reward_coins || 0 }}
+                  <span class="sep">|</span>
+                  <span class="info-icon">📊</span>
+                  +{{ item.data.attribute_points || 0 }}
+                </span>
+                <span class="info-item type-tag">
+                  <span class="type-icon">{{ item.data.completion_type === 'ai_eval' ? '🤖 AI' : '✅ 简单' }}</span>
+                </span>
+                <div v-if="item.data.prerequisites && item.data.prerequisites.length > 0" class="info-item prereqs-tag" title="前置依赖">
+                  <span class="type-icon">⛓️ 前置: {{ getPrerequisitesNames(item.data.prerequisites) }}</span>
+                </div>
+              </div>
+              
+              <div class="task-progress-box" v-if="false">
+                <!-- Keep styling footprint but hide the unused explicit progress tracks for now, as UI only uses whole-task completion -->
+              </div>
+            </div>
+            
+            <div class="task-footer">
+              <div class="status-wrap">
+                <el-tag :type="getTaskStatusType(item.data.status)" size="small">
+                  {{ getTaskStatusText(item.data.status) }}
+                </el-tag>
+              </div>
+              <div class="task-actions">
+                <el-button v-if="item.data.status === 'pending'" size="small" type="primary" plain @click="startTask(item.data.task_id)">
+                  开始
+                </el-button>
+                
+                <el-button v-if="item.data.status === 'in_progress'" type="success" size="small" @click="completeTask(item.data.task_id)">
+                  {{ item.data.completion_type === 'ai_eval' ? '提交评判' : '完成' }}
+                </el-button>
+
+                <el-button size="small" link @click="viewTaskDetail(item.data.task_id)">详情</el-button>
+                <el-button size="small" link type="danger" @click="deleteTask(item.data.task_id)">删除</el-button>
+              </div>
             </div>
           </div>
           
-          <div class="task-footer">
-            <div class="status-wrap">
-              <el-tag :type="getTaskStatusType(task.status)" size="small">
-                {{ getTaskStatusText(task.status) }}
-              </el-tag>
-            </div>
-            <div class="task-actions">
-              <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click="startTask(task.task_id)">
-                开始
-              </el-button>
-              
-              <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click="completeTask(task.task_id)">
-                {{ task.completion_type === 'ai_eval' ? '提交评判' : task.completion_type === 'submission' ? '提交证明' : '完成' }}
-              </el-button>
-
-              <el-button size="small" link @click="viewTaskDetail(task.task_id)">详情</el-button>
-              <el-button size="small" link type="danger" @click="deleteTask(task.task_id)">删除</el-button>
-            </div>
-          </div>
-        </div>
+        </template>
         
         <!-- 空状态 -->
-        <div v-if="tasks.length === 0" class="empty-tasks">
+        <div v-if="displayItems.length === 0" class="empty-tasks">
           <div class="empty-icon">📝</div>
           <p>暂无学习任务</p>
           <el-button type="info" size="small" @click="showAddTaskDialog = true">
@@ -370,16 +397,18 @@
       </template>
     </el-dialog>
     
-    <el-dialog v-model="showTaskDetailDialog" title="任务详情" width="650px" class="cyber-dialog" append-to-body>
+    <el-drawer v-model="showTaskDetailDialog" :title="currentTask ? currentTask.task_name : '任务详情'" size="500px" direction="rtl" class="cyber-drawer" append-to-body>
       <div v-if="currentTask" class="task-detail">
-        <div class="task-header-detail">
-          <h4 class="detail-title">{{ currentTask.task_name }}</h4>
-          <el-tag :type="getTaskStatusType(currentTask.status)">{{ getTaskStatusText(currentTask.status) }}</el-tag>
+        <div class="task-header-detail mb-md flex justify-between">
+          <el-tag :type="getTaskStatusType(currentTask.status)" size="large" effect="dark">{{ getTaskStatusText(currentTask.status) }}</el-tag>
+          <div class="task-priority" :class="currentTask.priority || 'medium'">
+            {{ (currentTask.priority || 'medium') === 'easy' ? '特一级' : (currentTask.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
+          </div>
         </div>
 
-        <!-- 任务链详情展示 -->
+        <!-- 任务组详情展示 -->
         <div v-if="currentChainTasks.length > 0" class="chain-stepper-container">
-          <div class="section-title">🔗 任务链进度：{{ getChainName(currentTask.chain_id) }}</div>
+          <div class="section-title">🔗 任务组进度：{{ getChainName(currentTask.chain_id) }}</div>
           <div class="chain-steps">
             <div v-for="step in currentChainTasks" :key="step.task_id" 
                  class="step-item" 
@@ -433,22 +462,19 @@
           </div>
         </div>
       </div>
-      <template #footer>
-        <el-button @click="showTaskDetailDialog = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    </el-drawer>
     
     <!-- 创建任务对话框 -->
-    <el-dialog v-model="showAddTaskDialog" :title="isChainMode ? '新阶段：虚空任务链' : '手动指令：创建记录'" width="650px" class="cyber-dialog" append-to-body>
+    <el-dialog v-model="showAddTaskDialog" :title="isChainMode ? '新阶段：虚空任务组' : '手动指令：创建记录'" width="650px" class="cyber-dialog" append-to-body>
       <div class="mode-toggle">
         <el-radio-group v-model="isChainMode" size="large" @change="handleModeChange">
           <el-radio-button :label="false">单一任务</el-radio-button>
-          <el-radio-button :label="true">虚空任务链</el-radio-button>
+          <el-radio-button :label="true">虚空任务组</el-radio-button>
         </el-radio-group>
       </div>
 
       <el-form :model="newTask" label-width="100px" style="margin-top: 20px;">
-        <el-form-item :label="isChainMode ? '链名称' : '任务名称'">
+        <el-form-item :label="isChainMode ? '组名称' : '任务名称'">
           <el-input v-model="newTask.title" :placeholder="isChainMode ? '例如：深入掌握高等数学' : '例如：完成高数第三章练习'"></el-input>
         </el-form-item>
 
@@ -509,8 +535,6 @@
           <el-form-item label="确认方式">
             <el-select v-model="newTask.completionType" style="width:100%">
               <el-option label="直接点击完成" value="simple"></el-option>
-              <el-option label="进度百分比追踪" value="progress"></el-option>
-              <el-option label="✍️ 手动提交文字证明" value="submission"></el-option>
               <el-option label="🤖 AI 自动化评判" value="ai_eval"></el-option>
             </el-select>
           </el-form-item>
@@ -520,17 +544,17 @@
         </template>
 
         <template v-else>
-          <el-form-item label="链同步模式">
+          <el-form-item label="任务组模式">
             <el-checkbox v-model="newTask.isAIEnabled">使用 AI 进行阶段自动拆解</el-checkbox>
           </el-form-item>
-          <el-form-item label="链总说明">
-            <el-input v-model="newTask.description" type="textarea" :rows="2" placeholder="对整个任务链的简要描述"></el-input>
+          <el-form-item label="任务组说明">
+            <el-input v-model="newTask.description" type="textarea" :rows="2" placeholder="对整个任务组的简要描述"></el-input>
           </el-form-item>
           <el-form-item v-if="newTask.isAIEnabled" label="AI 引导目标">
-            <el-input v-model="newTask.targetGoal" type="textarea" :rows="5" placeholder="详细描述你想达成的目标，AI 将据此为您拆解任务步骤..."></el-input>
+            <el-input v-model="newTask.targetGoal" type="textarea" :rows="5" placeholder="详细描述你想达成的目标，AI 将据此为您拆解任务组步骤..."></el-input>
           </el-form-item>
           <el-form-item v-else label="手动目标">
-            <el-input v-model="newTask.targetGoal" type="textarea" :rows="3" placeholder="手动描述此任务链的最终目的（仅作记录）"></el-input>
+            <el-input v-model="newTask.targetGoal" type="textarea" :rows="3" placeholder="手动描述此任务组的最终目的（仅作记录）"></el-input>
           </el-form-item>
           <div class="ai-tip">
             <p>💡 提示：AI 将自动生成 5-10 个有关联的子任务，并为你配置奖励。</p>
@@ -540,7 +564,7 @@
       <template #footer>
         <el-button @click="showAddTaskDialog = false">取消</el-button>
         <el-button type="primary" @click="addTask" :loading="isEvaluating">
-          {{ isChainMode ? '召唤任务链' : '发布任务' }}
+          {{ isChainMode ? '创建任务组' : '发布任务' }}
         </el-button>
       </template>
     </el-dialog>
@@ -575,31 +599,48 @@
     </el-dialog>
   </div>
 
-  <!-- 任务证明提交对话框 -->
-  <el-dialog
-    v-model="proofDialogVisible"
-    title="提交任务证明"
-    width="500px"
-    :close-on-click-modal="false"
-  >
-    <div v-if="currentTaskForProof">
-      <h3 style="margin-bottom: 20px;">{{ currentTaskForProof.task_name }}</h3>
-      <p>请提交完成任务的证明材料（如截图、描述等）：</p>
-      <el-input
-        v-model="proofContent"
-        type="textarea"
-        :rows="6"
-        placeholder="请输入任务证明内容"
-        style="margin-top: 15px;"
-      ></el-input>
+
+  <!-- 任务组详情与拓扑图抽屉 -->
+  <el-drawer v-model="showGroupDetailDialog" :title="'🗂️ 阶段任务集：' + (currentGroup ? currentGroup.chain_name : '')" size="600px" direction="rtl" class="cyber-drawer" append-to-body>
+    <div v-if="currentGroup" class="task-detail">
+      <div class="task-header-detail flex justify-between items-center mb-lg">
+        <div>
+          <el-tag type="primary" size="large" effect="dark">进度 {{ currentGroup.completed_tasks }}/{{ currentGroup.total_tasks }}</el-tag>
+        </div>
+      </div>
+      <div class="detail-section mb-xl p-md" style="background: rgba(0, 255, 204, 0.05); border: 1px solid rgba(0, 255, 204, 0.2); border-radius: 8px;">
+        <div class="detail-item full-width description">
+          <span class="detail-label text-primary" style="font-weight: bold;">【阶段序列总目标与策略】</span>
+          <p class="mt-sm" style="line-height: 1.8; font-size: 1.05em; color: var(--color-text-primary);">{{ currentGroup.description || '由系统记录的具体说明内容...' }}</p>
+        </div>
+      </div>
+      
+      <div class="topology-section mt-md">
+        <h5 class="mb-md text-primary" style="font-size: 1.2em; border-bottom: 1px solid var(--color-border); padding-bottom: 10px;">🌲 溯源核心阶段拓扑网络</h5>
+        <div class="tree-display">
+          <div v-for="(t, index) in currentChainTasks" :key="t.task_id" class="tree-node-visual" :class="'status-' + t.status">
+            <div class="node-timeline-connector" v-if="index < currentChainTasks.length - 1"></div>
+            <div class="node-visual-content card" @click="viewTaskDetail(t.task_id)">
+              <div class="node-visual-header flex justify-between items-center">
+                <span class="node-name" style="font-size: 1.1em; font-weight: 600;">
+                  <span class="node-icon mr-sm">
+                    {{ t.status === 'completed' ? '🏆' : (t.status === 'in_progress' ? '🔥' : '⏳') }}
+                  </span>
+                  {{ t.task_name }}
+                </span>
+                <el-tag size="small" :type="getTaskStatusType(t.status)" :effect="t.status === 'in_progress' ? 'dark' : 'plain'">
+                  {{ getTaskStatusText(t.status) }}
+                </el-tag>
+              </div>
+              <div class="node-visual-desc mt-sm text-sm" style="color: var(--color-text-secondary); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                {{ t.description || '点击查看详情任务描述...' }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <template #footer>
-      <span class="dialog-footer">
-        <el-button @click="proofDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitTaskProof">提交证明</el-button>
-      </span>
-    </template>
-  </el-dialog>
+  </el-drawer>
 </template>
 
 <script setup>
@@ -646,50 +687,94 @@ const shopItems = ref([])
 
 const activeTab = ref('main')
 
-// 过滤后的任务列表：逻辑 - 处理任务链，仅显示当前活跃步骤
-const filteredTasks = computed(() => {
-  const currentTasksOnly = [];
-  const chainsFound = new Set();
-  
+// 过滤后的长条形显示列表：混合任务组和独立任务
+const expandedGroups = ref(new Set())
+const showGroupDetailDialog = ref(false)
+const currentGroup = ref(null)
+
+const toggleGroup = (groupId) => {
+  if (expandedGroups.value.has(groupId)) {
+    expandedGroups.value.delete(groupId)
+  } else {
+    expandedGroups.value.add(groupId)
+  }
+}
+
+const viewGroupDetail = (group) => {
+  currentGroup.value = group
+  currentChainTasks.value = tasks.value
+    .filter(t => t.chain_id === group.chain_id)
+    .sort((a, b) => (a.chain_order || 0) - (b.chain_order || 0))
+  showGroupDetailDialog.value = true
+}
+
+const displayItems = computed(() => {
   if (!tasks.value) return [];
   
-  // 先排序，确保查找活跃步骤时逻辑正确
-  const sortedTasks = [...tasks.value].sort((a, b) => (a.chain_order || 0) - (b.chain_order || 0));
+  const items = [];
+  const processedChains = new Set();
   
-  for (const task of sortedTasks) {
-    if (!task.chain_id) {
-      currentTasksOnly.push(task);
-    } else {
-      if (!chainsFound.has(task.chain_id)) {
-        // 查找该任务链中第一个非完成状态的任务
-        const activeInChain = sortedTasks.find(t => t.chain_id === task.chain_id && t.status !== 'completed');
-        if (activeInChain) {
-          currentTasksOnly.push(activeInChain);
-        } else {
-          // 如果全部完成，显示该链的最后一个任务（作为已完成的最终节点）
-          const lastInChain = sortedTasks.filter(t => t.chain_id === task.chain_id).pop();
-          if (lastInChain) currentTasksOnly.push(lastInChain);
-        }
-        chainsFound.add(task.chain_id);
-      }
-    }
-  }
-  
-  // 按分类标签过滤
-  const typeFiltered = currentTasksOnly.filter(t => {
-    // 逻辑：如果任务标记为 is_daily 或 type 为 daily，在 daily 标签下都显示
+  // 先把任务按分类标签过滤
+  const typeFilteredTasks = tasks.value.filter(t => {
     if (activeTab.value === 'daily') {
       return t.task_type === 'daily' || t.is_daily || t.data_tags?.includes('daily');
     }
     if (activeTab.value === 'side') return t.task_type === 'side';
-    // 默认主线显示
     return t.task_type === 'main' || !t.task_type;
   });
 
-  // 再按状态排序：进行中的排前面
-  return typeFiltered.sort((a, b) => {
+  // 遍历这些任务
+  typeFilteredTasks.forEach(task => {
+    if (!task.chain_id) {
+      items.push({ type: 'task', data: task });
+    } else {
+      if (!processedChains.has(task.chain_id)) {
+        processedChains.add(task.chain_id);
+        const chainInfo = taskChains.value.find(c => c.chain_id === task.chain_id);
+        if (chainInfo) {
+          // 获取该组所有任务进行排序，并计算动态进度
+          const subtasks = tasks.value
+            .filter(t => t.chain_id === task.chain_id)
+            .sort((a, b) => (a.chain_order || 0) - (b.chain_order || 0));
+          
+          const dynamicTotalTasks = subtasks.length;
+          const dynamicCompletedTasks = subtasks.filter(t => t.status === 'completed').length;
+          
+          let currentSubtasks = [];
+          const activeInChain = subtasks.find(t => t.status !== 'completed');
+          if (activeInChain) {
+            currentSubtasks = [activeInChain];
+          } else {
+            const lastInChain = subtasks[subtasks.length - 1];
+            if (lastInChain) {
+               currentSubtasks = [lastInChain];
+            }
+          }
+
+          items.push({ 
+            type: 'group', 
+            data: { ...chainInfo, total_tasks: dynamicTotalTasks, completed_tasks: dynamicCompletedTasks }, 
+            subtasks: currentSubtasks 
+          });
+        } else {
+            // 如果找不到对应的 chain_info，可能出了点问题，作为独立任务显示
+            items.push({ type: 'task', data: task });
+        }
+      }
+    }
+  });
+
+  // 再按状态排序 (将已完成的放置最后，进行中的放前面)
+  return items.sort((a, b) => {
     const statusOrder = { 'in_progress': 0, 'pending': 1, 'pending_evaluation': 2, 'completed': 3, 'failed': 4 };
-    return statusOrder[a.status] - statusOrder[b.status];
+    const getStatus = (item) => {
+       if (item.type === 'task') return item.data.status;
+       // group status
+       if (item.subtasks.some(s => s.status === 'in_progress')) return 'in_progress';
+       if (item.subtasks.every(s => s.status === 'completed')) return 'completed';
+       return 'pending';
+    };
+    return (statusOrder[getStatus(a)] || 0) - (statusOrder[getStatus(b)] || 0);
   });
 });
 
@@ -714,10 +799,7 @@ const showAddAttributeDialog = ref(false)
 const showEditAttributeDialog = ref(false)
 const showAddTaskDialog = ref(false)
 const showTaskDetailDialog = ref(false)
-const proofDialogVisible = ref(false)
 const aiReviewVisible = ref(false)
-const currentTaskForProof = ref(null)
-const proofContent = ref('')
 const currentTaskForAI = ref(null)
 // 新建任务表单状态
 const newTask = reactive({
@@ -1128,35 +1210,37 @@ const formatDate = (dateString) => {
 const getChainName = (chainId) => {
   if (!chainId) return ''
   const chain = taskChains.value.find(c => c.chain_id === chainId)
-  return chain ? chain.chain_name : '未知任务链'
+  return chain ? chain.chain_name : '未知任务组'
 }
 
-const deleteTaskChain = async (chainId) => {
+const deleteTaskGroup = async (chainId) => {
   try {
-    await ElMessageBox.confirm('确定要删除整个任务链吗？这不会删除其中的任务，但任务将不再归属于该链。', '警告', {
+    await ElMessageBox.confirm('确定要删除整个任务组吗？系统会连同该组下的所有子任务一起删除！', '严重警告', {
       type: 'warning',
-      confirmButtonText: '确定',
+      confirmButtonText: '确定删除',
       cancelButtonText: '取消'
     })
     const response = await api.delete(`/api/task-chains/${chainId}`)
     if (response.data.success) {
+      // 从已展开的组中移除
+      expandedGroups.value.delete(chainId)
       await loadTaskChains()
       await loadTasks()
-      ElMessage.success('任务链删除成功')
+      ElMessage.success('任务组及子任务删除成功')
     }
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除任务链失败:', error)
-      ElMessage.error('删除任务链失败')
+      console.error('删除任务组失败:', error)
+      ElMessage.error('删除任务组失败')
     }
   }
 }
 
 /**
- * 创建新任务或任务链
+ * 创建新任务或任务组
  */
 const addTask = async () => {
-  // 模式 1：创建任务链（AI生成）
+  // 模式 1：创建任务组（AI生成）
   if (isChainMode.value) {
     if (!newTask.title.trim()) {
       ElMessage.warning('请输入名称')
@@ -1169,15 +1253,15 @@ const addTask = async () => {
         target_goal: newTask.isAIEnabled ? newTask.targetGoal : null
       })
       if (newTask.isAIEnabled) {
-        ElMessage.success('任务链创建中，请稍等 AI 生成子任务...')
+        ElMessage.success('任务组创建中，请稍等 AI 生成子任务...')
       } else {
-        ElMessage.success('任务链容器创建成功')
+        ElMessage.success('任务组创建成功')
       }
       showAddTaskDialog.value = false
       await loadTaskChains()
       await loadTasks()
     } catch (error) {
-      ElMessage.error('任务链创建失败')
+      ElMessage.error('任务组创建失败')
     }
     return
   }
@@ -1268,47 +1352,6 @@ const startTask = async (task_id) => {
 }
 
 /**
- * 打开任务证明提交对话框
- * @param {string} task_id - 任务ID
- */
-const openProofDialog = (task_id) => {
-  const task = tasks.value.find(t => t.task_id === task_id)
-  if (task) {
-    currentTaskForProof.value = task
-    proofContent.value = ''
-    proofDialogVisible.value = true
-  }
-}
-
-/**
- * 提交任务证明
- */
-const submitTaskProof = async () => {
-  if (!currentTaskForProof.value || !proofContent.value.trim()) {
-    ElMessage.error('请填写任务证明内容')
-    return
-  }
-  
-  try {
-    await api.post(`/api/tasks/${currentTaskForProof.value.task_id}/proof`, {
-      proof_data: {
-        content: proofContent.value.trim(),
-        timestamp: new Date().toISOString()
-      }
-    })
-    
-    ElMessage.success('任务证明提交成功，请等待评估')
-    proofDialogVisible.value = false
-    
-    // 重新加载任务列表
-    await loadTasks()
-  } catch (error) {
-    console.error('提交任务证明失败:', error)
-    ElMessage.error(error.response?.data?.detail || '提交任务证明失败')
-  }
-}
-
-/**
  * 完成任务
  * @param {string} task_id - 任务ID
  */
@@ -1319,13 +1362,9 @@ const completeTask = async (task_id) => {
       ElMessage.error('任务不存在')
       return
     }
-    // 优先根据 completion_type 判断
+    // 根据 completion_type 判断
     if (task.completion_type === 'ai_eval') {
       openAIReviewDialog(task_id)
-    } else if (task.completion_type === 'submission' || (task.estimated_time && task.estimated_time >= 120)) {
-      openProofDialog(task_id)
-    } else if (task.completion_type === 'progress' && (task.current_progress || 0) < 100) {
-      ElMessage.warning('任务进度尚未完成 (100%)')
     } else {
       await api.put(`/api/tasks/${task_id}/status?status=completed`)
       await loadTasks()
@@ -1334,18 +1373,6 @@ const completeTask = async (task_id) => {
     }
   } catch (error) {
     ElMessage.error('操作失败')
-  }
-}
-
-/**
- * 更新任务进度
- */
-const updateProgress = async (task, val) => {
-  try {
-    await api.put(`/api/tasks/${task.task_id}/progress`, { progress: val })
-    task.current_progress = val
-  } catch (error) {
-    ElMessage.error('进度更新失败')
   }
 }
 
@@ -1762,16 +1789,21 @@ onMounted(async () => {
 
 /* 任务卡片 */
 .tasks-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .task-card {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 24px;
+  padding: 16px 24px;
   transition: all var(--transition-normal);
   border-left: 4px solid var(--color-primary);
 }
@@ -1783,10 +1815,13 @@ onMounted(async () => {
 }
 
 .task-header {
+  flex: 0 0 25%;
+  min-width: 250px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 0;
+  gap: 8px;
 }
 
 .task-title {
@@ -1810,8 +1845,21 @@ onMounted(async () => {
 .task-info {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+}
+
+.task-progress-box {
+  width: 100%;
+}
+
+.task-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 .info-item {
@@ -1897,7 +1945,6 @@ onMounted(async () => {
 .task-actions {
   display: flex;
   gap: 10px;
-  margin-top: 20px;
   position: relative;
   z-index: 1;
 }
@@ -2418,4 +2465,211 @@ onMounted(async () => {
 .full-width {
   grid-column: span 2;
 }
+
+/* 任务组及拓扑树样式 */
+.task-group-container {
+  margin-bottom: 5px;
+}
+.task-group-bar {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 18px 24px;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  position: relative;
+  overflow: hidden;
+}
+.task-group-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--color-primary);
+  z-index: 2;
+}
+.task-group-bar.is-completed::before {
+  background: var(--color-success);
+}
+.task-group-bar:hover {
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 20px rgba(0, 255, 204, 0.1);
+  transform: translateY(-2px);
+  border-color: var(--color-primary-light);
+}
+.group-bg-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, rgba(14, 165, 233, 0.05) 100%);
+  z-index: 0;
+  transition: width 0.5s ease-in-out;
+}
+.task-group-bar.is-completed .group-bg-progress {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.05) 100%);
+}
+.group-title {
+  color: var(--color-text-primary);
+  text-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+.subtasks-container {
+  padding-left: 20px;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subtask-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(10, 13, 32, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.subtask-item:hover {
+  background: rgba(0, 255, 204, 0.05);
+  border-left-color: var(--color-primary-light);
+}
+
+.subtask-item.is-active {
+  border-left: 3px solid var(--color-warning);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.subtask-item.is-completed {
+  border-left-color: var(--color-success);
+  opacity: 0.7;
+}
+
+.subtask-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.subtask-diamond {
+  width: 8px;
+  height: 8px;
+  background: var(--color-text-secondary);
+  transform: rotate(45deg);
+}
+
+.is-active .subtask-diamond {
+  background: var(--color-warning);
+  box-shadow: 0 0 8px var(--color-warning);
+}
+
+.is-completed .subtask-diamond {
+  background: var(--color-success);
+}
+
+.subtask-name {
+  font-size: 0.95em;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.subtask-name.line-through {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
+.subtask-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pulse-tag {
+  animation: pulse 2s infinite;
+}
+
+.tree-display {
+  padding-left: 10px;
+}
+
+.tree-node-visual {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.node-timeline-connector {
+  position: absolute;
+  left: 23px;
+  top: 45px;
+  bottom: -20px;
+  width: 2px;
+  background: var(--color-border);
+  z-index: 0;
+}
+
+.node-visual-content {
+  position: relative;
+  z-index: 1;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-left: 40px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.node-visual-content:hover {
+  border-color: var(--color-primary-light);
+  transform: translateX(4px);
+}
+
+.status-completed .node-visual-content {
+  border-left: 4px solid var(--color-success);
+  opacity: 0.8;
+}
+
+.status-in_progress .node-visual-content {
+  border-left: 4px solid var(--color-warning);
+  background: rgba(245, 158, 11, 0.05);
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.1);
+}
+
+.status-completed .node-name { color: var(--color-text-secondary); text-decoration: line-through; }
+.status-in_progress .node-name { color: var(--color-warning); }
+.status-pending .node-name { color: var(--color-text-primary); }
+
+.tree-node-visual::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 20px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border);
+  z-index: 2;
+  transition: all 0.3s;
+}
+
+.status-completed::before {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.status-in_progress::before {
+  background: var(--color-warning);
+  border-color: var(--color-warning);
+  box-shadow: 0 0 10px var(--color-warning);
+}
+
 </style>

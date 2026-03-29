@@ -11,7 +11,7 @@
           <div class="input-wrapper">
             <el-input
               v-model="loginForm.username"
-              placeholder="用户名"
+              placeholder="邮箱 / 用户名"
               prefix-icon="User"
               :disabled="isLoading"
             />
@@ -84,8 +84,8 @@ const loginForm = reactive({
 // 表单验证规则
 const rules = {
   username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度在 3 到 20 个字符', trigger: 'blur' }
+    { required: true, message: '请输入邮箱或用户名', trigger: 'blur' },
+    { min: 3, max: 100, message: '长度在 3 到 100 个字符', trigger: 'blur' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },

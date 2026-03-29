@@ -11,30 +11,21 @@
           <div class="input-wrapper">
             <el-input
               v-model="registerForm.username"
-              placeholder="用户名"
-              prefix-icon="User"
+              placeholder="输入用户名"
+              prefix-icon="UserFilled"
               :disabled="isLoading"
             />
           </div>
         </el-form-item>
         
+        <el-form-item prop="username" style="display:none;"></el-form-item>
+
         <el-form-item prop="email">
           <div class="input-wrapper">
             <el-input
               v-model="registerForm.email"
-              placeholder="邮箱（选填）"
+              placeholder="输入邮箱"
               prefix-icon="Message"
-              :disabled="isLoading"
-            />
-          </div>
-        </el-form-item>
-        
-        <el-form-item prop="nickname">
-          <div class="input-wrapper">
-            <el-input
-              v-model="registerForm.nickname"
-              placeholder="昵称（选填）"
-              prefix-icon="UserFilled"
               :disabled="isLoading"
             />
           </div>
@@ -95,26 +86,26 @@ const isLoading = ref(false)
 const registerForm = reactive({
   username: '',
   email: '',
-  nickname: '',
   password: ''
 })
 
 // 表单验证规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度在 3 到 20 个字符', trigger: 'blur' }
-  ],
   email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
     { 
       pattern: /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,7}$/, 
       message: '请输入有效的邮箱地址', 
       trigger: 'blur' 
     }
   ],
+  username: [
+    { required: true, message: '请设定档案代号', trigger: 'blur' },
+    { min: 1, max: 20, message: '长度在 1 到 20 个字符', trigger: 'blur' }
+  ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码长度至少为 6 个字符', trigger: 'blur' }
+    { required: true, message: '请输入认证密钥', trigger: 'blur' },
+    { min: 6, message: '密钥长度至少为 6 个字符', trigger: 'blur' }
   ]
 }
 

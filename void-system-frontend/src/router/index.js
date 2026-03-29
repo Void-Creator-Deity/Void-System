@@ -14,6 +14,7 @@ const Advisor = () => import('@/pages/Advisor.vue')
 const QA = () => import('@/pages/QA.vue')
 const DocumentManager = () => import('@/pages/DocumentManager.vue')
 const Settings = () => import('@/pages/Settings.vue')
+const Profile = () => import('@/pages/Profile.vue')
 const Login = () => import('@/pages/Login.vue')
 const Register = () => import('@/pages/Register.vue')
 const RAGManagement = () => import('@/pages/RAGManagement.vue')
@@ -86,6 +87,15 @@ const routes = [
     meta: { 
       requiresAuth: true,
       title: '系统设置'
+    }
+  },
+  {
+    path: '/profile',
+    name: 'Profile',
+    component: Profile,
+    meta: { 
+      requiresAuth: true,
+      title: '个人资料'
     }
   },
   {

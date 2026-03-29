@@ -10,6 +10,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 import json
+from config import config
 
 # ==================== 1. 定义与前端完全匹配的数据结构 ====================
 class TaskStep(BaseModel):
@@ -25,8 +26,8 @@ class StructuredTaskPlan(BaseModel):
     )
     steps: List[TaskStep] = Field(
         description="任务步骤数组，每个步骤包含title和description字段",
-        min_items=3,
-        max_items=6
+        min_items=1,
+        max_items=8
     )
     estimatedDuration: str = Field(
         description="预估完成时间，如'45分钟'、'2周'、'每天1小时持续30天'",
@@ -67,15 +68,13 @@ def load_structured_task_chain() -> Runnable[Dict[str, Any], StructuredTaskPlan]
         {format_instructions}
 
         ### 内容要求：
-        1. **response字段**：一句友好的开场白，如"基于您的目标，我已经为您规划了以下学习路径："
-        2. **steps字段**：这是核心！必须提供3-6个具体、可执行的步骤。
-           - 每个步骤必须是独立、完整的行动指南
-           - 步骤之间要有逻辑顺序（基础→进阶→实践）
-           - 每个步骤的title要简洁明了，description要具体可行
-        3. **estimatedDuration字段**：给出实际可行的总时间预估，如：
-           - "4周（每周3次，每次1小时）"
-           - "30小时（每天1小时，持续30天）"
-           - "12节课（每节2小时）"
+        1. **response字段**：一句友好的开场白，如"基于您的目标，我已经为您规划了以下任务路径："
+        2. **steps字段**：根据任务目标，提炼出 1到8个 可执行的步骤。
+           - 【重要说明】如果用户的目标只是一个很简单、单一的事情（比如"做5个俯卧撑"、"倒杯水"、"写一篇日记"），你只需要生成 **1个** 步骤即可，不要强行拉长或拆分成多个毫无意义的阶段！如果是庞大的系统工程才需要拆分多阶段任务链。
+           - 每个步骤必须是独立、完整的行动指南。
+           - 步骤的 `title` 要清晰指出阶段名称和主题。
+           - 步骤的 `description` 必须包含具体的执行动作。
+        3. **estimatedDuration字段**：给出实际可行的总时间预估，如"45分钟"或"2天"。
 
         ### 示例1：主题"学习Python编程"
         输出示例：
@@ -118,12 +117,9 @@ def load_structured_task_chain() -> Runnable[Dict[str, Any], StructuredTaskPlan]
 
     # 初始化 LLM 模型
     llm = ChatOllama(
-        model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
-        temperature=0.6,
-        # 调整这些参数以获得更稳定的JSON输出
-        top_p=0.9,
-        frequency_penalty=0.1,
-        presence_penalty=0.1
+        model=config.CHAT_MODEL,
+        temperature=0.7,
+        format="json"
     )
 
     # 构建处理链：prompt -> llm -> 解析为结构化对象
@@ -182,8 +178,8 @@ def load_json_task_chain() -> Runnable[Dict[str, Any], Dict]:
     """)
 
     llm = ChatOllama(
-        model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
-        temperature=0.5  # 降低温度以获得更稳定的输出
+        model=config.CHAT_MODEL,
+        temperature=0.5
     )
 
     # 使用JsonOutputParser
@@ -325,7 +321,8 @@ def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, An
     """
     评判用户提交的任务
     """
-    model = ChatOllama(model="deepseek-r1:14b", temperature=0.3)
+    # 初始化 LLM 模型
+    model = ChatOllama(model=config.CHAT_MODEL, temperature=0.3)
     
     parser = PydanticOutputParser(pydantic_object=TaskEvaluationResult)
     
@@ -345,12 +342,15 @@ def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, An
 {user_attributes}
 
 【评判要求】
-1. 仔细分析用户的提交是否真正达成了任务目标和标准。
-2. 给出具体的反馈，指出优点和不足。
-3. 如果通过，请根据任务难度和用户当前属性水平，平衡地建议奖励。
-   - 如果用户某项属性较低，可以适当多给一点相关的属性点。
-   - 基础金币建议在 10-100 之间。
-4. 必须输出严格的 JSON 格式。
+1. 仔细分析用户的提交内容并结合【评判标准】打分。如果该任务本来就比较简单，或者压根没写评判标准，只要用户的提交内容符合常理证明他完成了任务（比如一句合理的简短话语描述），就可以给予通过(pass)。不要死板。
+2. 给出具体的反馈(feedback)，指出哪里做得好或哪里不够。
+3. 对其任务完成度进行打分(score)，范围 0-100：
+   - 完全符合最高标准、细节详实：90-100分
+   - 基本达成要求，或任务要求本身极其宽松简单：75-89分 (正常通过)
+   - 描述勉强沾边，但态度敷衍缺乏细节：60-74分 (并在 feedback 里说明扣分理由)
+   - 明显未完成或胡言乱语：0-59分 (必须给 fail)
+4. 如果通过（status为pass），请结合分数合理建议奖励，分数越低金币和属性奖励就适当减少。
+5. 必须输出严格的 JSON 格式。
 
 {format_instructions}
 """,
@@ -358,7 +358,7 @@ def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, An
         partial_variables={"format_instructions": parser.get_format_instructions()}
     )
     
-    chain = prompt | model | parser
+    chain = prompt | model
     
     try:
         # 准备属性字符串
@@ -373,9 +373,39 @@ def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, An
             "user_attributes": attr_str
         })
         
-        return result.dict()
+        # 获取原始文本
+        response_text = result.content if hasattr(result, 'content') else str(result)
+        
+        # 移除 <think>...</think> 标签及其内容
+        import re
+        purified_json = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+        
+        # 尝试提取 ```json ... ``` 内容
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', purified_json, re.DOTALL)
+        if json_match:
+            purified_json = json_match.group(1).strip()
+        elif purified_json.startswith("```"):
+            purified_json = re.sub(r'^```[a-z]*\s*', '', purified_json)
+            purified_json = re.sub(r'\s*```$', '', purified_json).strip()
+            
+        # 解析返回的JSON (使用pydantic parser处理净化后的文本)
+        try:
+            parsed_result = parser.parse(purified_json)
+            return parsed_result.dict()
+        except Exception as parse_error:
+            try:
+                json_result = json.loads(purified_json)
+                if isinstance(json_result, dict) and "status" in json_result:
+                    return json_result
+            except json.JSONDecodeError as json_error:
+                print(f"提交评估: 净化后的JSON链错误解析失败: {json_error}")
+                
+            raise Exception("AI 生成的评判结果无法解析")
+            
     except Exception as e:
+        import traceback
         print(f"AI 评判失败: {e}")
+        traceback.print_exc()
         # 降级：手动评判或简单通过
         return {
             "status": "pass",

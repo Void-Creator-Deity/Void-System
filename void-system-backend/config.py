@@ -69,10 +69,10 @@ class Config:
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
     # 默认嵌入模型
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0")
 
     # 默认聊天模型
-    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "qwen2.5:7b")
+    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M")
 
     # ==================== 向量数据库配置 ====================
     # ChromaDB持久化目录

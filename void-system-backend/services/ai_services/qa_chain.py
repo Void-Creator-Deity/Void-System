@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any
+from config import config
 def load_qa_chain() -> Any:
     """
     加载基于 LangChain 的检索问答管道
@@ -20,7 +21,7 @@ def load_qa_chain() -> Any:
     """
     # 初始化嵌入模型
     embeddings = OllamaEmbeddings(
-        model="hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0"
+        model=config.EMBEDDING_MODEL
     )
     # 确保 ChromaDB 持久化目录存在
     chroma_dir = Path("./chroma_db").resolve()
@@ -34,7 +35,7 @@ def load_qa_chain() -> Any:
     retriever = db.as_retriever(search_kwargs={"k": 3})
     # 初始化 LLM 模型
     llm = ChatOllama(
-        model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
+        model=config.CHAT_MODEL,
         temperature=0.3
     )
 
@@ -42,34 +43,62 @@ def load_qa_chain() -> Any:
     def get_context(x: Dict[str, Any]) -> str:
         question = x["question"]
         mode = x.get("mode", "vector")
+        user_id = x.get("user_id")
         
+        system_docs = []
+        user_docs = []
+        
+        # 系统知识库检索
         if mode == "hybrid":
-            # 尝试执行混合检索
-            # 注意：BM25通常需要所有文档。为了简化，我们暂时使用Chroma的多模态检索或简单的向量检索加码
-            # 这里我们通过增加k值并手动重排序来模拟混合检索的效果（或者如果支持BM25检索器则使用它）
-            # 由于当前环境限制，我们先通过向量检索获取更多内容
-            docs = db.similarity_search(question, k=6)
-        else:
-            docs = db.similarity_search(question, k=3)
+            # 混合模式下获取更多的系统上下文
+            system_docs = db.similarity_search(question, k=5)
             
-        return "\n\n".join([d.page_content for d in docs])
+            # 如果提供了用户ID，尝试获取用户个人文档内容
+            if user_id:
+                try:
+                    # 动态导入避免循环依赖
+                    from api.user_vector_manager import vector_manager
+                    user_docs = vector_manager.search_user_documents(
+                        user_id=user_id, 
+                        query=question, 
+                        top_k=5
+                    )
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger("void-system-qa-chain")
+                    logger.warning(f"混合模式检索用户文档失败: {e}")
+        else:
+            # 基础模式
+            system_docs = db.similarity_search(question, k=3)
+            
+        all_docs = system_docs + user_docs
+        
+        # 按类型标注上下文
+        context_parts = []
+        for d in system_docs:
+            context_parts.append(f"[系统知识库]: {d.page_content}")
+        for d in user_docs:
+            context_parts.append(f"[用户个人库]: {d.page_content}")
+            
+        return "\n\n".join(context_parts) if context_parts else "没有找到相关参考内容。"
 
     # 定义提示模板
     prompt = ChatPromptTemplate.from_template("""
-    你是虚空系统的知识引擎。
-    目标：根据【资料内容】精确回答【用户问题】。
+    你是虚空系统的智能助手。
+    目标：根据提供的【参考资料】回答【用户问题】。
     
-    【资料内容】：
+    【参考资料】：
     {context}
     
     【用户问题】：
     {question}
     
     【指令】：
-    1. 仅基于提供的资料回答。如果不确定，请告知无法从知识库中找到。
-    2. 保持系统风格：克制、专业、逻辑化。
-    3. 如果涉及技术、概念，请给出清晰的定义。
-    4. 使用 Markdown 格式增强可读性。
+    1. 优先基于参考资料回答。资料包含系统知识库和用户个人库的内容。
+    2. 如果资料内容不足，可以结合通用知识系统地回答，但需指明资料来源。
+    3. 如果参考资料中完全没有相关信息，请告知无法从现有知识库中找到确切证据。
+    4. 保持系统风格：克制、专业、逻辑化。
+    5. 使用 Markdown 格式增强可读性。
     """)
 
     def debug_input(x: Dict[str, Any]) -> Dict[str, Any]:

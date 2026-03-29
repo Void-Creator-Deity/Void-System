@@ -51,7 +51,8 @@ class Database:
             username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE,
             password_hash TEXT,
-            nickname TEXT,
+            learning_goal TEXT,
+            specialization TEXT,
             level INTEGER DEFAULT 1,
             experience INTEGER DEFAULT 0,
             role TEXT DEFAULT 'user',  -- 新增角色字段：user/admin/editor
@@ -59,6 +60,16 @@ class Database:
             last_login TEXT
         )
         ''')
+        
+        # 确保旧数据库也有新字段
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN learning_goal TEXT")
+        except:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN specialization TEXT")
+        except:
+            pass
         
         # 属性表
         cursor.execute('''
@@ -376,23 +387,62 @@ class Database:
 
         conn.commit()
         conn.close()
+        
+        # 种子数据：确保管理员账号存在
+        self._ensure_default_admin()
+
+    def _ensure_default_admin(self) -> None:
+        """初始化默认管理员账号"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 检查管理员是否已存在
+            cursor.execute("SELECT 1 FROM users WHERE username = '虚空管理员'")
+            if not cursor.fetchone():
+                admin_id = "0000"
+                from middleware.auth import get_password_hash
+                password_hash = get_password_hash("xk1234")
+                
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+                    (admin_id, "虚空管理员", "admin@void-system.com", password_hash, "admin")
+                )
+                conn.commit()
+                logger.info("🛡️ 数据库初始化：已同步默认管理员 (虚空管理员 / xk1234, UID: 0000)")
+        except Exception as e:
+            logger.error(f"❌ 初始化管理员失败: {e}")
+        finally:
+            conn.close()
     
     # ==================== 用户相关方法 ====================
+    def _generate_next_uid(self, cursor: sqlite3.Cursor) -> str:
+        """生成下一个连续的UID"""
+        # 获取除了0000(管理员)之外的UID
+        cursor.execute("SELECT user_id FROM users WHERE user_id != '0000'")
+        existing_uids = [row[0] for row in cursor.fetchall()]
+        
+        # 只筛选出纯数字的UID以兼容以前的UUID
+        numeric_uids = [int(uid) for uid in existing_uids if uid.isdigit()]
+        
+        if not numeric_uids:
+            return "1001"
+            
+        return str(max(numeric_uids) + 1)
+
     def add_user(
         self,
         username: str,
         email: Optional[str] = None,
-        password_hash: Optional[str] = None,
-        nickname: Optional[str] = None
+        password_hash: Optional[str] = None
     ) -> Optional[str]:
         """添加新用户"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        user_id = str(uuid.uuid4())
         try:
+            user_id = self._generate_next_uid(cursor)
             cursor.execute(
-                "INSERT INTO users (user_id, username, email, password_hash, nickname) VALUES (?, ?, ?, ?, ?)",
-                (user_id, username, email, password_hash, nickname or username)
+                "INSERT INTO users (user_id, username, email, password_hash) VALUES (?, ?, ?, ?)",
+                (user_id, username, email, password_hash)
             )
             conn.commit()
             return user_id
@@ -454,8 +504,10 @@ class Database:
         finally:
             conn.close()
     
-    def update_user_info(self, user_id: str, nickname: Optional[str] = None, 
-                        email: Optional[str] = None) -> bool:
+    def update_user_info(self, user_id: str,
+                        email: Optional[str] = None, learning_goal: Optional[str] = None,
+                        specialization: Optional[str] = None, username: Optional[str] = None,
+                        role: Optional[str] = None) -> bool:
         """更新用户信息"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -463,13 +515,21 @@ class Database:
             updates: List[str] = []
             params: List[Any] = []
             
-            if nickname is not None:
-                updates.append("nickname = ?")
-                params.append(nickname)
-            
+            if username is not None:
+                updates.append("username = ?")
+                params.append(username)
             if email is not None:
                 updates.append("email = ?")
                 params.append(email)
+            if learning_goal is not None:
+                updates.append("learning_goal = ?")
+                params.append(learning_goal)
+            if specialization is not None:
+                updates.append("specialization = ?")
+                params.append(specialization)
+            if role is not None:
+                updates.append("role = ?")
+                params.append(role)
             
             if not updates:
                 return False
@@ -482,10 +542,11 @@ class Database:
         finally:
             conn.close()
 
-    def update_user_profile(self, user_id: str, nickname: Optional[str] = None, 
-                           email: Optional[str] = None) -> bool:
-        """更新用户资料（别名方法，与update_user_info相同）"""
-        return self.update_user_info(user_id, nickname, email)
+    def update_user_profile(self, user_id: str, 
+                           email: Optional[str] = None, learning_goal: Optional[str] = None,
+                           specialization: Optional[str] = None, username: Optional[str] = None) -> bool:
+        """更新用户资料"""
+        return self.update_user_info(user_id, email, learning_goal, specialization, username)
     
     def get_user_stats(self, user_id: str) -> Dict[str, Any]:
         """获取用户统计信息"""
@@ -516,6 +577,10 @@ class Database:
             cursor.execute("SELECT ABS(SUM(amount)) FROM coins WHERE user_id = ? AND amount < 0", (user_id,))
             total_spent_coins = cursor.fetchone()[0] or 0
             
+            # 获取文档总数
+            cursor.execute("SELECT COUNT(*) FROM user_documents WHERE user_id = ?", (user_id,))
+            doc_count = cursor.fetchone()[0]
+            
             return {
                 "total_tasks": total_tasks,
                 "completed_tasks": completed_tasks,
@@ -523,7 +588,8 @@ class Database:
                 "completion_rate": (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0,
                 "total_experience": total_exp,
                 "total_earned_coins": total_earned_coins,
-                "total_spent_coins": total_spent_coins
+                "total_spent_coins": total_spent_coins,
+                "total_documents": doc_count
             }
         finally:
             conn.close()
@@ -2231,6 +2297,54 @@ class Database:
         finally:
             conn.close()
 
+    def duplicate_chat_session(self, session_id: str, user_id: str) -> str:
+        """克隆并生成一个新的对话会话及其所有消息内容"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        new_sid = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        try:
+            # 1. 获取原会话信息
+            cursor.execute("SELECT * FROM chat_sessions WHERE session_id = ? AND user_id = ?", (session_id, user_id))
+            old_session = cursor.fetchone()
+            if not old_session:
+                return None
+            
+            # 2. 创建新会话
+            cursor.execute(
+                """INSERT INTO chat_sessions (session_id, group_id, user_id, session_name, created_at, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (new_sid, old_session['group_id'], user_id, f"{old_session['session_name']} (拷贝)", now, now)
+            )
+            
+            # 3. 复制所有消息
+            cursor.execute("SELECT * FROM chat_messages WHERE session_id = ? AND user_id = ? ORDER BY created_at ASC", (session_id, user_id))
+            old_messages = cursor.fetchall()
+            
+            # 建立 ID 映射以保持回复关系
+            id_map = {}
+            for msg in old_messages:
+                new_msg_id = str(uuid.uuid4())
+                id_map[msg['message_id']] = new_msg_id
+                
+                # 处理回复引用
+                new_reply_to = id_map.get(msg['reply_to_id']) if msg['reply_to_id'] else None
+                
+                cursor.execute(
+                    """INSERT INTO chat_messages (message_id, session_id, user_id, role, content, tokens, reply_to_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (new_msg_id, new_sid, user_id, msg['role'], msg['content'], msg['tokens'], new_reply_to, msg['created_at'])
+                )
+            
+            conn.commit()
+            return new_sid
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"克隆会话失败: {e}")
+            return None
+        finally:
+            conn.close()
+
     def add_chat_message(self, user_id: str, session_id: str, role: str, content: str, 
                          tokens: int = 0, reply_to_id: Optional[str] = None) -> str:
         """添加新消息"""
@@ -2347,7 +2461,7 @@ class Database:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE tasks SET chain_id = NULL, chain_order = 0 WHERE chain_id = ? AND user_id = ?",
+                "DELETE FROM tasks WHERE chain_id = ? AND user_id = ?",
                 (chain_id, user_id)
             )
             cursor.execute(

@@ -31,7 +31,6 @@
           <NavItem to="/advisor" icon="🧠">任务系统</NavItem>
           <NavItem to="/qa" icon="❓">虚空知识库</NavItem>
           <NavItem to="/documents" icon="📄">文档管理</NavItem>
-          <NavItem to="/settings" icon="⚙️">系统设置</NavItem>
           <!-- 仅管理员可见 -->
           <NavItem v-if="isAdmin" to="/admin/rag" icon="🔧">RAG管理</NavItem>
         </nav>
@@ -98,13 +97,14 @@
  * 主应用组件，包含导航栏、用户认证状态管理和全局布局
  */
 
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
 import { ref, onMounted, computed, watch } from 'vue'
 import { User, Setting, SwitchButton } from '@element-plus/icons-vue'
 import { authState, logout as logoutApi } from '@/api/user'
 import NavItem from '@/components/NavItem.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 // ==================== 响应式状态 ====================
 const isLoading = ref(false)
@@ -115,7 +115,8 @@ const isAuthenticated = computed(() => authState.isLoggedIn)
 const userName = computed(() => {
   const info = authState.userInfo
   if (!info) return '用户'
-  return info.username || info.userName || info.user?.username || '用户'
+  // 优先显示昵称 (档案代号)
+  return info.username || info.user?.username || info.username || info.userName || info.user?.username || '用户'
 })
 const userLevel = computed(() => {
   const info = authState.userInfo
@@ -157,7 +158,7 @@ const toggleUserMenu = () => {
  */
 const goToProfile = () => {
   showUserMenu.value = false
-  router.push('/settings')
+  router.push('/profile')
 }
 
 /**
@@ -187,9 +188,22 @@ const logout = async () => {
 
 // ==================== 生命周期 ====================
 
-// 组件挂载时加载用户信息
+// 组件挂载时加载用户信息及本地主题配置
 onMounted(() => {
   loadUserInfo()
+
+  // 读取本地缓存的系统设置，应用主题颜色
+  try {
+    const savedSettings = localStorage.getItem('settings_cache')
+    if (savedSettings) {
+      const parsed = JSON.parse(savedSettings)
+      if (parsed?.systemConfig?.themeEnabled && parsed?.systemConfig?.themeColor) {
+        document.documentElement.style.setProperty('--color-primary', parsed.systemConfig.themeColor)
+      }
+    }
+  } catch(e) {
+    console.warn('Failed to load local theme settings', e)
+  }
 })
 </script>
 

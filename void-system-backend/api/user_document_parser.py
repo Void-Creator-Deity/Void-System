@@ -132,14 +132,27 @@ class PDFDocumentParser(DocumentParser):
     def parse_content(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """解析PDF内容"""
         try:
-            # 这里需要安装PyPDF2或pypdf
-            # from pypdf import PdfReader
-            # 暂时使用简单的实现
+            import PyPDF2
+            import io
+            
+            pdf_file = io.BytesIO(file_data)
+            reader = PyPDF2.PdfReader(pdf_file)
+            
+            text_parts = []
+            for i in range(len(reader.pages)):
+                page = reader.pages[i]
+                text_parts.append(page.extract_text())
+                
+            content = "\n\n".join(text_parts)
+            
             return {
-                "success": False,
-                "error": "PDF解析器暂未实现，请安装pypdf库"
+                "success": True,
+                "content": content,
+                "page_count": len(reader.pages),
+                "char_count": len(content)
             }
         except Exception as e:
+            logger.error(f"PDF解析失败: {e}")
             return {
                 "success": False,
                 "error": f"PDF解析失败: {str(e)}"
@@ -162,12 +175,34 @@ class WordDocumentParser(DocumentParser):
     def parse_content(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """解析Word内容"""
         try:
-            # 这里需要安装python-docx
+            import docx
+            import io
+            
+            doc_file = io.BytesIO(file_data)
+            doc = docx.Document(doc_file)
+            
+            text_parts = []
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    text_parts.append(para.text)
+            
+            # 也可以处理表格内容
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    if row_text:
+                        text_parts.append(row_text)
+                        
+            content = "\n\n".join(text_parts)
+            
             return {
-                "success": False,
-                "error": "Word解析器暂未实现，请安装python-docx库"
+                "success": True,
+                "content": content,
+                "paragraph_count": len(doc.paragraphs),
+                "char_count": len(content)
             }
         except Exception as e:
+            logger.error(f"Word解析失败: {e}")
             return {
                 "success": False,
                 "error": f"Word解析失败: {str(e)}"
@@ -291,6 +326,7 @@ class ExcelDocumentParser(DocumentParser):
     def _dataframe_to_text(self, df: pd.DataFrame, title: str) -> str:
         """
         将pandas DataFrame转换为适合向量化处理的文本格式
+        不再仅仅是预览，而是尽可能保留有用信息
         Args:
             df: pandas DataFrame
             title: 内容标题
@@ -301,39 +337,36 @@ class ExcelDocumentParser(DocumentParser):
             return f"{title}\n(数据表为空)"
 
         # 构建文本内容
-        lines = [f"{title}"]
+        lines = [f"### {title}"]
 
         # 添加列名信息
-        columns_info = f"列名: {', '.join(df.columns.tolist())}"
+        cols = df.columns.tolist()
+        columns_info = f"数据表包含以下列: {', '.join(cols)}"
         lines.append(columns_info)
 
         # 添加数据统计信息
-        stats_info = f"数据统计: {len(df)}行 × {len(df.columns)}列"
+        stats_info = f"全表规模: {len(df)}行 × {len(df.columns)}列"
         lines.append(stats_info)
+        
+        lines.append("--- 数据记录详情 ---")
 
-        # 添加数据预览（前10行）
-        lines.append("数据预览:")
-
-        # 处理数据类型转换和空值
-        preview_df = df.head(10).copy()
-
-        # 将所有数据转换为字符串，避免类型错误
-        for col in preview_df.columns:
-            preview_df[col] = preview_df[col].astype(str)
-
-        # 生成表格文本
-        table_lines = preview_df.to_string(index=False)
-        lines.extend(table_lines.split('\n'))
-
-        # 如果有更多行，添加提示
-        if len(df) > 10:
-            lines.append(f"... 还有 {len(df) - 10} 行数据")
-
-        # 添加数据类型信息
-        dtypes_info = []
-        for col, dtype in df.dtypes.items():
-            dtypes_info.append(f"{col}: {dtype}")
-        lines.append(f"数据类型: {', '.join(dtypes_info)}")
+        # 处理所有行数据（如果数据量极大，建议在此分块）
+        # 对于向量数据库来说，我们需要每一行或每一组行都有描述性
+        for idx, row in df.iterrows():
+            row_parts = []
+            for col in cols:
+                val = row[col]
+                if pd.notna(val) and str(val).strip():
+                    row_parts.append(f"[{col}]: {val}")
+            
+            if row_parts:
+                lines.append(f"第{idx+1}行资料: " + " | ".join(row_parts))
+            
+            # 为了避免内存溢出或单个文档过长，限制解析的总行数
+            # 如果是海量数据，推荐使用专门的结构化处理流程
+            if idx >= 1000:
+                lines.append(f"... 注意：出于性能考虑，仅解析了前 1000 行记录，全表后续还有 {len(df)-1000} 行。")
+                break
 
         return "\n".join(lines)
 

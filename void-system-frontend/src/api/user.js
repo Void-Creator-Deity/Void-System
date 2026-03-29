@@ -57,10 +57,10 @@ export const setupAuthInterceptor = () => {
  * @param {string} password - 密码
  * @returns {Promise<Object>} 登录响应数据（包含 access_token）
  */
-export const login = async (username, password) => {
-  // 后端使用 OAuth2PasswordRequestForm，需要使用 FormData 格式
+export const login = async (identifier, password) => {
+  // 后端协议：OAuth2PasswordRequestForm 期望 username 字段，我们填入 identifier (可以是 email 或 username)
   const formData = new FormData()
-  formData.append('username', username)
+  formData.append('username', identifier)
   formData.append('password', password)
 
   const response = await api.post('/api/token', formData, {
@@ -91,7 +91,7 @@ export const login = async (username, password) => {
  * @param {string} userData.username - 用户名
  * @param {string} userData.password - 密码
  * @param {string} [userData.email] - 邮箱（可选）
- * @param {string} [userData.nickname] - 昵称（可选）
+ * @param {string} [userData.username] - 昵称（可选）
  * @returns {Promise<Object>} 注册响应数据
  */
 export const register = async (userData) => {
@@ -154,4 +154,40 @@ export const getUserInfo = () => {
 export const getUserStats = async () => {
   const response = await api.get('/api/user/stats')
   return response.data.data
+}
+
+/**
+ * 更新用户资料
+ * @param {Object} profileData - 用户资料更新数据
+ * @returns {Promise<Object>} 更新结果
+ */
+export const updateUserProfile = async (profileData) => {
+  // 转换字段名为后端期望的参数名
+  const params = {
+    username: profileData.username,
+    learning_goal: profileData.learningGoal,
+    specialization: profileData.major
+  }
+
+  const query = new URLSearchParams()
+  Object.keys(params).forEach(key => {
+    if (params[key]) query.append(key, params[key])
+  })
+
+  const response = await api.put(`/api/user/profile?${query.toString()}`)
+
+  if (response.data.success) {
+    // 同步更新全局状态和本地存储，保持顶栏显示同步
+    const updatedData = await getCurrentUser()
+    const storedInfo = JSON.parse(localStorage.getItem('user_info') || '{}')
+
+    // 合并新数据
+    const newInfo = { ...storedInfo, ...updatedData }
+    localStorage.setItem('user_info', JSON.stringify(newInfo))
+
+    // 更新响应式状态
+    authState.userInfo = newInfo
+  }
+
+  return response.data
 }

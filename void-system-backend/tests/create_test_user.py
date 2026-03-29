@@ -22,11 +22,11 @@ def main():
         result = user_service.register_user(
             username="test",
             password="test123",
-            nickname="测试用户"
+            username="测试用户"
         )
         print("✅ 测试用户创建成功!")
         print(f"用户名: {result['username']}")
-        print(f"昵称: {result['nickname']}")
+        print(f"昵称: {result['username']}")
         print(f"用户ID: {result['user_id']}")
 
     except Exception as e:

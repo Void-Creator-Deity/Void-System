@@ -27,105 +27,62 @@ class UserService:
         """
         self.db = db
 
-    def register_user(self, username: str, password: str, nickname: str = None) -> Dict[str, Any]:
+    def register_user(self, email: str, password: str, username: str) -> Dict[str, Any]:
         """
         用户注册
-
-        Args:
-            username: 用户名
-            password: 密码
-            nickname: 昵称（可选）
-
-        Returns:
-            用户信息字典
-
-        Raises:
-            VoidSystemException: 用户已存在等错误
-        """
-        # 清理输入数据
-        username = sanitize_string(username, 50)
-        password = sanitize_string(password, 100)
-        nickname = sanitize_string(nickname or username, 50)
-
-        # 验证输入
-        if not username or not password:
-            raise VoidSystemException.from_error_code(
-                ErrorCode.INVALID_REQUEST,
-                details={"missing": ["username", "password"] if not username and not password else ["username"] if not username else ["password"]}
-            )
-
-        if len(password) < 6:
-            raise VoidSystemException.from_error_code(
-                ErrorCode.INVALID_REQUEST,
-                details={"message": "密码长度至少6位"}
-            )
-
-        # 检查用户是否已存在
-        existing_user = self.db.get_user_by_username(username)
-        if existing_user:
-            raise VoidSystemException.from_error_code(ErrorCode.USER_ALREADY_EXISTS)
-
-        # 创建新用户
-        try:
-            # 生成密码哈希
-            password_hash = get_password_hash(password)
-
-            # 创建用户
-            user_data = {
-                "username": username,
-                "password_hash": password_hash,
-                "nickname": nickname,
-                "level": 1,
-                "experience": 0,
-                "role": "user",
-                "is_active": True,
-                "created_at": get_current_timestamp(),
-                "last_login": None
-            }
-
-            # 只传递add_user方法支持的参数
-            user_id = self.db.add_user(
-                username=user_data['username'],
-                password_hash=user_data['password_hash'],
-                nickname=user_data['nickname']
-            )
-
-            logger.info(f"用户注册成功: {username} (ID: {user_id})")
-
-            # 返回用户信息（不包含密码）
-            user_info = user_data.copy()
-            del user_info["password_hash"]
-            user_info["user_id"] = user_id
-
-            return user_info
-
-        except Exception as e:
-            logger.error(f"用户注册失败: {username}, 错误: {e}")
-            raise VoidSystemException.from_error_code(
-                ErrorCode.SYSTEM_ERROR,
-                details={"operation": "user_registration"}
-            )
-
-    def authenticate_user(self, username: str, password: str) -> Dict[str, Any]:
-        """
-        用户认证
-
-        Args:
-            username: 用户名
-            password: 密码
-
-        Returns:
-            认证结果字典
-
-        Raises:
-            VoidSystemException: 认证失败
         """
         # 清理输入
         username = sanitize_string(username, 50)
+        email = sanitize_string(email, 100)
         password = sanitize_string(password, 100)
+        
+        # 检查邮箱是否已存在
+        if self.db.get_user_by_email(email):
+            raise VoidSystemException.from_error_code(ErrorCode.USER_ALREADY_EXISTS, details={"message": "该邮箱已注册"})
+        
+        # 检查用户名是否已存在
+        if self.db.get_user_by_username(username):
+             raise VoidSystemException.from_error_code(ErrorCode.USER_ALREADY_EXISTS, details={"message": "档案代号已存在"})
+        
+        # 创建密码哈希
+        password_hash = get_password_hash(password)
+        
+        # 入库 (昵称同步为用户名)
+        user_id = self.db.add_user(
+            username=username,
+            email=email,
+            password_hash=password_hash
+        )
+        
+        return {
+            "user_id": user_id,
+            "username": username,
+            "email": email,
+            "role": "user"
+        }
+    
 
-        # 获取用户
-        user = self.db.get_user_by_username(username)
+    def authenticate_user(self, identifier: str, password: str) -> Dict[str, Any]:
+        """
+        用户认证 (支持通过邮箱或用户名登录)
+        """
+        # 登录策略控制
+        is_email = "@" in identifier
+        
+        user = None
+        if is_email:
+            # 1. 尝试邮箱登录 (普通用户标准)
+            user = self.db.get_user_by_email(identifier)
+        else:
+            # 2. 尝试用户名登录 (管理员/特殊用户标准)
+            user = self.db.get_user_by_username(identifier)
+            if user and user.get("role") != "admin" and identifier != "test":
+                # 非管理员禁止使用用户名登录
+                raise VoidSystemException.from_error_code(
+                    ErrorCode.INVALID_CREDENTIALS, 
+                    details={"message": "普通账号请使用邮箱登录"}
+                )
+            
         if not user:
             raise create_auth_error(ErrorCode.INVALID_CREDENTIALS)
 
@@ -142,16 +99,16 @@ class UserService:
 
         # 生成令牌
         access_token = create_access_token({
-            "sub": user["username"],
-            "user_id": user["user_id"]
+            "sub": user["user_id"],
+            "username": user["username"]
         })
 
         refresh_token = create_refresh_token({
-            "sub": user["username"],
-            "user_id": user["user_id"]
+            "sub": user["user_id"],
+            "username": user["username"]
         })
 
-        logger.info(f"用户登录成功: {username}")
+        logger.info(f"登录成功: {user['username']} ({user['email']})")
 
         return {
             "access_token": access_token,
@@ -161,8 +118,8 @@ class UserService:
             "user": {
                 "user_id": user["user_id"],
                 "username": user["username"],
-                "nickname": user["nickname"],
-                "level": user["level"],
+                "email": user["email"],
+                "level": user.get("level", 1),
                 "role": user["role"]
             }
         }
@@ -185,24 +142,26 @@ class UserService:
 
             # 解码刷新令牌
             payload = jwt.decode(refresh_token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
-            username: str = payload.get("sub")
-            user_id: str = payload.get("user_id")
+            sub: str = payload.get("sub")
 
-            if not username or not user_id:
+            if not sub:
                 raise create_auth_error(ErrorCode.TOKEN_INVALID)
 
-            # 验证用户存在
-            user = self.db.get_user_by_id(user_id)
+            # 验证用户存在 (尝试作为ID，或作为用户名 fallback)
+            user = self.db.get_user_by_id(sub)
+            if not user:
+                user = self.db.get_user_by_username(sub)
+                
             if not user:
                 raise create_auth_error(ErrorCode.USER_NOT_FOUND)
 
             # 生成新令牌
             new_access_token = create_access_token({
-                "sub": user["username"],
-                "user_id": user["user_id"]
+                "sub": user["user_id"],
+                "username": user["username"]
             })
 
-            logger.info(f"用户令牌刷新成功: {username}")
+            logger.info(f"用户令牌刷新成功: {user['username']}")
 
             return {
                 "access_token": new_access_token,
@@ -258,7 +217,7 @@ class UserService:
             raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
 
         # 清理输入数据
-        allowed_fields = ["nickname"]
+        allowed_fields = ["username"]
         cleaned_data = {}
 
         for field in allowed_fields:
@@ -356,8 +315,8 @@ class UserService:
             if not user:
                 raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
 
-            # TODO: 获取用户的文档数量、任务完成情况等统计信息
-            # 这里可以扩展为更丰富的统计数据
+            # 从数据库获取详细统计
+            db_stats = self.db.get_user_stats(user_id)
 
             stats = {
                 "user_id": user_id,
@@ -367,9 +326,13 @@ class UserService:
                 "is_active": user.get("is_active", True),
                 "created_at": user.get("created_at"),
                 "last_login": user.get("last_login"),
-                # TODO: 添加文档统计、任务统计等
-                "documents_count": 0,  # 待实现
-                "tasks_completed": 0,   # 待实现
+                "documents_count": db_stats.get("total_documents", 0),
+                "tasks_completed": db_stats.get("completed_tasks", 0),
+                "tasks_total": db_stats.get("total_tasks", 0),
+                "tasks_in_progress": db_stats.get("in_progress_tasks", 0),
+                "completion_rate": db_stats.get("completion_rate", 0),
+                "total_earned_coins": db_stats.get("total_earned_coins", 0),
+                "total_spent_coins": db_stats.get("total_spent_coins", 0)
             }
 
             return stats

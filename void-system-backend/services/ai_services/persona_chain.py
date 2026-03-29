@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any, Optional
+from config import config
 import uuid
 # 存储会话历史（生产环境建议使用 Redis）
 _store: Dict[str, ChatMessageHistory] = {}
@@ -34,7 +35,7 @@ def load_persona_chain() -> RunnableLambda[Dict[str, Any], Any]:
     """
     # 初始化 LLM 模型
     llm = ChatOllama(
-        model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
+        model=config.CHAT_MODEL,
         temperature=0.5
     )
     # 定义系统精灵的提示模板
@@ -54,19 +55,12 @@ def load_persona_chain() -> RunnableLambda[Dict[str, Any], Any]:
         input_messages_key="text",
         history_messages_key="history",
     )
-    def ensure_session(input_data: Dict[str, Any], config: Optional[RunnableConfig] = None) -> Any:
+    async def ensure_session_stream(input_data: Dict[str, Any], config_node: Optional[RunnableConfig] = None):
         """
-        确保会话ID存在，如果不存在则自动生成
-        Args:
-            input_data: 输入数据
-            config: 配置字典
-        Returns:
-            链的执行结果
+        异步流式发生器，确保会话ID存在并支持 astream
         """
-        # 从输入数据中提取 session_id（如果存在）
         session_id: Optional[str] = None
         if isinstance(input_data, dict):
-            # 检查input_data中是否直接包含session_id
             if "session_id" in input_data:
                 session_id = str(input_data["session_id"])
             elif "config" in input_data and isinstance(input_data["config"], dict):
@@ -74,14 +68,15 @@ def load_persona_chain() -> RunnableLambda[Dict[str, Any], Any]:
                 if "configurable" in input_config and isinstance(input_config["configurable"], dict):
                     session_id = input_config["configurable"].get("session_id")
 
-        # 如果没有提取到session_id，生成一个默认的
         if session_id is None:
             session_id = f"default-{uuid.uuid4().hex[:8]}"
 
-        # 调用base_chain，传递正确的配置
-        return base_chain.invoke(
+        # 使用 astream 代理底层链的流
+        async for chunk in base_chain.astream(
             input_data,
             config={"configurable": {"session_id": session_id}}
-        )
-    # 返回包装后的 Runnable 对象
-    return RunnableLambda(ensure_session)
+        ):
+            yield chunk
+
+    # 返回支持 astream 的 RunnableLambda
+    return RunnableLambda(ensure_session_stream)

@@ -108,7 +108,14 @@ export const useChatStore = defineStore('chat', () => {
      */
     const createGroup = async (name = '新任务组') => {
         try {
-            const groupId = await chatApi.createChatGroup(name)
+            // 确保名称唯一
+            let finalName = name
+            let counter = 1
+            while (groups.value.some(g => g.group_name === finalName)) {
+                finalName = `${name} ${counter++}`
+            }
+
+            const groupId = await chatApi.createChatGroup(finalName)
             const sessionId = await chatApi.createChatSession(groupId, '初始对话')
 
             // 重新刷新数据以确保同步
@@ -132,15 +139,24 @@ export const useChatStore = defineStore('chat', () => {
     const createSession = async (name = '新对话') => {
         if (!activeGroupId.value) return
         try {
-            const sessionId = await chatApi.createChatSession(activeGroupId.value, name)
+            // 确保会话名称在当前组内唯一
+            const group = groups.value.find(g => g.group_id === activeGroupId.value)
+            let finalName = name
+            if (group && group.sessions) {
+                let counter = 1
+                while (group.sessions.some(s => s.session_name === finalName)) {
+                    finalName = `${name} ${counter++}`
+                }
+            }
+
+            const sessionId = await chatApi.createChatSession(activeGroupId.value, finalName)
 
             // 更新本地状态
-            const group = groups.value.find(g => g.group_id === activeGroupId.value)
             if (group) {
                 if (!group.sessions) group.sessions = []
                 group.sessions.unshift({
                     session_id: sessionId,
-                    session_name: name,
+                    session_name: finalName,
                     created_at: new Date().toISOString()
                 })
             }
@@ -159,37 +175,56 @@ export const useChatStore = defineStore('chat', () => {
     const addMessage = async (message, save = true) => {
         if (!activeSessionId.value) return
 
-        let msgId = message.id || `temp-${Date.now()}`
+        // 乐观更新：先生成临时 ID 并加入列表
+        const tempId = `temp-${Date.now()}`
+        const newMessage = {
+            id: tempId,
+            ...message,
+            timestamp: new Date().toISOString()
+        }
+        messages.value.push(newMessage)
 
+        // 如果需要保存，则异步调用后端
         if (save) {
             try {
-                msgId = await chatApi.addChatMessage(activeSessionId.value, {
+                const realId = await chatApi.addChatMessage(activeSessionId.value, {
                     role: message.role,
                     content: message.text,
                     tokens: message.tokens || 0,
                     replyToId: message.replyToId
                 })
+                // 如果后端返回了真实 ID，则更新对应的消息对象
+                if (realId) {
+                    const msgInList = messages.value.find(m => m.id === tempId)
+                    if (msgInList) msgInList.id = realId
+                }
+                return realId
             } catch (error) {
                 console.error('添加消息失败:', error)
                 return null
             }
         }
 
-        const newMessage = {
-            id: msgId,
-            ...message,
-            timestamp: new Date().toISOString()
-        }
-        messages.value.push(newMessage)
+        return tempId
+    }
 
-        // 如果是第一条用户消息且已保存，尝试更新会话名称
-        if (save && message.role === 'user' && messages.value.filter(m => m.role === 'user').length === 1) {
-            const title = message.text.substring(0, 15)
-            const newName = title + (message.text.length > 15 ? '...' : '')
-            await renameSession(activeSessionId.value, newName)
+    /**
+     * 拷贝（克隆）会话及其消息
+     */
+    const duplicateSession = async (sessionId) => {
+        try {
+            const newSessionId = await chatApi.duplicateChatSession(sessionId)
+            if (newSessionId) {
+                // 刷新数据以获取最新列表
+                const history = await chatApi.getChatHistory()
+                groups.value = history
+                // 切换到新克隆的会话
+                await switchSession(newSessionId)
+                return newSessionId
+            }
+        } catch (error) {
+            console.error('克隆会话失败:', error)
         }
-
-        return msgId
     }
 
     /**
@@ -199,16 +234,17 @@ export const useChatStore = defineStore('chat', () => {
     const saveLastMessage = async (content, tokens = 0) => {
         if (!activeSessionId.value) return
         const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant') {
+        // 注意：AIConsole 中系统回复的 role 为 'system'
+        if (lastMsg && (lastMsg.role === 'system' || lastMsg.role === 'assistant')) {
             lastMsg.text = content
             lastMsg.tokens = tokens
             // 正式保存到后端并获取真实 ID
-            const msgId = await chatApi.addChatMessage(activeSessionId.value, {
-                role: 'assistant',
+            const realId = await chatApi.addChatMessage(activeSessionId.value, {
+                role: lastMsg.role,
                 content: content,
                 tokens: tokens
             })
-            if (msgId) lastMsg.id = msgId
+            if (realId) lastMsg.id = realId
         }
     }
 

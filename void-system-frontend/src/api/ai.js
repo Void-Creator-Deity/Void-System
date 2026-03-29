@@ -14,7 +14,7 @@ import api from "./index"
  * @param {function} onError - 错误回调函数
  * @returns {function} 取消函数
  */
-export const streamPersona = async (text, sessionId, onMessage, onError) => {
+export const streamPersona = async (text, sessionId, onMessage, onError, signal) => {
   try {
     // 使用配置好的 api 实例的 baseURL，添加认证令牌
     const token = localStorage.getItem('access_token');
@@ -36,7 +36,8 @@ export const streamPersona = async (text, sessionId, onMessage, onError) => {
         type: 'persona',
         text,
         session_id: sessionId
-      })
+      }),
+      signal: signal
     });
 
     if (!response.ok) {
@@ -109,7 +110,7 @@ export const streamPersona = async (text, sessionId, onMessage, onError) => {
  * @param {function} onError - 错误回调函数
  * @returns {function} 取消函数
  */
-export const streamAdvisor = async (topic, onMessage, onError) => {
+export const streamAdvisor = async (topic, onMessage, onError, signal) => {
   try {
     // 使用配置好的 api 实例的 baseURL，添加认证令牌
     const token = localStorage.getItem('access_token');
@@ -130,7 +131,8 @@ export const streamAdvisor = async (topic, onMessage, onError) => {
       body: JSON.stringify({
         type: 'advisor',
         topic
-      })
+      }),
+      signal: signal
     });
 
     if (!response.ok) {
@@ -199,7 +201,7 @@ export const streamAdvisor = async (topic, onMessage, onError) => {
  * @param {function} onError - 错误回调函数
  * @returns {function} 取消函数
  */
-export const streamQA = async (question, onMessage, onError) => {
+export const streamQA = async (question, onMessage, onError, signal) => {
   try {
     // 使用配置好的 api 实例的 baseURL，添加认证令牌
     const token = localStorage.getItem('access_token');
@@ -220,7 +222,8 @@ export const streamQA = async (question, onMessage, onError) => {
       body: JSON.stringify({
         type: 'qa',
         question
-      })
+      }),
+      signal: signal
     });
 
     if (!response.ok) {
@@ -360,7 +363,8 @@ export const askQA = async (question, options = {}) => {
     {
       input: {
         question,
-        mode: options.mode || 'vector'
+        mode: options.mode || 'vector',
+        user_id: options.userId || null
       }
     }
   )

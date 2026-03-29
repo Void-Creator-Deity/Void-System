@@ -1103,3 +1103,22 @@ button.accent:hover:not(:disabled) {
   background: var(--color-bg-tertiary) !important;
   color: var(--color-primary) !important;
 }
+
+/* 抽屉(Drawer)样式侧栏扩展 */
+.el-drawer {
+  background: var(--color-bg-card) !important;
+  border-left: 1px solid var(--color-border) !important;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5) !important;
+}
+
+.el-drawer__header {
+  border-bottom: 1px solid var(--color-border) !important;
+  color: var(--color-text-primary) !important;
+  margin-bottom: 0 !important;
+  padding: 20px !important;
+}
+
+.el-drawer__body {
+  color: var(--color-text-secondary) !important;
+  padding: 20px !important;
+}

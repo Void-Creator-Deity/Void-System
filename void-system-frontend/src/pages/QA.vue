@@ -85,6 +85,7 @@
 import { ref, nextTick } from "vue"
 import { ElMessage } from "element-plus"
 import { askQA } from "@/api/ai"
+import { getUserInfo } from "@/api/user"
 import { marked } from 'marked'
 
 // ==================== 响应式状态 ====================
@@ -115,8 +116,11 @@ const ask = async () => {
   
   isLoading.value = true
   try {
+    const userInfo = getUserInfo()
+    const userId = userInfo?.user_id || userInfo?.user?.user_id
     const result = await askQA(question.value.trim(), { 
-      mode: searchMode.value 
+      mode: searchMode.value,
+      userId: userId
     })
     answer.value = result
     ElMessage.success('检索完成')

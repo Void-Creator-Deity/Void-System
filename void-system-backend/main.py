@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 启动时
     logger.info("🚀 Void System Backend 正在启动...")
     try:
-        db_instance = Database("void_system.db")
+        db_instance = Database(Config.get_database_path())
         logger.info("✅ 数据库连接已建立")
     except Exception as e:
         logger.error(f"❌ 数据库连接失败: {e}")
@@ -126,33 +126,28 @@ class APIResponse(BaseModel):
 
 class UserLogin(BaseModel):
     """用户登录模型"""
-    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=6)
     
-    @field_validator('username')
+    @field_validator('email')
     @classmethod
-    def username_alphanumeric(cls, v: str) -> str:
-        if not v.isalnum():
-            raise ValueError('用户名只能包含字母和数字')
+    def validate_email(cls, v: str) -> str:
+        if "@" not in v:
+            raise ValueError('请输入有效的邮箱地址')
         return v
 
 class UserRegister(BaseModel):
     """用户注册模型"""
-    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=6)
-    email: Optional[str] = None
-    nickname: Optional[str] = Field(None, max_length=30)
-    
-    @field_validator('nickname')
+    username: str = Field(..., min_length=1, max_length=50)
+
+    @field_validator('username')
     @classmethod
-    def validate_nickname(cls, v: Optional[str]) -> Optional[str]:
-        # 如果昵称为空字符串，则返回None
-        if v is not None and v.strip() == "":
-            return None
-        # 如果昵称不为None，则验证最小长度
-        if v is not None and len(v) < 2:
-            raise ValueError('昵称长度至少为2个字符')
-        return v
+    def validate_username_field(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('档案代号/用户名不能为空')
+        return v.strip()
     
     @field_validator('email')
     @classmethod
@@ -171,10 +166,10 @@ class UserRegister(BaseModel):
     
     @field_validator('username')
     @classmethod
-    def username_alphanumeric(cls, v: str) -> str:
-        if not v.isalnum():
-            raise ValueError('用户名只能包含字母和数字')
-        return v
+    def validate_username(cls, v: str) -> str:
+        if len(v.strip()) < 1:
+            raise ValueError('用户名不能为空')
+        return v.strip()
     
     @field_validator('password')
     @classmethod
@@ -402,8 +397,8 @@ async def get_current_user(
             Config.SECRET_KEY,
             algorithms=[Config.ALGORITHM]
         )
-        username: Optional[str] = payload.get("sub")
-        if username is None:
+        sub: Optional[str] = payload.get("sub")
+        if sub is None:
             raise VoidSystemException(
                 message="认证凭据无效",
                 error_code="INVALID_CREDENTIALS",
@@ -416,7 +411,12 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED
         )
     
-    user: Optional[Dict[str, Any]] = db.get_user_by_username(username)
+    # 首先尝试通过 ID 获取用户（新版令牌 sub 为 ID）
+    user: Optional[Dict[str, Any]] = db.get_user_by_id(sub)
+    if user is None:
+        # Fallback：尝试作为用户名获取（旧版令牌 sub 为用户名）
+        user = db.get_user_by_username(sub)
+        
     if user is None:
         raise VoidSystemException(
             message="用户不存在",
@@ -723,58 +723,49 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
             }
         
         async def event_generator():
-            # 尝试流式调用链
             try:
-                # 调用链获取完整结果
-                result = chain.invoke(input_data)
-                
-                # 确保result是字符串类型
-                if hasattr(result, 'content'):
-                    result_text = result.content
-                elif isinstance(result, dict) and 'content' in result:
-                    result_text = result['content']
-                else:
-                    result_text = str(result)
-                
-                # 净化内容
-                purified_result = purify_ai_response(result_text)
-                
-                # 优化：按词组发送，提升性能（避免逐字符发送导致的过多系统调用）
-                if purified_result:
-                    import re
-                    # 按标点和空格分割为词组，每次发送2-4个字符
-                    chunk_size = 3
-                    for i in range(0, len(purified_result), chunk_size):
-                        chunk = purified_result[i:i + chunk_size]
+                # 使用 astream 提供真正的流式输出
+                full_content = ""
+                async for chunk in chain.astream(input_data):
+                    # 处理不同类型的chunk内容
+                    content = ""
+                    if hasattr(chunk, 'content'):
+                        content = chunk.content
+                    elif isinstance(chunk, str):
+                        content = chunk
+                    elif isinstance(chunk, dict) and 'content' in chunk:
+                        content = chunk['content']
+                    
+                    if content:
+                        full_content += content
+                        # 这里简单处理：直接发送 chunk。
+                        # 对于思考过程的净化，流式下比较复杂，
+                        # 我们先发送原始内容。
                         yield {
                             "event": "message",
                             "data": json.dumps({
-                                "content": chunk,
+                                "content": content,
                                 "finished": False
                             }, ensure_ascii=False)
                         }
-                        # 适当延迟，仍提供打字机效果但性能更好
-                        await asyncio.sleep(0.02)
+                
+                # 最后发送一个结束信号和统计（可选）
+                yield {
+                    "event": "message",
+                    "data": json.dumps({
+                        "content": "",
+                        "finished": True
+                    }, ensure_ascii=False)
+                }
             except Exception as e:
-                # 处理任何异常，返回错误信息
                 logger.error(f"流式响应处理失败: {e}")
                 yield {
                     "event": "message",
                     "data": json.dumps({
-                        "content": f"抱歉，处理请求时出现错误: {str(e)}",
+                        "content": f"\n\n[系统异常]: {str(e)}",
                         "finished": True
                     }, ensure_ascii=False)
                 }
-                return
-            
-            # 发送结束信号
-            yield {
-                "event": "message",
-                "data": json.dumps({
-                    "content": "",
-                    "finished": True
-                }, ensure_ascii=False)
-            }
         
         return EventSourceResponse(event_generator())
     except Exception as e:
@@ -960,13 +951,13 @@ async def register(
 
     - **username**: 用户名
     - **password**: 密码
-    - **nickname**: 昵称（可选）
+    - **username**: 昵称（可选）
     - **email**: 邮箱（可选）
     """
     user_info = user_service.register_user(
-        username=user_data.username,
+        email=user_data.email,
         password=user_data.password,
-        nickname=user_data.nickname
+        username=user_data.username
     )
 
     # TODO: 在服务层中实现用户初始化逻辑（预设类别、默认属性等）
@@ -980,9 +971,9 @@ async def create_test_user(user_service = Depends(get_user_service)) -> APIRespo
     """创建测试用户（仅用于开发测试）"""
     try:
         user_info = user_service.register_user(
-            username="test",
+            email="test@void-system.com",
             password="test123",
-            nickname="测试用户"
+            username="测试用户"
         )
         return create_success_response("测试用户创建成功", data=user_info)
     except Exception as e:
@@ -1031,8 +1022,9 @@ async def get_user_profile(
         data={
             "user_id": current_user["user_id"],
             "username": current_user["username"],
-            "nickname": current_user["nickname"],
             "email": current_user["email"],
+            "learning_goal": current_user.get("learning_goal"),
+            "specialization": current_user.get("specialization"),
             "level": current_user["level"],
             "experience": current_user.get("experience", 0),
             "balance": balance,
@@ -1063,8 +1055,10 @@ async def get_user_stats(
 
 @app.put("/api/user/profile", summary="更新用户资料", tags=["用户"], response_model=APIResponse)
 async def update_user_profile(
-    nickname: Optional[str] = None,
     email: Optional[str] = None,
+    username: Optional[str] = None,
+    learning_goal: Optional[str] = None,
+    specialization: Optional[str] = None,
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Database = Depends(get_db)
 ) -> APIResponse:
@@ -1081,10 +1075,22 @@ async def update_user_profile(
                 status_code=status.HTTP_400_BAD_REQUEST
             )
     
+    if username:
+        # 检查用户名是否已被占用
+        existing_user = db.get_user_by_username(username)
+        if existing_user and existing_user["user_id"] != current_user["user_id"]:
+            raise VoidSystemException(
+                message="用户名已存在，请换一个",
+                error_code="USERNAME_IN_USE",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+    
     success = db.update_user_profile(
         user_id=current_user["user_id"],
-        nickname=nickname,
-        email=email
+        email=email,
+        username=username,
+        learning_goal=learning_goal,
+        specialization=specialization
     )
     
     if not success:
@@ -3172,6 +3178,17 @@ async def delete_chat_session(
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在或无权操作")
     return create_success_response("会话删除成功")
+
+@app.post("/api/chat/sessions/{session_id}/duplicate", summary="拷贝对话会话", tags=["对话持久化"])
+async def duplicate_chat_session(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
+) -> APIResponse:
+    new_id = db.duplicate_chat_session(session_id, current_user["user_id"])
+    if not new_id:
+        raise HTTPException(status_code=404, detail="会话不存在或克隆失败")
+    return create_success_response("会话拷贝成功", data={"session_id": new_id})
 
 @app.get("/api/chat/sessions/{session_id}/messages", summary="获取历史消息", tags=["对话持久化"])
 async def get_chat_messages(

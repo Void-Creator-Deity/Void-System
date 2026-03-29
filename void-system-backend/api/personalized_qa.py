@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
 from .user_vector_manager import vector_manager
+from config import config
 
 logger = logging.getLogger("void-system-personalized-qa")
 
@@ -20,7 +21,7 @@ class PersonalizedQAEngine:
     def __init__(self):
         # 初始化LLM
         self.llm = ChatOllama(
-            model="hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M",
+            model=config.CHAT_MODEL,
             temperature=0.3  # 较低温度保证回答稳定性
         )
 
