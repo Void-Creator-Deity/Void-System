@@ -326,46 +326,34 @@ class ExcelDocumentParser(DocumentParser):
     def _dataframe_to_text(self, df: pd.DataFrame, title: str) -> str:
         """
         将pandas DataFrame转换为适合向量化处理的文本格式
-        不再仅仅是预览，而是尽可能保留有用信息
-        Args:
-            df: pandas DataFrame
-            title: 内容标题
-        Returns:
-            格式化的文本内容
+        增强语义描述，使每一行数据在向量空间中更具辨识度
         """
         if df.empty:
-            return f"{title}\n(数据表为空)"
+            return f"表格: {title}\n(数据内容为空)"
 
-        # 构建文本内容
-        lines = [f"### {title}"]
-
-        # 添加列名信息
+        # 基础列信息
         cols = df.columns.tolist()
-        columns_info = f"数据表包含以下列: {', '.join(cols)}"
-        lines.append(columns_info)
-
-        # 添加数据统计信息
-        stats_info = f"全表规模: {len(df)}行 × {len(df.columns)}列"
-        lines.append(stats_info)
         
-        lines.append("--- 数据记录详情 ---")
+        # 构建增强语料
+        lines = [f"### 数据表: {title}"]
+        lines.append(f"该表包含 {len(df)} 条记录，关键列包括: {', '.join(cols)}")
+        lines.append("--- 记录详情 ---")
 
-        # 处理所有行数据（如果数据量极大，建议在此分块）
-        # 对于向量数据库来说，我们需要每一行或每一组行都有描述性
         for idx, row in df.iterrows():
-            row_parts = []
+            # 为每一行生成一个具有独立语境的描述
+            row_desc = [f"记录第 {idx+1} 号:"]
             for col in cols:
                 val = row[col]
                 if pd.notna(val) and str(val).strip():
-                    row_parts.append(f"[{col}]: {val}")
+                    # 采用 "[字段名] 是 [值]" 的自然语言结构，提升嵌入模型的理解力
+                    row_desc.append(f"{col} 是 \"{val}\"")
             
-            if row_parts:
-                lines.append(f"第{idx+1}行资料: " + " | ".join(row_parts))
+            if len(row_desc) > 1:
+                lines.append(" ".join(row_desc))
             
-            # 为了避免内存溢出或单个文档过长，限制解析的总行数
-            # 如果是海量数据，推荐使用专门的结构化处理流程
-            if idx >= 1000:
-                lines.append(f"... 注意：出于性能考虑，仅解析了前 1000 行记录，全表后续还有 {len(df)-1000} 行。")
+            # 性能限制
+            if idx >= 1500: # 稍微放宽限制
+                lines.append(f"... (后续 {len(df)-1500} 行数据已省略)")
                 break
 
         return "\n".join(lines)

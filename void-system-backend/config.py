@@ -65,14 +65,45 @@ class Config:
     USER_FILES_DIR: str = os.getenv("USER_FILES_DIR", "user_files")
 
     # ==================== AI配置 ====================
-    # Ollama服务地址
+    # LLM 提供商: ollama | openai | deepseek | gemini | openai_compat
+    # ollama        - 本地 Ollama (默认, 无需 API Key)
+    # openai        - OpenAI 官方 API
+    # deepseek      - DeepSeek API (兼容 OpenAI 协议, 设置 OPENAI_API_KEY 和 OPENAI_BASE_URL)
+    # gemini        - Google Gemini API
+    # openai_compat - 任意兼容 OpenAI 协议的 API (月之暗面/通义/Yi/Groq 等)
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+
+    # Embedding 提供商: ollama | openai | huggingface
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "ollama")
+
+    # Ollama服务地址 (LLM_PROVIDER=ollama 时使用)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-    # 默认嵌入模型
+    # 聊天模型名称 (各 provider 下填写对应平台的模型名)
+    # ollama 示例: hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M
+    # openai 示例: gpt-4o
+    # deepseek 示例: deepseek-chat
+    # gemini 示例: gemini-1.5-flash
+    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M")
+
+    # 嵌入模型名称
+    # ollama 示例: hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0
+    # openai 示例: text-embedding-3-small
+    # huggingface 示例: BAAI/bge-small-zh-v1.5
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0")
 
-    # 默认聊天模型
-    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M")
+    # OpenAI / OpenAI 兼容 API Key (openai / deepseek / openai_compat 时使用)
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+
+    # OpenAI 兼容 API Base URL
+    # deepseek: https://api.deepseek.com/v1
+    # 月之暗面: https://api.moonshot.cn/v1
+    # 零一万物: https://api.lingyiwanwu.com/v1
+    # 通义千问: https://dashscope.aliyuncs.com/compatible-mode/v1
+    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
+
+    # Google Gemini API Key (LLM_PROVIDER=gemini 时使用)
+    GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
 
     # ==================== 向量数据库配置 ====================
     # ChromaDB持久化目录

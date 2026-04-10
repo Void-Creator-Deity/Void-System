@@ -20,6 +20,7 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 from database import Database
+from api.user_document_parser import document_parser
 
 class SystemRAGManager:
     """
@@ -30,9 +31,6 @@ class SystemRAGManager:
     def __init__(self, chroma_dir: str = "./chroma_db", db_path: str = "void_system.db"):
         """
         初始化RAG文档管理器
-        Args:
-            chroma_dir: ChromaDB持久化目录
-            db_path: SQLite数据库文件路径
         """
         self.chroma_dir = Path(chroma_dir).resolve()
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
@@ -51,106 +49,107 @@ class SystemRAGManager:
         # 初始化数据库连接
         self.db = Database(db_path)
 
-        # 初始化文本分割器
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            is_separator_regex=False,
+        # 智能切片器集合
+        self.default_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        self.code_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200, chunk_overlap=150,
+            separators=["\ndef ", "\nclass ", "\n\n", "\n", " ", ""]
+        )
+        self.md_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200, chunk_overlap=200,
+            separators=["\n# ", "\n## ", "\n### ", "\n\n", "\n", " ", ""]
         )
 
-    def add_document_to_system(self, file_path: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_splitter(self, file_type: str):
+        if file_type in {'py', 'js', 'java', 'cpp', 'ts'}: return self.code_splitter
+        if file_type == 'md': return self.md_splitter
+        return self.default_splitter
+
+    def add_document_async(self, file_data: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        添加文档到系统知识库
-        Args:
-            file_path: 文件路径
-            metadata: 文档元数据，包括：
-                - title: 文档标题
-                - uploaded_by: 上传者ID
-                - tags: 标签列表
-                - description: 文档描述
-        Returns:
-            包含文档ID和相关信息的字典
+        异步添加文档到系统知识库
+        1. 立即返回成功状态
+        2. 在后台进行解析和向量化
         """
         try:
-            # 读取文件内容
-            file = Path(file_path)
-            file_name = file.name
-            file_type = file.suffix[1:].lower() if file.suffix else "txt"
-            file_size = file.stat().st_size
-
-            # 允许的文件类型（仅支持文本文件）
-            allowed_file_types = {"txt", "md", "json", "csv", "py", "js", "html", "css", "xml"}
-            if file_type not in allowed_file_types:
-                return {
-                    "success": False,
-                    "message": f"不支持的文件类型: {file_type}。仅支持以下文本文件类型: {', '.join(allowed_file_types)}"
-                }
-
-            # 读取文件内容
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except UnicodeDecodeError:
-                return {
-                    "success": False,
-                    "message": "无法读取文件内容，仅支持UTF-8编码的文本文件"
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "message": f"读取文件失败: {str(e)}"
-                }
-
-            # 检查文件内容是否为空
-            if not content.strip():
-                return {
-                    "success": False,
-                    "message": "文件内容为空，无法添加到知识库"
-                }
-
-            # 分割文本为文档块
-            doc_chunks = self.text_splitter.create_documents([content])
-
-            # 添加元数据到每个块
-            for i, chunk in enumerate(doc_chunks):
-                chunk.metadata.update({
-                    "file_name": file_name,
-                    "file_type": file_type,
-                    "file_size": file_size,
-                    "chunk_index": i,
-                    "total_chunks": len(doc_chunks),
-                    "uploaded_by": metadata["uploaded_by"],
-                    "upload_time": datetime.now().isoformat()
-                })
-
-            # 生成向量并存储到Chroma
-            chroma_result = self.vector_db.add_documents(doc_chunks)
-            chroma_ids = json.dumps(chroma_result)
-
-            # 记录元数据到SQLite
-            doc_id = self.db.add_system_rag_document(
+            doc_id = str(uuid.uuid4())
+            file_name = metadata.get("file_name", f"doc_{doc_id}.txt")
+            file_type = file_name.split('.')[-1].lower() if '.' in file_name else "txt"
+            
+            # 记录元数据到数据库 (状态为 processing)
+            self.db.add_system_rag_document(
+                doc_id=doc_id,
                 title=metadata["title"],
                 uploaded_by=metadata["uploaded_by"],
                 file_name=file_name,
                 file_type=file_type,
-                file_size=file_size,
-                chroma_ids=chroma_ids,
+                file_size=len(file_data),
+                chroma_ids="[]",
                 tags=metadata.get("tags", []),
-                description=metadata.get("description", "")
+                description=metadata.get("description", ""),
+                is_active=True,
+                parse_status="processing"
             )
+
+            # 启动异步后台任务
+            import asyncio
+            asyncio.create_task(self._background_process(doc_id, file_data, file_name, metadata))
 
             return {
                 "success": True,
                 "doc_id": doc_id,
-                "message": "文档添加成功",
-                "chroma_ids_count": len(chroma_result)
+                "message": "文档已进入系统缓冲池，正在进行深度解析与向量化..."
             }
         except Exception as e:
-            return {
-                "success": False,
-                "message": f"文档添加失败: {str(e)}"
-            }
+            return {"success": False, "message": f"由系统注入失败: {str(e)}"}
+
+    async def _background_process(self, doc_id: str, file_data: bytes, file_name: str, metadata: Dict[str, Any]):
+        """后台处理线程：解析 + 切片 + 向量化"""
+        try:
+            # 1. 解析
+            parse_result = document_parser.parse_file(file_data, file_name)
+            if not parse_result.get("success"):
+                self.db.update_system_rag_document_status(
+                    doc_id, 
+                    parse_status="failed",
+                    error_message=parse_result.get("error", "解析失败")
+                )
+                return
+
+            content = parse_result.get("content", "")
+            file_type = file_name.split('.')[-1].lower() if '.' in file_name else "txt"
+
+            # 2. 切片
+            splitter = self._get_splitter(file_type)
+            doc_chunks = splitter.create_documents([content])
+
+            # 3. 增强元数据
+            for i, chunk in enumerate(doc_chunks):
+                chunk.metadata.update({
+                    "doc_id": doc_id,
+                    "file_name": file_name,
+                    "chunk_index": i,
+                    "total_chunks": len(doc_chunks),
+                    "upload_time": datetime.now().isoformat()
+                })
+
+            # 4. 向量化
+            chroma_result = self.vector_db.add_documents(doc_chunks)
+
+            # 5. 更新数据库
+            self.db.update_system_rag_document(
+                doc_id=doc_id,
+                chroma_ids=json.dumps(chroma_result),
+                parse_status="completed"
+            )
+            
+        except Exception as e:
+            print(f"RAG Background Error: {e}")
+            self.db.update_system_rag_document_status(
+                doc_id, 
+                parse_status="failed",
+                error_message=str(e)
+            )
 
     def delete_document(self, doc_id: str) -> Dict[str, Any]:
         """

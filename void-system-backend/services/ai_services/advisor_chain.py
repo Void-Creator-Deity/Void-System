@@ -11,6 +11,7 @@ from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 import json
 from config import config
+from services.ai_services.llm_factory import get_chat_llm
 
 # ==================== 1. 定义与前端完全匹配的数据结构 ====================
 class TaskStep(BaseModel):
@@ -115,12 +116,9 @@ def load_structured_task_chain() -> Runnable[Dict[str, Any], StructuredTaskPlan]
         partial_variables={"format_instructions": format_instructions}
     )
 
-    # 初始化 LLM 模型
-    llm = ChatOllama(
-        model=config.CHAT_MODEL,
-        temperature=0.7,
-        format="json"
-    )
+    # 初始化 LLM 模型（通过工厂，支持任意提供商）
+    # json_mode 仅对 Ollama 有效，API 模式已在工厂内自动处理
+    llm = get_chat_llm(temperature=0.7, json_mode=True)
 
     # 构建处理链：prompt -> llm -> 解析为结构化对象
     chain = prompt | llm | parser
@@ -342,14 +340,13 @@ def evaluate_submission(task_info: Dict[str, Any], submission_info: Dict[str, An
 {user_attributes}
 
 【评判要求】
-1. 仔细分析用户的提交内容并结合【评判标准】打分。如果该任务本来就比较简单，或者压根没写评判标准，只要用户的提交内容符合常理证明他完成了任务（比如一句合理的简短话语描述），就可以给予通过(pass)。不要死板。
-2. 给出具体的反馈(feedback)，指出哪里做得好或哪里不够。
+1. 仔细分析用户的提交内容并结合【评判标准】打分。你是一位非常严厉的虚空系统法官！拒绝一切敷衍塞责的提交（例如只有寥寥数语的“做完了”、“搞定了”等废话）。如果用户没有提供实质性的证明、详尽的总结、清晰的代码片段或有效的媒体链接，必须毫不留情地给予不通过 (fail)。
+2. 给出具体的反馈 (feedback)，语言风格保持高冷、犀利、直击要害。指出缺失了哪些关键证据或深度。
 3. 对其任务完成度进行打分(score)，范围 0-100：
-   - 完全符合最高标准、细节详实：90-100分
-   - 基本达成要求，或任务要求本身极其宽松简单：75-89分 (正常通过)
-   - 描述勉强沾边，但态度敷衍缺乏细节：60-74分 (并在 feedback 里说明扣分理由)
-   - 明显未完成或胡言乱语：0-59分 (必须给 fail)
-4. 如果通过（status为pass），请结合分数合理建议奖励，分数越低金币和属性奖励就适当减少。
+   - 绝佳证明：提供了确凿的证据、深刻的复盘总结或完美的产出成果：90-100分 (pass)
+   - 勉强合格：讲述了较为合理的执行经过，提供了一定证据但不够详实：70-89分 (pass)
+   - 敷衍/造假：内容单薄敷衍（例如不到 20 字的废话）或明显虚构：0-69分 (必须给 fail)
+4. 如果通过（status为pass），请结合分数合理建议奖励；如果 status 为 fail，则所有的建议奖励和硬币必须为 0！
 5. 必须输出严格的 JSON 格式。
 
 {format_instructions}

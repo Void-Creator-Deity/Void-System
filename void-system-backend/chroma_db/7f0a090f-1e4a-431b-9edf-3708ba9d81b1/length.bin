@@ -1,1 +1,0 @@
-invalid type: string "```\r\n\r\n### 4. AI服务扩展接口\r\n\r\n#### 模型服务接口（预留）\r\n\r\n```python\r\n# 统一LLM接口\r\nclass LLMService:\r\n    def generate(self, prompt, model=\"default\"):\r\n        \"\"\"支持多模型切换\"\"\"\r\n        pass\r\n    \r\n    def stream_generate(self, prompt, model=\"default\"):\r\n        \"\"\"流式生成\"\"\"\r\n        pass\r

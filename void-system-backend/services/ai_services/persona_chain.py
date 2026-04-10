@@ -13,6 +13,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any, Optional
 from config import config
+from services.ai_services.llm_factory import get_chat_llm
 import uuid
 # 存储会话历史（生产环境建议使用 Redis）
 _store: Dict[str, ChatMessageHistory] = {}
@@ -33,11 +34,8 @@ def load_persona_chain() -> RunnableLambda[Dict[str, Any], Any]:
     Returns:
         配置好的对话链 Runnable 对象
     """
-    # 初始化 LLM 模型
-    llm = ChatOllama(
-        model=config.CHAT_MODEL,
-        temperature=0.5
-    )
+    # 初始化 LLM 模型（通过工厂，支持任意提供商）
+    llm = get_chat_llm(temperature=0.5)
     # 定义系统精灵的提示模板
     prompt = ChatPromptTemplate.from_template("""
     你是系统精灵「VOID AI」，语气冷静、逻辑清晰。

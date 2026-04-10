@@ -222,6 +222,8 @@ class Database:
             chroma_ids TEXT,  -- 存储Chroma中的向量ID列表
             uploaded_by VARCHAR(36),  -- 管理员ID
             upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            parse_status TEXT DEFAULT 'completed', -- 'processing', 'completed', 'failed'
+            error_message TEXT,
             is_active BOOLEAN DEFAULT TRUE,
             tags JSON,  -- 标签数组
             description TEXT,
@@ -337,6 +339,16 @@ class Database:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase_history(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_experience_user_id ON experience(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_rag_documents_uploaded_by ON system_rag_documents(uploaded_by)")
+        
+        # 为 system_rag_documents 添加新字段
+        try:
+            cursor.execute("ALTER TABLE system_rag_documents ADD COLUMN parse_status TEXT DEFAULT 'completed'")
+        except:
+            pass
+        try:
+            cursor.execute("ALTER TABLE system_rag_documents ADD COLUMN error_message TEXT")
+        except:
+            pass
 
         # 用户文档相关索引
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_user_id ON user_documents(user_id)")
@@ -1541,7 +1553,10 @@ class Database:
         file_size: int = 0,
         chroma_ids: str = "",
         tags: Optional[List[str]] = None,
-        description: str = ""
+        description: str = "",
+        parse_status: str = "completed",
+        is_active: bool = True,
+        doc_id: Optional[str] = None
     ) -> str:
         """
         添加系统RAG文档
@@ -1554,19 +1569,22 @@ class Database:
             chroma_ids: Chroma向量ID列表（JSON格式）
             tags: 标签列表
             description: 文档描述
+            parse_status: 解析状态
+            is_active: 是否激活
+            doc_id: 预定义的文档ID（可选）
         Returns:
             新创建的文档ID
         """
         conn = self.get_connection()
         cursor = conn.cursor()
-        doc_id = str(uuid.uuid4())
+        doc_id = doc_id or str(uuid.uuid4())
         tags_json = json.dumps(tags or [])
         try:
             cursor.execute(
                 """INSERT INTO system_rag_documents 
-                   (id, title, file_name, file_type, file_size, chroma_ids, uploaded_by, tags, description) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (doc_id, title, file_name, file_type, file_size, chroma_ids, uploaded_by, tags_json, description)
+                   (id, title, file_name, file_type, file_size, chroma_ids, uploaded_by, tags, description, parse_status, is_active) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doc_id, title, file_name, file_type, file_size, chroma_ids, uploaded_by, tags_json, description, parse_status, 1 if is_active else 0)
             )
             conn.commit()
             return doc_id
@@ -1671,7 +1689,9 @@ class Database:
         chroma_ids: Optional[str] = None,
         is_active: Optional[bool] = None,
         tags: Optional[List[str]] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        parse_status: Optional[str] = None,
+        error_message: Optional[str] = None
     ) -> bool:
         """
         更新系统RAG文档
@@ -1726,6 +1746,14 @@ class Database:
                 updates.append("description = ?")
                 params.append(description)
             
+            if parse_status is not None:
+                updates.append("parse_status = ?")
+                params.append(parse_status)
+            
+            if error_message is not None:
+                updates.append("error_message = ?")
+                params.append(error_message)
+            
             if not updates:
                 return False
             
@@ -1736,6 +1764,21 @@ class Database:
             return cursor.rowcount > 0
         finally:
             conn.close()
+
+    def update_system_rag_document_status(
+        self,
+        doc_id: str,
+        parse_status: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """快速更新系统文档状态"""
+        return self.update_system_rag_document(
+            doc_id=doc_id,
+            parse_status=parse_status,
+            is_active=is_active,
+            error_message=error_message
+        )
     
     def delete_old_task_history(self, days: int = 7) -> int:
         """

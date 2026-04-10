@@ -5,24 +5,21 @@ Void System - QA Chain (RAG Pipeline)
 完全兼容 LangServe / FastAPI。
 """
 from pathlib import Path
-from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_chroma import Chroma
-#from langchain_classic.prompts import ChatPromptTemplate
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any
 from config import config
+from services.ai_services.llm_factory import get_chat_llm, get_embeddings
 def load_qa_chain() -> Any:
     """
     加载基于 LangChain 的检索问答管道
     Returns:
         配置好的 RAG 问答链
     """
-    # 初始化嵌入模型
-    embeddings = OllamaEmbeddings(
-        model=config.EMBEDDING_MODEL
-    )
+    # 初始化嵌入模型（通过工厂，支持任意提供商）
+    embeddings = get_embeddings()
     # 确保 ChromaDB 持久化目录存在
     chroma_dir = Path("./chroma_db").resolve()
     chroma_dir.mkdir(parents=True, exist_ok=True)
@@ -33,11 +30,8 @@ def load_qa_chain() -> Any:
     )
     # 创建检索器（返回 top 3 相关文档）
     retriever = db.as_retriever(search_kwargs={"k": 3})
-    # 初始化 LLM 模型
-    llm = ChatOllama(
-        model=config.CHAT_MODEL,
-        temperature=0.3
-    )
+    # 初始化 LLM 模型（通过工厂，支持任意提供商）
+    llm = get_chat_llm(temperature=0.3)
 
     # 定义混合检索逻辑
     def get_context(x: Dict[str, Any]) -> str:

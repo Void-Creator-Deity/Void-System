@@ -182,12 +182,19 @@
                   </div>
                   
                   <div class="subtask-right">
-                    <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click.stop="startTask(task.task_id)">
-                      开始
-                    </el-button>
-                    <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click.stop="completeTask(task.task_id)">
-                      提交
-                    </el-button>
+                    <el-tooltip v-if="isTaskLocked(task)" content="前置节点未完成，系统已锁定" placement="top">
+                      <el-button size="small" type="info" plain disabled>
+                        🔒 锁定
+                      </el-button>
+                    </el-tooltip>
+                    <template v-else>
+                      <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click.stop="startTask(task.task_id)">
+                        开始
+                      </el-button>
+                      <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click.stop="completeTask(task.task_id)">
+                        提交
+                      </el-button>
+                    </template>
                     <el-button size="small" link type="danger" @click.stop="deleteTask(task.task_id)"><span style="font-size: 14px;">🗑️</span></el-button>
                   </div>
                 </div>
@@ -245,13 +252,19 @@
                 </el-tag>
               </div>
               <div class="task-actions">
-                <el-button v-if="item.data.status === 'pending'" size="small" type="primary" plain @click="startTask(item.data.task_id)">
-                  开始
-                </el-button>
-                
-                <el-button v-if="item.data.status === 'in_progress'" type="success" size="small" @click="completeTask(item.data.task_id)">
-                  {{ item.data.completion_type === 'ai_eval' ? '提交评判' : '完成' }}
-                </el-button>
+                <el-tooltip v-if="isTaskLocked(item.data)" content="前置节点未完成，系统已锁定" placement="top">
+                  <el-button size="small" type="info" plain disabled>
+                     🔒 锁定
+                  </el-button>
+                </el-tooltip>
+                <template v-else>
+                  <el-button v-if="item.data.status === 'pending'" size="small" type="primary" plain @click="startTask(item.data.task_id)">
+                    开始
+                  </el-button>
+                  <el-button v-if="item.data.status === 'in_progress'" type="success" size="small" @click="completeTask(item.data.task_id)">
+                    {{ item.data.completion_type === 'ai_eval' ? '提交评判' : '完成' }}
+                  </el-button>
+                </template>
 
                 <el-button size="small" link @click="viewTaskDetail(item.data.task_id)">详情</el-button>
                 <el-button size="small" link type="danger" @click="deleteTask(item.data.task_id)">删除</el-button>
@@ -845,6 +858,19 @@ const currentTask = ref(null)
 // 任务证明相关
 const isEvaluating = ref(false)
 const currentChainTasks = ref([]) // 当前查看的任务链所有任务
+
+// ==================== 前置卡点逻辑 ====================
+/**
+ * 检查任务是否由于前置条件未完成而被锁定
+ */
+const isTaskLocked = (task) => {
+  if (!task || !task.prerequisites || task.prerequisites.length === 0) return false;
+  // 如果任何一个前置任务没有完成，则返回 true (锁定)
+  return task.prerequisites.some(prereqId => {
+    const prereqTask = tasks.value.find(t => t.task_id === prereqId);
+    return !prereqTask || prereqTask.status !== 'completed';
+  });
+}
 
 // ==================== 业务逻辑 ====================
 

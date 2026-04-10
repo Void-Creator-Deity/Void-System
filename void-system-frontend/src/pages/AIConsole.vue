@@ -474,7 +474,46 @@ const handleFileUpload = async (e) => {
 
 // --- 工具 ---
 
-const renderMarkdown = (text) => marked.parse(text || '')
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  let processed = text
+
+  // 1. 处理流式输出中未闭合的 <think>
+  const openCount = (processed.match(/<think>/g) || []).length
+  const closeCount = (processed.match(/<\/think>/g) || []).length
+  
+  if (openCount > closeCount) {
+    processed += '\n</think>'
+  }
+
+  // 2. 拦截并格式化 <think> 区域，避免被 marked 误杀或污染外部 DOM
+  // 这里使用不会被 marked 解析的占位符
+  const thinkBlocks = []
+  processed = processed.replace(/<think>([\s\S]*?)<\/think>/g, (match, content) => {
+    thinkBlocks.push(content)
+    return `%%%VOID_THINK_${thinkBlocks.length - 1}%%%`
+  })
+
+  // 3. 执行 marked 解析
+  let html = marked.parse(processed)
+
+  // 4. 将提取的标记还原为带有美观样式的 details 卡片
+  thinkBlocks.forEach((content, index) => {
+    const renderBlock = marked.parse(content)
+    html = html.replace(`%%%VOID_THINK_${index}%%%`, `
+      <details class="void-think-box">
+        <summary>
+          <span class="think-icon">✨</span>
+          <span class="think-title">虚空引擎逻辑推演</span>
+        </summary>
+        <div class="think-content">${renderBlock}</div>
+      </details>
+    `)
+  })
+
+  return html
+}
+
 const formatTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 const scrollToBottom = () => {
@@ -678,23 +717,25 @@ onMounted(() => {
   width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
   font-weight: 900; font-size: 0.9rem;
 }
-.avatar.user { background: var(--color-primary); color: #fff; }
+.avatar.user { background: var(--color-primary); color: #fff/*用户头像字体颜色下面对应的是系统精灵的
+  */; }
 .avatar.system { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); color: var(--color-primary); }
 
 .bubble-content {
+  color: #000000/*字体颜色*/;
   padding: 12px 16px; border-radius: 12px; position: relative;
-  background: rgba(30, 41, 59, 0.4); border: 1px solid var(--color-border-light);
+  background: rgba(21, 105, 240, 0.4)/*系统精灵消息气泡背景颜色*/; border: 1px solid var(--color-border-light);
 }
 
-.user .bubble-content { background: var(--color-primary-dark); border-color: rgba(99, 102, 241, 0.3); }
+.user .bubble-content {  color: #000000/*字体颜色*/; background: var(--color-primary-dark); border-color: rgba(99, 102, 241, 0.3); }
 
 .bubble-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.role-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--color-text-muted); }
+.role-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--color-text-muted)/*聊天对象名称*/; }
 .bubble-actions { opacity: 0; transition: 0.2s; display: flex; gap: 4px; }
 .bubble-content:hover .bubble-actions { opacity: 1; }
 
-.text-area { font-size: 0.95rem; line-height: 1.6; word-wrap: break-word; }
-.bubble-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; font-size: 0.7rem; color: var(--color-text-muted); }
+.text-area { color: #000000;font-size: 0.95rem; line-height: 1.6; word-wrap: break-word; }
+.bubble-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; font-size: 0.7rem; color: var(--color-text-muted)/*消息跟脚-时间及tokens*/; }
 
 /* 输入栏 */
 .input-container { padding: 0 1.5rem 1.5rem; }
@@ -715,7 +756,7 @@ onMounted(() => {
 .panel-icon:hover { color: var(--color-primary-light); transform: scale(1.1); }
 
 .main-textarea :deep(.el-textarea__inner) {
-  background: transparent; border: none; box-shadow: none; color: #fff; padding: 8px 0;
+  background: transparent; border: none; box-shadow: none; color: #fff/*输入框字体颜色 */; padding: 8px 0;
 }
 
 .glow-btn {
@@ -738,8 +779,49 @@ onMounted(() => {
 
 /* Markdown */
 .markdown-body :deep(h1,h2,h3) { margin: 10px 0; color: var(--color-primary-light); }
-.markdown-body :deep(pre) { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; margin: 8px 0; }
+.markdown-body :deep(pre) { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; margin: 8px 0; overflow-x: auto; }
 .markdown-body :deep(code) { font-family: var(--font-family-mono); background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; }
+.markdown-body :deep(p) { margin-bottom: 0.8rem; }
+.markdown-body :deep(p:last-child) { margin-bottom: 0; }
+
+/* 深度思考框样式 (极简风格防杂乱) */
+.markdown-body :deep(.void-think-box) {
+  margin: 12px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08); /* 极细淡边框 */
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15); /* 微黑暗底 */
+  overflow: hidden;
+}
+.markdown-body :deep(.void-think-box summary) {
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  list-style: none; /* 移除原生小三角 */
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.2s ease;
+}
+.markdown-body :deep(.void-think-box summary::-webkit-details-marker) {
+  display: none;
+}
+.markdown-body :deep(.void-think-box summary:hover) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-primary-light);
+}
+.markdown-body :deep(.void-think-box .think-content) {
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  line-height: 1.5;
+}
+.markdown-body :deep(.void-think-box .think-content p) { margin-bottom: 0.5rem; }
+.markdown-body :deep(.void-think-box .think-content p:last-child) { margin-bottom: 0; }
+
 
 /* Typing */
 .typing { display: flex; gap: 4px; margin: 4px 0; }

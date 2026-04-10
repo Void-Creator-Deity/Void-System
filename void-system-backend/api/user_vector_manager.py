@@ -41,16 +41,38 @@ class UserVectorManager:
             model="hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0"
         )
 
-        # 初始化文本分割器
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        # 基础文本分割器 (默认)
+        self.default_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
-            is_separator_regex=False,
+        )
+
+        # 代码专用分割器
+        self.code_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200,
+            chunk_overlap=150,
+            separators=["\ndef ", "\nclass ", "\nimport ", "\nfrom ", "\n\n", "\n", " ", ""],
+        )
+
+        # Markdown 专用分割器
+        self.md_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200,
+            chunk_overlap=200,
+            separators=["\n# ", "\n## ", "\n### ", "\n#### ", "\n\n", "\n", " ", ""],
         )
 
         # 用户集合缓存
         self._collection_cache = {}
+
+    def _get_splitter_for_file(self, file_type: str):
+        """根据文件类型选择最优切片策略"""
+        code_exts = {'py', 'js', 'java', 'cpp', 'c', 'ts', 'go', 'rs', 'php'}
+        if file_type in code_exts:
+            return self.code_splitter
+        elif file_type == 'md':
+            return self.md_splitter
+        return self.default_splitter
 
     def get_user_collection(self, user_id: str) -> Chroma:
         """
@@ -93,8 +115,12 @@ class UserVectorManager:
             处理结果
         """
         try:
+            # 0. 确定切片策略
+            file_type = metadata.get("file_type", "txt") if metadata else "txt"
+            splitter = self._get_splitter_for_file(file_type)
+
             # 1. 分割文本
-            chunks = self.text_splitter.create_documents([content])
+            chunks = splitter.create_documents([content])
 
             # 2. 添加元数据
             base_metadata = {

@@ -77,10 +77,14 @@
             <span class="doc-id">ID: {{ doc.id.substring(0, 8) }}...</span>
           </div>
           <div class="doc-status">
-            <el-tag :type="doc.is_active ? 'success' : 'info'" size="small" effect="dark" class="status-tag">
-              {{ doc.is_active ? '活跃' : '离线' }}
+            <el-tag :type="getStatusType(doc.parse_status, doc.is_active)" size="small" effect="dark" class="status-tag">
+              {{ getStatusText(doc.parse_status, doc.is_active) }}
             </el-tag>
           </div>
+        </div>
+
+        <div v-if="doc.parse_status === 'failed' && doc.error_message" class="error-banner">
+          <el-icon><Warning /></el-icon> {{ doc.error_message }}
         </div>
 
         <div class="doc-meta">
@@ -141,6 +145,11 @@
               <el-icon><Check /></el-icon> 激活
             </el-button>
           </el-button-group>
+        </div>
+
+        <!-- 处理进度条 (同步个人文档风格) -->
+        <div v-if="doc.parse_status === 'processing'" class="doc-status-line">
+          <div class="progress-shimmer"></div>
         </div>
       </div>
     </div>
@@ -336,7 +345,7 @@ const editForm = ref({
 });
 
 const uploadFileList = ref([]);
-const acceptedFileTypes = ref(['txt', 'md', 'json', 'csv', 'py', 'js', 'html', 'css', 'xml']);
+const acceptedFileTypes = ref(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'md', 'json', 'csv', 'py', 'js', 'html', 'css', 'xml']);
 
 const uploadFormRef = ref(null);
 const editFormRef = ref(null);
@@ -387,6 +396,19 @@ const editRules = {
 };
 
 // ==================== 方法 ====================
+
+// 状态解析方法
+const getStatusText = (status, isActive) => {
+  if (status === 'processing') return '正在注入向量库...';
+  if (status === 'failed') return '注入失败';
+  return isActive ? '核心活跃' : '离线已禁用';
+};
+
+const getStatusType = (status, isActive) => {
+  if (status === 'processing') return 'warning';
+  if (status === 'failed') return 'danger';
+  return isActive ? 'success' : 'info';
+};
 
 const loadTags = async () => {
   try {
@@ -613,6 +635,7 @@ onMounted(() => {
   font-weight: 800;
   background: linear-gradient(135deg, #fff 0%, var(--color-primary-light) 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   letter-spacing: -0.02em;
   margin-bottom: 10px;
@@ -810,6 +833,7 @@ onMounted(() => {
   color: var(--color-text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -832,6 +856,41 @@ onMounted(() => {
 .doc-actions {
   display: flex;
   justify-content: flex-end;
+  margin-top: auto;
+}
+
+.error-banner {
+  margin-bottom: 15px;
+  padding: 8px 12px;
+  background: rgba(var(--color-danger-rgb), 0.1);
+  border-left: 3px solid var(--color-danger);
+  color: var(--color-danger);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-status-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--color-primary);
+  opacity: 0.6;
+}
+
+.progress-shimmer {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* 交互元素 */

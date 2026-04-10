@@ -666,8 +666,9 @@ def purify_ai_response(raw_content: Any) -> str:
         else:
             raw_content = str(raw_content)
     
-    # 2. 移除整个<think>...</think>块及其内容
-    purified = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
+    # 2. 改为保留 <think> 模块，统一交由前端折叠渲染 (不再粗暴移除)
+    # purified = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
+    purified = raw_content
     
     # 3. 移除可能残留的“AI引导精灵”等内部角色提示
     purified = re.sub(r'^你是.*?精灵[。\n]*', '', purified)
@@ -1676,6 +1677,19 @@ async def submit_task_proof(
             error_code="TASK_ALREADY_COMPLETED",
             status_code=status.HTTP_400_BAD_REQUEST
         )
+        
+    # 强制前置依赖检查
+    if task.get('prerequisites'):
+        all_user_tasks = db.get_user_tasks(current_user["user_id"])
+        completed_task_ids = {t['task_id'] for t in all_user_tasks if t['status'] == 'completed'}
+        missing_prereqs = [pid for pid in task['prerequisites'] if pid not in completed_task_ids]
+        if missing_prereqs:
+            missing_names = [t['task_name'] for t in all_user_tasks if t['task_id'] in missing_prereqs]
+            raise VoidSystemException(
+                message=f"越级阻止！由于您的前置节点未完成，虚空系统拒绝了您的提交请求。缺少节点: {', '.join(missing_names)}",
+                error_code="PREREQUISITES_NOT_MET",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
     
     success = db.submit_task_proof(
         task_id,
@@ -1715,6 +1729,19 @@ async def evaluate_task(
             error_code="TASK_NOT_FOUND",
             status_code=status.HTTP_404_NOT_FOUND
         )
+        
+    # 强制前置依赖检查
+    if task.get('prerequisites'):
+        all_user_tasks = db.get_user_tasks(current_user["user_id"])
+        completed_task_ids = {t['task_id'] for t in all_user_tasks if t['status'] == 'completed'}
+        missing_prereqs = [pid for pid in task['prerequisites'] if pid not in completed_task_ids]
+        if missing_prereqs:
+            missing_names = [t['task_name'] for t in all_user_tasks if t['task_id'] in missing_prereqs]
+            raise VoidSystemException(
+                message=f"越级阻止！由于您的前置节点未完成，虚空系统拒绝了您的评判请求。缺少节点: {', '.join(missing_names)}",
+                error_code="PREREQUISITES_NOT_MET",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
     
     success = db.update_task_evaluation(
         task_id,
@@ -1751,6 +1778,18 @@ async def ai_evaluate_task(
     
     if not task:
         raise VoidSystemException(message="任务不存在", error_code="TASK_NOT_FOUND", status_code=404)
+        
+    # 强制前置依赖检查
+    if task.get('prerequisites'):
+        completed_task_ids = {t['task_id'] for t in tasks if t['status'] == 'completed'}
+        missing_prereqs = [pid for pid in task['prerequisites'] if pid not in completed_task_ids]
+        if missing_prereqs:
+            missing_names = [t['task_name'] for t in tasks if t['task_id'] in missing_prereqs]
+            raise VoidSystemException(
+                message=f"越级阻止！由于您的前置节点未完成，虚空系统拒绝为您召唤评判庭。缺少节点: {', '.join(missing_names)}",
+                error_code="PREREQUISITES_NOT_MET",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
     
     # 2. 获取用户当前属性
     user_stats = {
@@ -2531,36 +2570,28 @@ async def upload_rag_document(
         tags = form.get("tags", "")
         description = form.get("description", "")
         
-        # 保存临时文件
-        temp_file_path = f"temp_{uuid.uuid4()}_{file.filename}"
-        with open(temp_file_path, "wb") as f:
-            f.write(await file.read())
+        # 读取文件数据
+        file_data = await file.read()
         
-        # 调用RAG管理器添加文档
+        # 调用RAG管理器异步添加文档
         rag_manager = SystemRAGManager()
-        result = rag_manager.add_document_to_system(
-            file_path=temp_file_path,
+        result = rag_manager.add_document_async(
+            file_data=file_data,
             metadata={
                 "title": title,
+                "file_name": file.filename,
                 "uploaded_by": current_admin["user_id"],
                 "tags": tags.split(",") if tags else [],
                 "description": description
             }
         )
         
-        # 删除临时文件
-        import os
-        os.remove(temp_file_path)
-        
         # 根据结果返回不同的响应
         if result["success"]:
             return APIResponse(
                 success=True,
                 message=result["message"],
-                data={
-                    "doc_id": result["doc_id"],
-                    "chroma_ids_count": result["chroma_ids_count"]
-                }
+                data={"doc_id": result["doc_id"]}
             )
         else:
             return APIResponse(

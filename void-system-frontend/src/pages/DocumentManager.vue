@@ -162,6 +162,10 @@
             </el-tag>
           </div>
 
+          <div v-if="doc.parse_status === 'failed' && doc.error_message" class="doc-error-info">
+            <el-icon><Warning /></el-icon> {{ doc.error_message }}
+          </div>
+
           <div class="doc-body">
             <p class="doc-preview">{{ doc.content_preview || '尚无解析预览内容...' }}</p>
             <div class="doc-tags" v-if="doc.tags?.length">
@@ -900,6 +904,18 @@ onMounted(() => {
 /* 状态样式 */
 .status-tag {
   border-radius: var(--radius-full);
+}
+
+.doc-error-info {
+  margin: 0 16px 12px 16px;
+  padding: 8px 12px;
+  background: rgba(var(--color-danger-rgb), 0.1);
+  border-radius: var(--radius-sm);
+  color: var(--color-danger);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .doc-status-line {

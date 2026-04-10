@@ -251,6 +251,7 @@ onMounted(() => {
     var(--color-primary-dark)
   );
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   display: inline-block;

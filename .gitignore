@@ -1,5 +1,41 @@
+# === System Files ===
 .trae/
 .history/
+.DS_Store
+Thumbs.db
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+.env
+.env.local
+.env.*
+!.env.example
+*.log
+
+# === Database & RAG ===
 *.db
 *.db-journal
+*.sqlite3
+chroma_db/
 user_documents/
+!user_documents/.gitkeep
+
+# === Node.js ===
+node_modules/
+dist/
+.npm
+.eslintcache
+package-lock.json (if using yarn or pnpm)
+
+# === Project Specific ===
+temp/
+scratch/
+void-system-backend/void_system.db
+void-system-backend/chroma_db/
+void-system-backend/.env
