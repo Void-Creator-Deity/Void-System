@@ -84,7 +84,7 @@ class Config:
     # openai 示例: gpt-4o
     # deepseek 示例: deepseek-chat
     # gemini 示例: gemini-1.5-flash
-    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M")
+    CHAT_MODEL: str = os.getenv("CHAT_MODEL", "gemma4:26b-a4b-it-q4_K_M")
 
     # 嵌入模型名称
     # ollama 示例: hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0

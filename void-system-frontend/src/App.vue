@@ -63,8 +63,8 @@
           </div>
           
           <div v-else-if="!isLoading" class="auth-gate flex gap-sm">
-            <el-button class="cyber-btn-outline" @click="router.push('/login')">接入连接</el-button>
-            <el-button class="cyber-btn-solid" @click="router.push('/register')">创建序列</el-button>
+            <el-button class="void-btn" @click="router.push('/login')">接入连接</el-button>
+            <el-button class="void-btn primary" @click="router.push('/register')">创建序列</el-button>
           </div>
         </div>
       </div>
@@ -192,27 +192,30 @@ const logout = async () => {
 onMounted(() => {
   loadUserInfo()
 
-  // 读取本地缓存的系统设置，应用主题颜色
+  // 读取本地缓存的系统设置，应用主题模式
   try {
     const savedSettings = localStorage.getItem('settings_cache')
     if (savedSettings) {
       const parsed = JSON.parse(savedSettings)
-      if (parsed?.systemConfig?.themeEnabled && parsed?.systemConfig?.themeColor) {
-        document.documentElement.style.setProperty('--color-primary', parsed.systemConfig.themeColor)
-      }
+      const themeMode = parsed?.systemConfig?.themeMode || 'dark'
+      document.documentElement.setAttribute('data-theme', themeMode)
+    } else {
+      // 默认主题
+      document.documentElement.setAttribute('data-theme', 'dark')
     }
   } catch(e) {
     console.warn('Failed to load local theme settings', e)
+    document.documentElement.setAttribute('data-theme', 'dark')
   }
 })
 </script>
 
 <style scoped>
-/* 系统初始化遮罩 */
+/* Initializer Overlay */
 .system-initializer {
   position: fixed;
   inset: 0;
-  background: var(--color-bg-primary);
+  background: var(--bg-primary);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -224,7 +227,7 @@ onMounted(() => {
   position: relative;
   width: 80px;
   height: 80px;
-  margin-bottom: 2rem;
+  margin-bottom: var(--spacing-xl);
 }
 
 .core-orbit {
@@ -239,274 +242,154 @@ onMounted(() => {
 .core-glow {
   width: 100%;
   height: 100%;
-  background: var(--grad-cyber);
+  background: radial-gradient(circle, var(--color-primary), transparent 70%);
   border-radius: 50%;
-  filter: blur(15px);
-  opacity: 0.6;
+  opacity: 0.3;
   animation: pulse 2s ease-in-out infinite;
 }
 
 .initializer-text {
   font-family: var(--font-family-mono);
-  color: var(--color-primary-light);
+  color: var(--color-primary);
   letter-spacing: 4px;
 }
 
-/* 神经网络顶栏 (Neural Nexus) */
+/* Header */
 .system-header {
-  height: 70px;
+  height: 64px;
   position: sticky;
   top: 0;
   z-index: 1000;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
 }
 
-.header-glass-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--color-border);
-}
-
 .header-content {
-  position: relative;
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-/* 品牌区域 */
 .brand-area {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--spacing-sm);
   cursor: pointer;
-  transition: transform 0.3s ease;
-}
-
-.brand-area:hover {
-  transform: scale(1.02);
-}
-
-.brand-v-icon {
-  width: 32px;
-  height: 32px;
-  background: var(--grad-cyber);
-  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-glow);
-}
-
-.v-inner {
-  width: 16px;
-  height: 16px;
-  background: var(--color-bg-primary);
-  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-}
-
-.brand-label {
-  display: flex;
-  flex-direction: column;
 }
 
 .brand-name {
+  font-weight: 800;
   font-size: 1.2rem;
-  font-weight: 900;
-  letter-spacing: 2px;
-  background: linear-gradient(to right, #fff, var(--color-primary-light));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: 1px;
 }
 
-.brand-suffix {
-  font-size: 0.6rem;
-  font-weight: 300;
-  color: var(--color-text-muted);
-  letter-spacing: 4px;
-}
-
-/* 导航链接 */
+/* Nav */
 .nav-links {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--spacing-md);
 }
 
-/* 操作中枢 */
 .central-ops {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: var(--spacing-md);
 }
 
+/* User Menu */
 .user-node {
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.4rem 0.4rem 0.4rem 1.2rem;
-  border-radius: 2rem;
+  gap: var(--spacing-sm);
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
   cursor: pointer;
-  transition: all 0.3s ease;
-  border: 1px solid var(--color-border-light);
+  transition: all var(--transition-normal);
 }
 
 .user-node:hover {
-  background: rgba(255, 255, 255, 0.05);
   border-color: var(--color-primary);
-  box-shadow: 0 0 20px rgba(67, 97, 238, 0.2);
 }
 
-.user-info-text {
-  display: flex;
-  flex-direction: column;
-  text-align: right;
-}
-
-.user-label {
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--color-text-primary);
-}
-
-.user-rank {
-  font-size: 0.7rem;
-  color: var(--color-primary);
-  font-family: var(--font-family-mono);
-  font-weight: 700;
-}
-
-.user-hex-avatar {
-  width: 38px;
-  height: 38px;
-  background: var(--grad-cyber);
+.avatar-char {
+  width: 32px;
+  height: 32px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  color: #fff;
-  font-weight: 900;
+  font-weight: bold;
 }
 
-/* 用户详情菜单 */
 .user-ops-menu {
   position: absolute;
-  top: calc(100% + 1rem);
+  top: 50px;
   right: 0;
-  width: 200px;
-  padding: 0.5rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-xl);
+  width: 180px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-xs);
   z-index: 1001;
-  transform-origin: top right;
-  animation: slideDown 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
 }
 
 .menu-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  transition: all 0.2s ease;
-  font-size: 0.9rem;
+  gap: var(--spacing-sm);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
 }
 
 .menu-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--color-text-primary);
-  transform: translateX(4px);
-}
-
-.menu-item.logout {
-  color: #ff4757;
-}
-
-.menu-item.logout:hover {
-  background: rgba(255, 71, 87, 0.1);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .menu-divider {
   height: 1px;
-  background: var(--color-border-light);
-  margin: 0.4rem 0;
+  background: var(--border-color-light);
+  margin: 4px 0;
 }
 
-/* 主内容区域 */
+/* Main & Footer */
 .main {
-  padding-top: 2rem;
-  min-height: calc(100vh - 70px - 60px);
+  min-height: calc(100vh - 120px);
+  padding: var(--spacing-xl) 0;
 }
 
-/* 全局动画 */
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-10px) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.8; }
-}
-
-.glitch-text {
-  position: relative;
-  display: inline-block;
-}
-
-/* 移动端适配 */
-@media (max-width: 992px) {
-  .nav-links {
-    display: none;
-  }
-}
-
-/* 按钮组件重载 */
-.cyber-btn-outline {
-  border: 1px solid var(--color-primary-light);
-  background: transparent;
-  color: var(--color-primary-light);
-  border-radius: 2rem;
-  font-weight: 700;
-  padding: 0.5rem 1.5rem;
-}
-
-.cyber-btn-solid {
-  background: var(--grad-cyber);
-  border: none;
-  color: #fff;
-  border-radius: 2rem;
-  font-weight: 700;
-  padding: 0.5rem 1.5rem;
-  box-shadow: var(--shadow-glow);
-}
-
-/* 统一底部 */
 .footer {
-  height: 60px;
+  height: 56px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
   display: flex;
   align-items: center;
-  border-top: 1px solid var(--color-border-light);
-  background: var(--color-bg-primary);
+  justify-content: center;
 }
 
 .copyright {
-  font-family: var(--font-family-mono);
-  font-size: 0.7rem;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  opacity: 0.5;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.6; } }
+
+@media (max-width: 900px) {
+  .nav-links { display: none; }
 }
 </style>

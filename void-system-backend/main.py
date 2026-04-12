@@ -362,6 +362,9 @@ def create_error_response(
 
 # ==================== 依赖注入 ====================
 oauth2_scheme: OAuth2PasswordBearer = OAuth2PasswordBearer(tokenUrl="api/v1/token")
+oauth2_scheme_optional: OAuth2PasswordBearer = OAuth2PasswordBearer(
+    tokenUrl="api/v1/token", auto_error=False
+)
 
 def get_db() -> Database:
     """获取数据库实例依赖"""
@@ -425,6 +428,31 @@ async def get_current_user(
         )
     
     return user
+
+
+async def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Database = Depends(get_db),
+) -> Optional[Dict[str, Any]]:
+    """与 get_current_user 相同解析逻辑，但无令牌或无效时令牌不抛错，返回 None。"""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            Config.SECRET_KEY,
+            algorithms=[Config.ALGORITHM],
+        )
+        sub: Optional[str] = payload.get("sub")
+        if sub is None:
+            return None
+    except JWTError:
+        return None
+    user: Optional[Dict[str, Any]] = db.get_user_by_id(sub)
+    if user is None:
+        user = db.get_user_by_username(sub)
+    return user
+
 
 async def get_current_admin(
     current_user: Dict[str, Any] = Depends(get_current_user)
@@ -689,7 +717,11 @@ from typing import Dict, Any
 
 # 流式响应端点
 @app.post("/api/stream-chat")
-async def stream_chat_endpoint(user_input: Dict[str, Any]):
+async def stream_chat_endpoint(
+    current_user_optional: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    db: Database = Depends(get_db),
+    user_input: Dict[str, Any] = Body(...),
+):
     """
     处理流式聊天请求
     """
@@ -711,11 +743,27 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
             input_data = {"question": user_question}
         else:  # 默认persona
             from services.ai_services.persona_chain import load_persona_chain
+            from api.session_context_manager import build_data_urls_for_session_files
+
             chain = load_persona_chain()
             # 从输入中提取或生成session_id
             session_id = user_input.get("session_id", "user-" + str(asyncio.get_event_loop().time()).replace(".", "")[:10])
+            client_images: List[str] = list(user_input.get("images") or [])
+            session_file_ids: List[str] = list(user_input.get("session_file_ids") or [])
+            merged_images: List[str] = list(client_images)
+            if session_file_ids and current_user_optional:
+                merged_images.extend(
+                    build_data_urls_for_session_files(
+                        db,
+                        current_user_optional["user_id"],
+                        session_id,
+                        session_file_ids,
+                    )
+                )
             input_data = {
                 "text": user_text,
+                "images": merged_images,
+                "session_id": session_id,
                 "config": {
                     "configurable": {
                         "session_id": session_id
@@ -3256,6 +3304,137 @@ async def clear_chat_messages(
 ) -> APIResponse:
     db.clear_chat_history(session_id, current_user["user_id"])
     return create_success_response("对话历史已清空")
+
+
+def _public_session_file_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """将 user_session_files 行转为前端 TemporaryUpload / AIConsole 期望字段。"""
+    return {
+        "file_id": row.get("id"),
+        "file_name": row.get("file_name"),
+        "file_size": row.get("original_size"),
+        "upload_time": row.get("upload_time"),
+        "content_preview": row.get("content_preview"),
+        "mime_type": row.get("mime_type"),
+    }
+
+
+@app.post("/api/session/new", summary="创建临时会话标识", tags=["会话文件"], response_model=APIResponse)
+async def session_create_standalone(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    """生成独立 session_id（未写入 chat_sessions）；与聊天持久化会话 ID 可混用为临时文件桶键。"""
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.create_new_session(current_user["user_id"])
+    if not result.get("success"):
+        return create_error_response(result.get("message", "创建失败"), error_code="SESSION_CREATE_FAILED")
+    return create_success_response(
+        result.get("message", "创建成功"),
+        data={"session_id": result.get("session_id")},
+    )
+
+
+@app.post("/api/session/upload-temporary", summary="上传会话临时文件", tags=["会话文件"], response_model=APIResponse)
+async def session_upload_temporary(
+    session_id: str = Query(..., description="须为当前用户的 chat_sessions.session_id"),
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    if not db.user_owns_chat_session(session_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    raw = await file.read()
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.upload_temporary_file(
+        current_user["user_id"], session_id, raw, file.filename or "unnamed"
+    )
+    if not result.get("success"):
+        return create_error_response(
+            result.get("message", "上传失败"), error_code="SESSION_UPLOAD_FAILED"
+        )
+    return create_success_response(
+        result.get("message", "临时文件上传成功"),
+        data={
+            "file_id": result["file_id"],
+            "file_name": result.get("file_name"),
+            "file_size": result.get("file_size"),
+            "content_preview": result.get("content_preview"),
+            "mime_type": result.get("mime_type"),
+        },
+    )
+
+
+@app.get("/api/session/context/{session_id}", summary="获取会话临时文件列表", tags=["会话文件"], response_model=APIResponse)
+async def session_get_context(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    if not db.user_owns_chat_session(session_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    mgr = SessionContextManager(db.db_path)
+    ctx = mgr.get_session_context(current_user["user_id"], session_id)
+    if not ctx.get("success"):
+        return create_error_response(ctx.get("message", "获取失败"), error_code="SESSION_CONTEXT_FAILED")
+    files = [_public_session_file_row(dict(r)) for r in ctx.get("files", [])]
+    return create_success_response(
+        "获取会话上下文成功",
+        data={"files": files, "file_count": len(files), "session_id": session_id},
+    )
+
+
+@app.get("/api/session/active", summary="获取活跃会话列表", tags=["会话文件"], response_model=APIResponse)
+async def session_get_active(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    out = mgr.get_active_sessions(current_user["user_id"])
+    if not out.get("success"):
+        return create_error_response(out.get("message", "获取失败"))
+    return create_success_response(
+        out.get("message", "获取成功"),
+        data={"sessions": out.get("sessions", []), "session_count": out.get("session_count", 0)},
+    )
+
+
+@app.get("/api/session/files/{file_id}", summary="获取临时文件信息", tags=["会话文件"], response_model=APIResponse)
+async def session_get_file(
+    file_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.get_file_content(current_user["user_id"], file_id)
+    if not result.get("success"):
+        return create_error_response(result.get("message", "获取失败"), error_code="SESSION_FILE_NOT_FOUND")
+    return create_success_response(result.get("message", "成功"), data=result)
+
+
+@app.delete("/api/session/files/{file_id}", summary="删除临时文件", tags=["会话文件"], response_model=APIResponse)
+async def session_delete_file(
+    file_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.delete_session_file(current_user["user_id"], file_id)
+    if not result.get("success"):
+        return create_error_response(result.get("message", "删除失败"), error_code="SESSION_FILE_DELETE_FAILED")
+    return create_success_response(result.get("message", "删除成功"))
+
 
 # ==================== 应用启动 ====================
 if __name__ == "__main__":

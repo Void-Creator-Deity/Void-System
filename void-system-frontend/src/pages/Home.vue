@@ -1,19 +1,19 @@
 <template>
   <div class="home-container">
     <!-- 页面标题 -->
-    <div class="home-header">
-      <div class="header-main">
-        <h2><span class="glitch">虚空</span> <span class="system-text">系统</span> 终端</h2>
+    <div class="settings-header">
+      <div class="header-main flex justify-between items-center">
+        <h1 class="glitch">虚空系统终端</h1>
         <div class="user-level-badge">
-          <div class="level-label">等级</div>
-          <div class="level-value">{{ systemData.level }}</div>
+          <span class="level-label">等级</span>
+          <span class="level-value">{{ systemData.level }}</span>
         </div>
       </div>
       
-      <div class="system-meta">
+      <div class="system-meta mt-md">
         <div class="exp-bar-container">
           <div class="exp-info">
-            <span>EXP</span>
+            <span>系统经验值</span>
             <span>{{ systemData.expProgress }} / 100</span>
           </div>
           <div class="exp-track">
@@ -24,88 +24,82 @@
         <div class="system-status">
           <div class="status-indicator">
             <div class="status-dot"></div>
-            <span>已连接</span>
+            <span>实时连接中</span>
           </div>
           <div class="system-coins">
             <span class="coin-icon">💰</span>
-            <span class="coin-count">{{ systemData.coins }}</span>
+            <span class="coin-count">{{ systemData.coins }} 虚空币 (VC)</span>
           </div>
         </div>
       </div>
     </div>
     
     <!-- 核心数据概览 -->
-    <div class="overview-section grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-lg">
-      <div class="stat-card card cyber-border">
-        <div class="stat-icon-wrapper">
-          <div class="stat-icon">📊</div>
-        </div>
+    <div class="overview-grid mt-xl">
+      <div class="void-card stat-card">
+        <div class="stat-icon-wrapper">📊</div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.taskCompleted }}</div>
-          <div class="stat-label">完成任务</div>
+          <div class="stat-label">完成项目</div>
           <div class="stat-sub">率: {{ systemData.completionRate.toFixed(1) }}%</div>
         </div>
       </div>
-      <div class="stat-card card cyber-border">
-        <div class="stat-icon-wrapper">
-          <div class="stat-icon">🎯</div>
-        </div>
+      <div class="void-card stat-card">
+        <div class="stat-icon-wrapper">🎯</div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.taskInProgress }}</div>
-          <div class="stat-label">进行中</div>
-          <div class="stat-sub">待处理记录</div>
+          <div class="stat-label">正在执行</div>
+          <div class="stat-sub">待处理进程</div>
         </div>
       </div>
-      <div class="stat-card card cyber-border">
-        <div class="stat-icon-wrapper">
-          <div class="stat-icon">📈</div>
-        </div>
+      <div class="void-card stat-card">
+        <div class="stat-icon-wrapper">📈</div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.attributePoints }}</div>
-          <div class="stat-label">属性总值</div>
-          <div class="stat-sub">当前能力总点数</div>
+          <div class="stat-label">属性极值</div>
+          <div class="stat-sub">全维度能力指数</div>
         </div>
       </div>
-      <div class="stat-card card cyber-border">
-        <div class="stat-icon-wrapper">
-          <div class="stat-icon">⚡</div>
-        </div>
+      <div class="void-card stat-card">
+        <div class="stat-icon-wrapper">⚡</div>
         <div class="stat-content">
           <div class="stat-value">{{ systemData.totalExperience }}</div>
-          <div class="stat-label">总经验值</div>
-          <div class="stat-sub">历史累积</div>
+          <div class="stat-label">累积熵值</div>
+          <div class="stat-sub">历史总成就</div>
         </div>
       </div>
     </div>
     
     <!-- 属性面板 -->
-    <div class="attributes-section">
+    <div class="void-card attributes-section mt-xl">
       <div class="section-header">
-        <h3>🧠 个人属性</h3>
-        <el-button type="primary" size="small" @click="showAddAttributeDialog = true">
-          + 添加属性
+        <h3>🧠 虚空属性矩阵</h3>
+        <el-button type="primary" class="void-btn primary" @click="showAddAttributeDialog = true">
+          <el-icon><Plus /></el-icon> 注入新属性
         </el-button>
       </div>
       
-      <div class="attributes-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
-        <div v-for="(attr, index) in attributes" :key="index" class="attribute-card card">
+      <div class="attributes-grid mt-lg">
+        <div v-for="(attr, index) in attributes" :key="index" class="attribute-item">
           <div class="attribute-header">
-            <h4 class="attribute-name">{{ attr.attr_name }}</h4>
-            <div class="attribute-actions">
-              <el-button size="small" @click="editAttribute(attr)">编辑</el-button>
-              <el-button size="small" type="danger" @click="deleteAttribute(attr.attr_id)">删除</el-button>
+            <div class="attr-info">
+              <h4 class="attribute-name">{{ attr.attr_name }}</h4>
+              <div class="attribute-level">阶位 {{ Math.floor(attr.attr_value / 10) }}</div>
             </div>
-            <div class="attribute-level">Lv.{{ Math.floor(attr.attr_value / 10) }}</div>
+            <div class="attribute-actions">
+              <el-button link @click="editAttribute(attr)">编辑</el-button>
+              <el-button link type="danger" @click="deleteAttribute(attr.attr_id)">卸载</el-button>
+            </div>
           </div>
           
           <div class="attribute-progress">
-            <div class="progress-bar">
+            <div class="progress-track">
               <div class="progress-fill" :style="{ width: attr.attr_value + '%' }"></div>
             </div>
-            <div class="attribute-value">{{ attr.attr_value }}/{{ attr.max_value || 100 }}</div>
+            <div class="attribute-value">{{ attr.attr_value }} / {{ attr.max_value || 100 }}</div>
           </div>
           
-          <div class="attribute-description">{{ attr.description || '暂无描述' }}</div>
+          <div class="attribute-description">{{ attr.description || '暂无数据描述' }}</div>
         </div>
         
         <!-- 空状态 -->
@@ -120,82 +114,70 @@
     </div>
     
     <!-- 任务面板 -->
-    <div class="tasks-section">
-      <!-- 任务分类标签 -->
-      <div class="task-tabs-container mb-lg flex justify-between items-center">
-        <el-tabs v-model="activeTab" class="cyber-tabs">
-          <el-tab-pane label="🌌 主线任务" name="main"></el-tab-pane>
-          <el-tab-pane label="📅 每日目标" name="daily"></el-tab-pane>
-          <el-tab-pane label="🌿 支线挑战" name="side"></el-tab-pane>
-        </el-tabs>
-        <el-button size="small" type="primary" class="cyber-btn-sm" @click="openAddTaskWithTab">
-          <span class="btn-icon">📝</span> 生成任务
+    <div class="void-card tasks-section mt-xl">
+      <div class="section-header">
+        <h3>⚔️ 任务序列控制台</h3>
+        <el-button class="void-btn primary" @click="openAddTaskWithTab">
+          <el-icon><EditPen /></el-icon> 发布新指令
         </el-button>
       </div>
 
+      <!-- 任务分类标签 -->
+      <div class="task-tabs-container mb-lg">
+        <el-tabs v-model="activeTab" class="void-tabs">
+          <el-tab-pane label="🌌 核心主线" name="main"></el-tab-pane>
+          <el-tab-pane label="📅 轮回日常" name="daily"></el-tab-pane>
+          <el-tab-pane label="🌿 边境支线" name="side"></el-tab-pane>
+        </el-tabs>
+      </div>
+
       <!-- 改进后的长条形任务列表：混合显示独立任务与任务组 -->
-      <div class="tasks-list grid grid-cols-1 gap-lg">
+      <div class="tasks-list">
         <template v-for="item in displayItems" :key="item.type + '_' + (item.type === 'group' ? item.data.chain_id : item.data.task_id)">
           
           <!-- 任务组显示 -->
-          <div v-if="item.type === 'group'" class="task-group-container">
-            <div class="task-group-bar card" :class="{ 'is-completed': item.data.completed_tasks > 0 && item.data.completed_tasks === item.data.total_tasks }" @click="toggleGroup(item.data.chain_id)">
-              <!-- 背景进度条层 -->
-              <div class="group-bg-progress" :style="{ width: `${item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100)}%` }"></div>
+          <div v-if="item.type === 'group'" class="task-group-box mb-md">
+            <div class="group-bar" :class="{ 'completed': item.data.completed_tasks > 0 && item.data.completed_tasks === item.data.total_tasks }" @click="toggleGroup(item.data.chain_id)">
+              <div class="group-bg-fill" :style="{ width: `${item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100)}%` }"></div>
               
-              <div class="group-header flex justify-between items-center" style="position: relative; z-index: 1;">
-                <div class="flex items-center gap-md">
-                  <span class="group-icon" style="font-size: 1.4rem; filter: drop-shadow(0 0 5px rgba(0, 255, 204, 0.4));">🗂️</span>
-                  <div>
-                    <span class="group-title" style="display: block; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.5px;">{{ item.data.chain_name }}</span>
-                    <span class="group-subtitle text-muted text-sm" style="display: block; margin-top: 4px;">
-                      节点完成：<span class="text-primary">{{ item.data.completed_tasks }}</span> / {{ item.data.total_tasks }}  
-                      <span class="mx-xs">|</span> 
-                      完成度：{{ item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100) }}%
+              <div class="group-inner">
+                <div class="group-main">
+                  <div class="group-icon">🗂️</div>
+                  <div class="group-text">
+                    <span class="group-title">{{ item.data.chain_name }}</span>
+                    <span class="group-meta">
+                      同步进程: {{ item.data.completed_tasks }} / {{ item.data.total_tasks }}  
+                      <span class="divider">|</span> 
+                      完成度: {{ item.data.total_tasks === 0 ? 0 : Math.round((item.data.completed_tasks / item.data.total_tasks) * 100) }}%
                     </span>
                   </div>
                 </div>
-                <!-- 动作区留出足够的间距，并且按钮做成更精美的样式 -->
-                <div class="group-actions flex items-center gap-sm">
-                  <el-button size="small" type="primary" plain class="cyber-btn-sm" @click.stop="viewGroupDetail(item.data)">
-                    节点拓扑
-                  </el-button>
-                  <el-button size="small" type="danger" plain class="cyber-btn-sm" @click.stop="deleteTaskGroup(item.data.chain_id)">
-                    <span style="font-size: 14px;">删除🗑️</span>
-                  </el-button>
-                  <div class="toggle-icon-wrap ml-sm" style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,0.05);">
-                    <span class="toggle-icon" style="font-size: 12px; color: var(--color-primary-light);">{{ expandedGroups.has(item.data.chain_id) ? '▲' : '▼' }}</span>
-                  </div>
+                <div class="group-actions">
+                  <el-button link @click.stop="viewGroupDetail(item.data)">拓扑</el-button>
+                  <el-button link type="danger" @click.stop="deleteTaskGroup(item.data.chain_id)">移除</el-button>
+                  <el-icon class="toggle-arrow" :class="{ 'expanded': expandedGroups.has(item.data.chain_id) }"><ArrowDown /></el-icon>
                 </div>
               </div>
             </div>
             
-            <!-- 子任务列表 (展开时显示) -->
+            <!-- 子任务列表 -->
             <el-collapse-transition>
-              <div v-show="expandedGroups.has(item.data.chain_id)" class="subtasks-container">
-                <div v-for="task in item.subtasks" :key="task.task_id" class="subtask-item" :class="{ 'is-active': task.status === 'in_progress' || task.status === 'pending_evaluation', 'is-completed': task.status === 'completed' }" @click="viewTaskDetail(task.task_id)">
-                  <div class="subtask-left">
-                    <span class="subtask-diamond"></span>
-                    <span class="subtask-name" :class="{'line-through': task.status === 'completed'}">{{ task.task_name || task.title }}</span>
-                    <el-tag v-if="task.status === 'in_progress'" size="small" type="warning" effect="dark" class="ml-sm pulse-tag">当前进行</el-tag>
-                    <el-tag v-if="task.status === 'completed'" size="small" type="success" class="ml-sm">已完成</el-tag>
+              <div v-show="expandedGroups.has(item.data.chain_id)" class="group-children">
+                <div v-for="task in item.subtasks" :key="task.task_id" class="child-task-row" :class="task.status" @click="viewTaskDetail(task.task_id)">
+                  <div class="child-left">
+                    <span class="child-indicator"></span>
+                    <span class="child-name" :class="{'done': task.status === 'completed'}">{{ task.task_name || task.title }}</span>
+                    <el-tag v-if="task.status === 'in_progress'" size="small" type="warning" class="void-tag primary">执行中</el-tag>
                   </div>
                   
-                  <div class="subtask-right">
-                    <el-tooltip v-if="isTaskLocked(task)" content="前置节点未完成，系统已锁定" placement="top">
-                      <el-button size="small" type="info" plain disabled>
-                        🔒 锁定
-                      </el-button>
+                  <div class="child-right">
+                    <el-tooltip v-if="isTaskLocked(task)" content="锁定" placement="top">
+                      <el-button size="small" disabled plain>🔒</el-button>
                     </el-tooltip>
                     <template v-else>
-                      <el-button v-if="task.status === 'pending'" size="small" type="primary" plain @click.stop="startTask(task.task_id)">
-                        开始
-                      </el-button>
-                      <el-button v-if="task.status === 'in_progress'" type="success" size="small" @click.stop="completeTask(task.task_id)">
-                        提交
-                      </el-button>
+                      <el-button v-if="task.status === 'pending'" size="small" class="void-btn secondary" @click.stop="startTask(task.task_id)">激活</el-button>
+                      <el-button v-if="task.status === 'in_progress'" type="success" size="small" class="void-btn success" @click.stop="completeTask(task.task_id)">同步</el-button>
                     </template>
-                    <el-button size="small" link type="danger" @click.stop="deleteTask(task.task_id)"><span style="font-size: 14px;">🗑️</span></el-button>
                   </div>
                 </div>
               </div>
@@ -203,75 +185,41 @@
           </div>
 
           <!-- 独立任务显示 -->
-          <div v-if="item.type === 'task'" class="task-card standalone-card card" :class="{ 'is-optional': item.data.is_optional }">
-            <div class="task-header">
-              <h4 class="task-title" @click="viewTaskDetail(item.data.task_id)">
-                {{ item.data.task_name || item.data.title }}
-                <el-tag v-if="item.data.is_optional || item.data.task_type === 'side'" size="small" type="info" effect="plain" class="ml-sm">支线</el-tag>
-                <el-tag v-if="item.data.task_type === 'daily' || item.data.is_daily" size="small" type="warning" effect="dark" class="ml-sm">每日</el-tag>
-              </h4>
-              <div class="task-priority" :class="item.data.priority || 'medium'">
-                {{ (item.data.priority || 'medium') === 'easy' ? '特一级' : (item.data.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
-              </div>
-            </div>
-            
-            <div class="task-body flex-1">
-              <div class="task-info">
-                <span class="info-item" title="预计时长">
-                  <span class="info-icon">⏱️</span>
-                  {{ item.data.estimated_time ? item.data.estimated_time + ' 分' : '未设置' }}
-                </span>
-                <span class="info-item" title="关联属性">
-                  <span class="info-icon">🎯</span>
-                  {{ getRelatedAttrsText(item.data.related_attrs) }}
-                </span>
-                <span class="info-item reward" title="经验/系统币奖励">
-                  <span class="info-icon">💰</span>
-                  +{{ item.data.reward_coins || 0 }}
-                  <span class="sep">|</span>
-                  <span class="info-icon">📊</span>
-                  +{{ item.data.attribute_points || 0 }}
-                </span>
-                <span class="info-item type-tag">
-                  <span class="type-icon">{{ item.data.completion_type === 'ai_eval' ? '🤖 AI' : '✅ 简单' }}</span>
-                </span>
-                <div v-if="item.data.prerequisites && item.data.prerequisites.length > 0" class="info-item prereqs-tag" title="前置依赖">
-                  <span class="type-icon">⛓️ 前置: {{ getPrerequisitesNames(item.data.prerequisites) }}</span>
+          <div v-if="item.type === 'task'" class="task-row void-card mb-md" :class="item.data.status">
+            <div class="task-info-main" @click="viewTaskDetail(item.data.task_id)">
+              <div class="task-title-line">
+                <h4 class="task-name">{{ item.data.task_name || item.data.title }}</h4>
+                <div class="task-tags">
+                  <el-tag v-if="item.data.is_optional" size="small" class="void-tag">支线</el-tag>
+                  <el-tag v-if="item.data.is_daily" size="small" class="void-tag primary">每日</el-tag>
                 </div>
               </div>
-              
-              <div class="task-progress-box" v-if="false">
-                <!-- Keep styling footprint but hide the unused explicit progress tracks for now, as UI only uses whole-task completion -->
+              <div class="task-meta-line">
+                <span class="meta-item"><el-icon><Timer /></el-icon> {{ item.data.estimated_time }}m</span>
+                <span class="meta-item"><el-icon><Coin /></el-icon> +{{ item.data.reward_coins }}</span>
+                <span class="meta-item"><el-icon><DataAnalysis /></el-icon> +{{ item.data.attribute_points }}</span>
               </div>
             </div>
             
-            <div class="task-footer">
-              <div class="status-wrap">
-                <el-tag :type="getTaskStatusType(item.data.status)" size="small">
-                  {{ getTaskStatusText(item.data.status) }}
-                </el-tag>
-              </div>
-              <div class="task-actions">
-                <el-tooltip v-if="isTaskLocked(item.data)" content="前置节点未完成，系统已锁定" placement="top">
-                  <el-button size="small" type="info" plain disabled>
-                     🔒 锁定
-                  </el-button>
+            <div class="task-ctrl">
+              <el-tag :type="getTaskStatusType(item.data.status)" size="small" class="void-tag">
+                {{ getTaskStatusText(item.data.status) }}
+              </el-tag>
+              
+              <div class="task-btns">
+                <el-tooltip v-if="isTaskLocked(item.data)" content="锁定">
+                  <el-button size="small" disabled circle><el-icon><Lock /></el-icon></el-button>
                 </el-tooltip>
                 <template v-else>
-                  <el-button v-if="item.data.status === 'pending'" size="small" type="primary" plain @click="startTask(item.data.task_id)">
-                    开始
-                  </el-button>
-                  <el-button v-if="item.data.status === 'in_progress'" type="success" size="small" @click="completeTask(item.data.task_id)">
-                    {{ item.data.completion_type === 'ai_eval' ? '提交评判' : '完成' }}
+                  <el-button v-if="item.data.status === 'pending'" size="small" class="void-btn primary" @click="startTask(item.data.task_id)">开始</el-button>
+                  <el-button v-if="item.data.status === 'in_progress'" size="small" type="success" class="void-btn primary" @click="completeTask(item.data.task_id)">
+                    {{ item.data.completion_type === 'ai_eval' ? '提交' : '完成' }}
                   </el-button>
                 </template>
-
-                <el-button size="small" link @click="viewTaskDetail(item.data.task_id)">详情</el-button>
-                <el-button size="small" link type="danger" @click="deleteTask(item.data.task_id)">删除</el-button>
+                <el-button size="small" link type="danger" @click="deleteTask(item.data.task_id)"><el-icon><Delete /></el-icon></el-button>
               </div>
             </div>
           </div>
-          
         </template>
         
         <!-- 空状态 -->
@@ -286,199 +234,122 @@
     </div>
     
     <!-- 资源商店 -->
-    <div class="store-section">
+    <div class="void-card store-section mt-xl">
       <div class="section-header">
-        <h3>🛒 资源商店</h3>
-        <div class="store-balance">
-          余额: {{ systemData.coins }} 币
+        <h3>🛒 虚空贸易站</h3>
+        <div class="store-balance void-tag primary">
+          能量储备: {{ systemData.coins }} VC
         </div>
       </div>
       
-      <div class="store-items grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
-        <div v-for="(item, index) in shopItems" :key="index" class="store-item card">
+      <div class="store-grid">
+        <div v-for="(item, index) in shopItems" :key="index" class="void-card item-card">
           <div class="item-icon">{{ item.icon || '📦' }}</div>
           <div class="item-info">
-            <h4 class="item-name">{{ item.name || '未命名物品' }}</h4>
-            <div class="item-description">{{ item.description || '暂无描述' }}</div>
+            <h4 class="item-name">{{ item.name }}</h4>
+            <div class="item-desc">{{ item.description }}</div>
             <div class="item-price">
-              <span class="coin-icon">💰</span>
-              {{ item.price || 0 }}
+              <span class="price-val">💰 {{ item.price || 0 }}</span>
             </div>
           </div>
           <el-button 
+            class="void-btn primary"
             :disabled="systemData.coins < (item.price || 0) || (item.quantity || 0) <= 0"
             size="small" 
             @click="purchaseItem(index)"
           >
-            {{ systemData.coins < (item.price || 0) ? '余额不足' : (item.quantity || 0) <= 0 ? '已售罄' : '兑换' }}
+            {{ systemData.coins < (item.price || 0) ? '余额不足' : (item.quantity || 0) <= 0 ? '售罄' : '兑换' }}
           </el-button>
         </div>
       </div>
     </div>
     
     <!-- 系统币统计 -->
-    <div class="coins-section">
+    <div class="void-card coins-section mt-xl">
       <div class="section-header">
-        <h3>💰 系统币统计</h3>
+        <h3>💰 资源收支报表</h3>
       </div>
       
-      <div class="coins-overview">
-        <div class="stat-card">
-          <div class="stat-icon">📊</div>
-          <div class="stat-content">
-            <div class="stat-value">{{ coinStats?.total_coins || 0 }}</div>
-            <div class="stat-label">总获取</div>
-          </div>
+      <div class="coins-summary">
+        <div class="summary-item">
+          <span class="label">累计获取</span>
+          <span class="value">{{ coinStats?.total_coins || 0 }}</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon">💸</div>
-          <div class="stat-content">
-            <div class="stat-value">{{ coinStats?.total_spent || 0 }}</div>
-            <div class="stat-label">总支出</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📈</div>
-          <div class="stat-content">
-            <div class="stat-value">{{ coinStats?.daily_average || 0 }}</div>
-            <div class="stat-label">日均获取</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">🏆</div>
-          <div class="stat-content">
-            <div class="stat-value">{{ coinStats?.highest_balance || 0 }}</div>
-            <div class="stat-label">历史最高</div>
-          </div>
+        <div class="summary-item">
+          <span class="label">项目分红</span>
+          <span class="value">{{ coinStats?.daily_average || 0 }}</span>
         </div>
       </div>
       
-      <!-- 系统币历史记录 -->
-      <div class="coins-history">
-        <h4>📋 近期收支记录</h4>
-        <el-table v-if="coinHistory.length > 0" :data="coinHistory.slice(0, 5)" style="width: 100%">
-          <el-table-column prop="transaction_type" label="类型" width="100"></el-table-column>
-          <el-table-column prop="amount" label="金额" width="100"></el-table-column>
-          <el-table-column prop="description" label="描述"></el-table-column>
-          <el-table-column prop="created_at" label="时间" width="180"></el-table-column>
+      <div class="coins-history mt-lg">
+        <h4 class="history-title">数据同步历史</h4>
+        <el-table :data="coinHistory.slice(0, 5)" class="void-table">
+          <el-table-column prop="transaction_type" label="类别" width="100"></el-table-column>
+          <el-table-column prop="amount" label="分值" width="100"></el-table-column>
+          <el-table-column prop="description" label="描述项"></el-table-column>
         </el-table>
-        <div v-else class="empty-history">
-          <div class="empty-icon">📝</div>
-          <p>暂无收支记录</p>
-        </div>
       </div>
     </div>
     
-    <!-- 添加属性对话框 -->
-    <el-dialog v-model="showAddAttributeDialog" title="添加新属性" width="500px">
-      <el-form :model="newAttribute" label-width="80px">
-        <el-form-item label="属性名称">
-          <el-input v-model="newAttribute.name" placeholder="例如：高数熟练度"></el-input>
+    <!-- 属性与任务指令对话框 -->
+    <el-dialog v-model="showAddAttributeDialog" title="注入新属性" width="500px" class="void-dialog-themed">
+      <el-form :model="newAttribute" label-width="100px" class="mt-md">
+        <el-form-item label="核心名称">
+          <el-input v-model="newAttribute.name" class="void-input" placeholder="例如：高数逻辑能力"></el-input>
         </el-form-item>
-        <el-form-item label="初始值">
-          <el-slider v-model="newAttribute.value" :min="0" :max="100" :step="1"></el-slider>
+        <el-form-item label="初始量级">
+          <el-slider v-model="newAttribute.value"></el-slider>
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="newAttribute.description" type="textarea" placeholder="简要描述此属性"></el-input>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showAddAttributeDialog = false">取消</el-button>
-        <el-button type="primary" @click="addAttribute">添加</el-button>
-      </template>
-    </el-dialog>
-    
-    <!-- 编辑属性对话框 -->
-    <el-dialog v-model="showEditAttributeDialog" title="编辑属性" width="500px">
-      <el-form :model="editingAttribute" label-width="80px">
-        <el-form-item label="属性名称">
-          <el-input v-model="editingAttribute.attr_name" placeholder="例如：高数熟练度"></el-input>
-        </el-form-item>
-        <el-form-item label="当前值">
-          <el-slider v-model="editingAttribute.attr_value" :min="0" :max="editingAttribute.max_value" :step="1"></el-slider>
-        </el-form-item>
-        <el-form-item label="最大值">
-          <el-input-number v-model="editingAttribute.max_value" :min="10" :max="1000"></el-input-number>
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="editingAttribute.description" type="textarea" placeholder="简要描述此属性"></el-input>
+        <el-form-item label="维度描述">
+          <el-input v-model="newAttribute.description" type="textarea" class="void-input" placeholder="输入属性定义..."></el-input>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showEditAttributeDialog = false">取消</el-button>
-        <el-button type="primary" @click="updateAttribute">保存</el-button>
+        <div class="flex justify-end gap-sm">
+          <el-button class="void-btn secondary" @click="showAddAttributeDialog = false">取消</el-button>
+          <el-button class="void-btn primary" @click="addAttribute">注入</el-button>
+        </div>
       </template>
     </el-dialog>
     
-    <el-drawer v-model="showTaskDetailDialog" :title="currentTask ? currentTask.task_name : '任务详情'" size="500px" direction="rtl" class="cyber-drawer" append-to-body>
-      <div v-if="currentTask" class="task-detail">
-        <div class="task-header-detail mb-md flex justify-between">
-          <el-tag :type="getTaskStatusType(currentTask.status)" size="large" effect="dark">{{ getTaskStatusText(currentTask.status) }}</el-tag>
-          <div class="task-priority" :class="currentTask.priority || 'medium'">
-            {{ (currentTask.priority || 'medium') === 'easy' ? '特一级' : (currentTask.priority || 'medium') === 'medium' ? '特二级' : '特三级' }}
+    <el-drawer v-model="showTaskDetailDialog" :title="currentTask ? currentTask.task_name : '任务详情'" size="500px" direction="rtl" class="void-drawer-themed" append-to-body>
+      <div v-if="currentTask" class="task-detail-content">
+        <div class="detail-header flex justify-between items-center mb-lg">
+          <el-tag :type="getTaskStatusType(currentTask.status)" class="void-tag primary" size="large">{{ getTaskStatusText(currentTask.status) }}</el-tag>
+          <div class="priority-label" :class="currentTask.priority">{{ getPriorityText(currentTask.priority) }}</div>
+        </div>
+
+        <div class="detail-void-card void-card mb-lg">
+          <div class="detail-grid">
+            <div class="det-item">
+              <span class="det-label">周期/预计:</span>
+              <span class="det-value">{{ currentTask.estimated_time || 0 }}m</span>
+            </div>
+            <div class="det-item">
+              <span class="det-label">同步点数:</span>
+              <span class="det-value">+{{ currentTask.reward_coins }} VC | +{{ currentTask.attribute_points }} AP</span>
+            </div>
+          </div>
+          <div class="det-full mt-md">
+            <span class="det-label">关联矩阵:</span>
+            <span class="det-value">{{ getRelatedAttrsText(currentTask.related_attrs) }}</span>
           </div>
         </div>
 
-        <!-- 任务组详情展示 -->
-        <div v-if="currentChainTasks.length > 0" class="chain-stepper-container">
-          <div class="section-title">🔗 任务组进度：{{ getChainName(currentTask.chain_id) }}</div>
-          <div class="chain-steps">
-            <div v-for="step in currentChainTasks" :key="step.task_id" 
-                 class="step-item" 
-                 :class="{ 'active': step.task_id === currentTask.task_id, 'completed': step.status === 'completed' }">
-              <div class="step-dot"></div>
-              <div class="step-info">
-                <div class="step-name">{{ step.task_name }}</div>
-                <div class="step-status">{{ getTaskStatusText(step.status) }}</div>
-              </div>
-            </div>
-          </div>
+        <div class="detail-desc mb-xl">
+          <div class="section-tag mb-sm">指令详情</div>
+          <p class="desc-text">{{ currentTask.description || 'VOID_DATA_MISSING' }}</p>
         </div>
 
-        <div class="detail-section">
-          <div class="detail-grid grid grid-cols-2 gap-sm">
-            <div class="detail-item">
-              <span class="detail-label">优先级：</span>
-              <span :class="'priority-' + currentTask.priority">{{ getPriorityText(currentTask.priority) }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="detail-label">预计时长：</span>
-              <span>{{ currentTask.estimated_time ? currentTask.estimated_time + ' 分钟' : '未设置' }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="detail-label">系统币奖励：</span>
-              <span class="reward-badge coin">+{{ currentTask.reward_coins || 0 }} 💰</span>
-            </div>
-            <div class="detail-item">
-              <span class="detail-label">属性奖励：</span>
-              <span class="reward-badge attr">+{{ currentTask.attribute_points || 0 }} 📊</span>
-            </div>
-          </div>
-          <div class="detail-item full-width">
-            <span class="detail-label">关联属性：</span>
-            <span>{{ getRelatedAttrsText(currentTask.related_attrs) }}</span>
-          </div>
-          <div class="detail-item full-width description">
-            <span class="detail-label">详细描述：</span>
-            <p>{{ currentTask.description || '暂无描述' }}</p>
-          </div>
-        </div>
-        <!-- AI/证明内容保持不变 -->
-        <div v-if="currentTask.proof_data?.content" class="proof-section">
-          <h5>任务证明：</h5>
-          <div class="proof-content">{{ currentTask.proof_data.content }}</div>
-        </div>
-        <div v-if="currentTask.ai_suggestion" class="ai-suggestion-section">
-          <h5>🤖 AI 虚空评定：</h5>
-          <div class="ai-eval-result" :class="{ 'passed': currentTask.ai_suggestion.status === 'pass' }">
-            <div class="ai-feedback">{{ currentTask.ai_suggestion.feedback }}</div>
-          </div>
+        <div v-if="currentTask.ai_suggestion" class="void-think-box mt-lg">
+          <div class="think-header mb-sm">🤖 虚空评定反馈</div>
+          <div class="think-content">{{ currentTask.ai_suggestion.feedback }}</div>
         </div>
       </div>
     </el-drawer>
     
     <!-- 创建任务对话框 -->
-    <el-dialog v-model="showAddTaskDialog" :title="isChainMode ? '新阶段：虚空任务组' : '手动指令：创建记录'" width="650px" class="cyber-dialog" append-to-body>
+    <el-dialog v-model="showAddTaskDialog" :title="isChainMode ? '新阶段：虚空任务组' : '手动指令：创建记录'" width="650px" class="void-dialog" append-to-body>
       <div class="mode-toggle">
         <el-radio-group v-model="isChainMode" size="large" @change="handleModeChange">
           <el-radio-button :label="false">单一任务</el-radio-button>
@@ -614,7 +485,7 @@
 
 
   <!-- 任务组详情与拓扑图抽屉 -->
-  <el-drawer v-model="showGroupDetailDialog" :title="'🗂️ 阶段任务集：' + (currentGroup ? currentGroup.chain_name : '')" size="600px" direction="rtl" class="cyber-drawer" append-to-body>
+  <el-drawer v-model="showGroupDetailDialog" :title="'🗂️ 阶段任务集：' + (currentGroup ? currentGroup.chain_name : '')" size="600px" direction="rtl" class="void-drawer" append-to-body>
     <div v-if="currentGroup" class="task-detail">
       <div class="task-header-detail flex justify-between items-center mb-lg">
         <div>
@@ -1453,707 +1324,237 @@ onMounted(async () => {
 
 <style scoped>
 .home-container {
-  max-width: 100%;
+  padding: var(--spacing-lg);
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 0;
 }
 
-.home-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-color);
-  flex-direction: column;
-  gap: 20px;
-  margin-bottom: 40px;
-  padding-bottom: 25px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.header-main {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
-.cyber-btn {
-  background: var(--grad-cyber) !important;
-  border: none !important;
-  font-weight: bold !important;
-  color: #000 !important;
-  box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
-  transition: all 0.3s;
-}
-
-.cyber-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
-}
-
-.header-main h2 {
-  font-size: 2.2em;
-  margin: 0;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-}
-
-.home-header h2 .glitch {
-  color: var(--color-primary-light);
-  text-shadow: var(--shadow-glow);
+/* Header & Meta */
+.settings-header {
+  margin-bottom: var(--spacing-xl);
+  padding: var(--spacing-xl);
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
   position: relative;
-  display: inline-block;
+  overflow: hidden;
 }
 
-.home-header h2 .dashboard {
-  color: var(--color-text-muted);
-  font-weight: 400;
-  margin-left: 5px;
+.glitch {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -1px;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
 }
 
 .user-level-badge {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  background: var(--color-bg-card);
-  padding: 8px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-cyber);
-  box-shadow: var(--shadow-cyber);
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
 }
 
 .level-label {
-  font-size: 0.75em;
+  font-size: 0.7rem;
   font-weight: 800;
-  color: var(--color-text-muted);
-  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
 .level-value {
-  font-size: 1.8em;
-  font-weight: 900;
-  color: var(--color-primary-light);
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--color-primary);
   font-family: var(--font-family-mono);
   line-height: 1;
 }
 
 .system-meta {
   display: flex;
-  justify-content: space-between;
+  gap: var(--spacing-xl);
   align-items: flex-end;
-  gap: 30px;
+  flex-wrap: wrap;
 }
 
 .exp-bar-container {
   flex: 1;
-  max-width: 600px;
+  min-width: 300px;
 }
 
 .exp-info {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8em;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  margin-bottom: 6px;
-  letter-spacing: 0.5px;
+  font-size: 0.8rem;
+  font-family: var(--font-family-mono);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-sm);
 }
 
 .exp-track {
-  height: 6px;
-  background: var(--color-bg-tertiary);
+  height: 8px;
+  background: var(--bg-tertiary);
   border-radius: var(--radius-full);
   overflow: hidden;
-  border: 1px solid var(--color-border-light);
 }
 
 .exp-fill {
   height: 100%;
-  background: var(--grad-cyber);
-  box-shadow: 0 0 10px var(--glow-primary);
+  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-light));
   transition: width var(--transition-slow);
 }
 
 .system-status {
   display: flex;
+  gap: var(--spacing-lg);
   align-items: center;
-  gap: 20px;
-  background: var(--color-bg-glass);
-  backdrop-filter: blur(10px);
-  padding: 6px 16px;
+  padding: 8px 20px;
+  background: var(--bg-secondary);
   border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75em;
-  font-weight: 700;
-  letter-spacing: 1px;
+  border: 1px solid var(--border-color);
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background-color: var(--color-success);
-  box-shadow: 0 0 8px var(--color-success);
-  animation: pulse 2s infinite;
+  background: var(--color-success);
+  box-shadow: 0 0 10px var(--color-success);
 }
 
-.system-coins {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  font-size: 11px;
-  color: var(--color-warning);
-}
-
-.prereqs-tag {
-  background: rgba(230, 162, 60, 0.1);
-  border: 1px solid rgba(230, 162, 60, 0.2);
-  display: block;
-  margin-top: 5px;
-  width: 100%;
-}
-
-.prereqs-tag .type-icon {
-  color: var(--color-warning);
-  font-size: 11px;
-}
-
-/* 概览统计卡片 */
-.overview-section {
+/* Stats */
+.overview-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
-  margin-bottom: 40px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-lg);
 }
 
 .stat-card {
-  padding: 24px;
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  background: var(--grad-surface);
-  border: 1px solid var(--color-border);
-  transition: all var(--transition-normal);
-}
-
-.stat-card:hover {
-  transform: translateY(-4px);
-  border-color: var(--color-border-cyber);
-  box-shadow: var(--shadow-cyber);
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
 }
 
 .stat-icon-wrapper {
-  width: 48px;
-  height: 48px;
+  font-size: 2.2rem;
+  width: 64px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-md);
-  font-size: 1.5em;
-  border: 1px solid var(--color-border-light);
-}
-
-.stat-content {
-  flex: 1;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  color: var(--color-primary);
 }
 
 .stat-value {
-  font-size: 2.2em;
+  font-size: 2.2rem;
   font-weight: 800;
   line-height: 1;
-  color: var(--color-text-primary);
-  margin-bottom: 4px;
   font-family: var(--font-family-mono);
 }
 
-.stat-label {
-  font-size: 0.85em;
-  color: var(--color-text-secondary);
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-
-.stat-sub {
-  font-size: 0.7em;
-  color: var(--color-text-muted);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-/* 通用区块样式 */
-.attributes-section,
-.tasks-section,
-.store-section,
-.coins-section {
-  margin-bottom: 40px;
-  background: var(--color-bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: 30px;
-  position: relative;
-  overflow: hidden;
-}
-
-.attributes-section::before,
-.tasks-section::before,
-.store-section::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  background: var(--grad-cyber);
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-}
-
-.section-header h3 {
-  font-size: 1.6em;
-  font-weight: 800;
-  color: var(--color-text-primary);
-  letter-spacing: -0.5px;
-}
-
-/* 属性卡片 */
+/* Attributes */
 .attributes-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--spacing-xl);
 }
 
-.attribute-card {
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  padding: 24px;
-  transition: all var(--transition-normal);
+.attribute-item {
+  padding: var(--spacing-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
 }
 
-.attribute-card:hover {
-  transform: translateY(-4px);
-  border-color: var(--color-border-cyber);
-  background: var(--color-bg-secondary);
-}
-
-.attribute-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.attribute-name {
-  font-size: 1.1em;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.attribute-level {
-  font-size: 0.8em;
-  font-weight: 800;
-  color: var(--color-primary-light);
-  background: var(--color-bg-primary);
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-cyber);
-}
-
-.attribute-progress {
-  margin-bottom: 16px;
-}
-
-.progress-bar {
-  height: 8px;
-  background: var(--color-bg-primary);
-  border-radius: var(--radius-full);
-  margin-bottom: 8px;
+/* Tasks */
+.task-group-box {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  background: var(--bg-secondary);
 }
 
-.progress-fill {
-  height: 100%;
-  background: var(--grad-cyber);
-  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+.group-bar {
+  position: relative;
+  padding: var(--spacing-lg);
+  cursor: pointer;
 }
 
-.attribute-value {
-  font-size: 0.8em;
-  color: var(--color-text-secondary);
-  font-weight: 600;
-  font-family: var(--font-family-mono);
+.group-bg-fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  background: var(--color-primary);
+  opacity: 0.08;
+  transition: width var(--transition-slow);
 }
 
-.attribute-description {
-  font-size: 0.85em;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-}
-
-/* 任务卡片 */
-.tasks-list {
+.group-children {
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--spacing-sm);
+  background: var(--bg-tertiary);
 }
 
-.task-card {
+.child-task-row {
   display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-light);
+  padding: var(--spacing-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 16px 24px;
-  transition: all var(--transition-normal);
+}
+
+.task-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-lg) var(--spacing-xl);
   border-left: 4px solid var(--color-primary);
 }
 
-.task-card:hover {
-  transform: translateX(4px);
-  border-color: var(--color-border-cyber);
-  background: var(--color-bg-secondary);
-}
-
-.task-header {
-  flex: 0 0 25%;
-  min-width: 250px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  margin-bottom: 0;
-  gap: 8px;
-}
-
-.task-title {
-  font-size: 1.15em;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.task-priority {
-  font-size: 0.7em;
-  font-weight: 800;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-}
-
-.task-priority.easy { color: var(--color-success); background: rgba(16, 185, 129, 0.1); }
-.task-priority.medium { color: var(--color-warning); background: rgba(245, 158, 11, 0.1); }
-.task-priority.hard { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
-
-.task-info {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
-}
-
-.task-progress-box {
-  width: 100%;
-}
-
-.task-footer {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.info-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.85em;
-  color: var(--color-text-secondary);
-  font-weight: 600;
-}
-
-.task-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.task-status {
-  font-size: 0.75em;
-  font-weight: 700;
-  color: var(--color-text-muted);
-}
-
-.task-status.in_progress { color: var(--color-primary-light); }
-.task-status.completed { color: var(--color-success); }
-
-/* 商店部分 */
-.store-balance {
-  color: var(--accent-primary);
-  font-weight: 600;
-}
-
-.store-items {
+/* Store */
+.store-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 20px;
+  gap: var(--spacing-xl);
 }
 
-.store-item {
-  background: rgba(42, 65, 140, 0.5);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 20px;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  transition: all var(--transition-fast) ease;
-}
-
-.store-item:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(0, 255, 204, 0.15);
+.item-card {
+  text-align: center;
+  padding: var(--spacing-xl);
 }
 
 .item-icon {
-  font-size: 2.5em;
+  font-size: 3.5rem;
+  margin-bottom: var(--spacing-lg);
 }
 
-.item-info {
-  flex: 1;
-}
-
-.item-name {
-  font-size: 1.1em;
-  margin: 0 0 5px 0;
-}
-
-.item-description {
-  color: var(--text-secondary);
-  font-size: 0.9em;
-  margin-bottom: 8px;
-}
-
-.item-price {
+/* Financials */
+.coins-summary {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  font-weight: 600;
-  color: var(--accent-primary);
+  gap: var(--spacing-xl);
 }
 
-/* 任务操作按钮样式 */
-.task-actions {
-  display: flex;
-  gap: 10px;
-  position: relative;
-  z-index: 1;
+.summary-item .value {
+  font-size: 2.2rem;
+  font-weight: 800;
+  font-family: var(--font-family-mono);
 }
 
-.task-btn {
-  padding: 0.6rem 1.2rem;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: 0.95em;
-  cursor: pointer;
-  transition: all var(--transition-normal) ease;
-  font-family: var(--main-font);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  position: relative;
-  overflow: hidden;
-}
-
-.task-btn::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left var(--transition-normal) ease;
-}
-
-.task-btn:hover::before {
-  left: 100%;
-}
-
-.task-btn-primary {
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  color: var(--bg-primary);
-  box-shadow: 0 0 15px var(--accent-glow);
-}
-
-.task-btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 20px var(--accent-primary);
-}
-
-.task-btn-secondary {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-.task-btn-secondary:hover {
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-  background: rgba(0, 255, 204, 0.05);
-  transform: translateY(-1px);
-}
-
-.task-btn-danger {
-  background: rgba(255, 51, 102, 0.1);
-  border: 1px solid var(--error-color);
-  color: var(--error-color);
-}
-
-.task-btn-danger:hover {
-  background: rgba(255, 51, 102, 0.2);
-  transform: translateY(-1px);
-  box-shadow: 0 0 15px rgba(255, 51, 102, 0.3);
-}
-
-/* 空状态 */
-.empty-attributes,
-.empty-tasks {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 40px;
-  text-align: center;
-  color: var(--text-secondary);
-  background: rgba(10, 13, 32, 0.3);
-  backdrop-filter: var(--blur-sm);
-  border: 2px dashed var(--border-color);
-  border-radius: var(--radius-lg);
-  transition: all var(--transition-normal) ease;
-}
-
-.empty-attributes:hover,
-.empty-tasks:hover {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 30px rgba(0, 255, 204, 0.1);
-  background: rgba(10, 13, 32, 0.5);
-}
-
-.empty-icon {
-  font-size: 4em;
-  margin-bottom: 20px;
-  opacity: 0.7;
-  animation: float 3s ease-in-out infinite;
-}
-
-/* 动画 */
-@keyframes pulse {
-  0% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 10px var(--accent-primary);
-  }
-  100% {
-    opacity: 0.6;
-  }
-}
-
-/* 响应式 */
+/* Responsive */
 @media (max-width: 768px) {
-  .home-header {
-    flex-direction: column;
-    gap: 15px;
-    text-align: center;
-  }
-  
-  .overview-section {
-    grid-template-columns: 1fr;
-  }
-  
-  .section-header {
-    flex-direction: column;
-    gap: 15px;
-    align-items: stretch;
-  }
-  
-  .attributes-grid,
-  .store-items {
-    grid-template-columns: 1fr;
-  }
-  
-  .task-info {
-    gap: 10px;
-  }
-  
-  .task-footer {
-    flex-direction: column;
-    gap: 10px;
-    align-items: stretch;
-  }
-  
-  .store-item {
-    flex-direction: column;
-    text-align: center;
-  }
-}
-
-/* ==================== 任务详情对话框 ==================== */
-.task-detail h4 {
-  font-size: 1.3em;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin: 0 0 20px 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.detail-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.detail-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-light);
-}
-
-.detail-item.description {
-  align-items: flex-start;
-}
 
 .detail-label {
   font-size: 0.8em;
@@ -2200,7 +1601,7 @@ onMounted(async () => {
   padding: 16px;
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-cyber);
+  border: 1px solid var(--border-color);
 }
 
 .proof-section h5 {
@@ -2698,4 +2099,5 @@ onMounted(async () => {
   box-shadow: 0 0 10px var(--color-warning);
 }
 
+}
 </style>

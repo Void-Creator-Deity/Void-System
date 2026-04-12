@@ -242,9 +242,19 @@ class Database:
             original_size INTEGER,
             upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
             expires_at DATETIME,  -- 24小时后过期
-            is_processed BOOLEAN DEFAULT FALSE
+            is_processed BOOLEAN DEFAULT FALSE,
+            storage_path TEXT,
+            mime_type TEXT
         )
         ''')
+        try:
+            cursor.execute("ALTER TABLE user_session_files ADD COLUMN storage_path TEXT")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE user_session_files ADD COLUMN mime_type TEXT")
+        except Exception:
+            pass
 
         # 聊天分组表
         cursor.execute('''
@@ -1834,7 +1844,10 @@ class Database:
         session_id: str,
         file_name: str,
         content_preview: str,
-        original_size: int
+        original_size: int,
+        file_id: Optional[str] = None,
+        storage_path: Optional[str] = None,
+        mime_type: Optional[str] = None,
     ) -> str:
         """
         添加用户会话临时文件
@@ -1844,24 +1857,27 @@ class Database:
             file_name: 文件名
             content_preview: 内容预览（前500字符）
             original_size: 原始文件大小
+            file_id: 可选预生成 ID（用于先落盘再入库）
+            storage_path: 可选本地持久化路径（图片等多媒体）
+            mime_type: 可选 MIME 类型
         Returns:
             新创建的文件ID
         """
         conn = self.get_connection()
         cursor = conn.cursor()
-        file_id = str(uuid.uuid4())
+        fid = file_id or str(uuid.uuid4())
         upload_time = datetime.now()
         expires_at = upload_time + timedelta(days=1)  # 24小时后过期
         try:
             cursor.execute(
                 """INSERT INTO user_session_files 
-                   (id, user_id, session_id, file_name, content_preview, original_size, upload_time, expires_at) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (file_id, user_id, session_id, file_name, content_preview, original_size, 
-                 upload_time.isoformat(), expires_at.isoformat())
+                   (id, user_id, session_id, file_name, content_preview, original_size, upload_time, expires_at, storage_path, mime_type) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (fid, user_id, session_id, file_name, content_preview, original_size,
+                 upload_time.isoformat(), expires_at.isoformat(), storage_path, mime_type)
             )
             conn.commit()
-            return file_id
+            return fid
         finally:
             conn.close()
     
@@ -1903,6 +1919,71 @@ class Database:
             )
             conn.commit()
             return cursor.rowcount
+        finally:
+            conn.close()
+
+    def list_expired_session_file_storage_paths(self) -> List[str]:
+        """返回已过期记录的 storage_path（用于在删除行前清理磁盘）。"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT storage_path FROM user_session_files WHERE expires_at <= ? AND storage_path IS NOT NULL",
+                (datetime.now().isoformat(),)
+            )
+            return [row[0] for row in cursor.fetchall() if row[0]]
+        finally:
+            conn.close()
+
+    def user_owns_chat_session(self, session_id: str, user_id: str) -> bool:
+        """当前用户是否拥有该聊天会话。"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT 1 FROM chat_sessions WHERE session_id = ? AND user_id = ? LIMIT 1",
+                (session_id, user_id)
+            )
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()
+
+    def get_user_session_file(self, user_id: str, file_id: str) -> Optional[Dict[str, Any]]:
+        """按 ID 获取单条会话临时文件记录。"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT * FROM user_session_files 
+                   WHERE id = ? AND user_id = ? AND expires_at > ?""",
+                (file_id, user_id, datetime.now().isoformat())
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def delete_user_session_file(self, user_id: str, file_id: str) -> Optional[Dict[str, Any]]:
+        """
+        删除会话临时文件记录，返回被删行（含 storage_path）以便删磁盘。
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM user_session_files WHERE id = ? AND user_id = ?",
+                (file_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            prev = dict(row)
+            cursor.execute(
+                "DELETE FROM user_session_files WHERE id = ? AND user_id = ?",
+                (file_id, user_id)
+            )
+            conn.commit()
+            return prev
         finally:
             conn.close()
 

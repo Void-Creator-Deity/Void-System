@@ -12,9 +12,11 @@ import api from "./index"
  * @param {string} sessionId - 会话ID
  * @param {function} onMessage - 接收消息的回调函数
  * @param {function} onError - 错误回调函数
+ * @param {AbortSignal} signal - 可选中止信号
+ * @param {{ sessionFileIds?: string[], images?: string[] }} options - 多模态：会话临时文件 ID、或 data URL / base64 图片列表
  * @returns {function} 取消函数
  */
-export const streamPersona = async (text, sessionId, onMessage, onError, signal) => {
+export const streamPersona = async (text, sessionId, onMessage, onError, signal, options = {}) => {
   try {
     // 使用配置好的 api 实例的 baseURL，添加认证令牌
     const token = localStorage.getItem('access_token');
@@ -35,7 +37,9 @@ export const streamPersona = async (text, sessionId, onMessage, onError, signal)
       body: JSON.stringify({
         type: 'persona',
         text,
-        session_id: sessionId
+        session_id: sessionId,
+        session_file_ids: options.sessionFileIds || [],
+        images: options.images || []
       }),
       signal: signal
     });

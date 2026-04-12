@@ -96,7 +96,7 @@
           v-for="(msg, idx) in messages" 
           :key="msg.id"
           :id="'msg-' + msg.id"
-          class="message-wrapper"
+          class="void-chat-msg"
           :class="[msg.role]"
         >
           <!-- 消息引用预览 -->
@@ -105,23 +105,23 @@
             <span>{{ msg.reply_content?.substring(0, 40) }}...</span>
           </div>
 
-          <div class="bubble-container">
-            <div class="avatar-cell">
-              <div class="avatar" :class="msg.role">
+          <div class="void-msg-container">
+            <div class="void-msg-avatar">
+              <div class="avatar-inner" :class="msg.role">
                 {{ msg.role === 'user' ? 'U' : 'V' }}
               </div>
             </div>
             
-            <div class="bubble-content card-glass">
+            <div class="void-msg-bubble">
               <div class="bubble-header">
-                <span class="role-tag">{{ msg.role === 'user' ? 'ME' : 'VOID_SYSTEM' }}</span>
+                <span class="role-tag">{{ msg.role === 'user' ? 'ME' : '虚空系统' }}</span>
                 <div class="bubble-actions">
                   <el-button link size="small" @click="quoteMessage(msg)"><el-icon><ChatDotSquare /></el-icon></el-button>
                   <el-button link size="small" @click="copyToClipboard(msg.text)"><el-icon><CopyDocument /></el-icon></el-button>
                 </div>
               </div>
               
-              <div class="text-area">
+              <div class="bubble-text">
                 <div v-if="msg.role === 'system'" v-html="renderMarkdown(msg.text)" class="markdown-body"></div>
                 <div v-else class="text-raw">{{ msg.text }}</div>
               </div>
@@ -134,11 +134,11 @@
           </div>
         </div>
 
-        <div v-if="isLoading && !isStreamingMsg" class="message-wrapper system">
-          <div class="bubble-container">
-            <div class="avatar-cell"><div class="avatar system">V</div></div>
-            <div class="bubble-content card-glass">
-              <div class="typing"><span></span><span></span><span></span></div>
+        <div v-if="isLoading && !isStreamingMsg" class="void-chat-msg system">
+          <div class="void-msg-container">
+            <div class="void-msg-avatar"><div class="avatar-inner system">V</div></div>
+            <div class="void-msg-bubble">
+              <div class="typing-indicator"><span></span><span></span><span></span></div>
             </div>
           </div>
         </div>
@@ -255,6 +255,8 @@ const viewport = ref(null)
 const fileInputRef = ref(null)
 const replyingMessage = ref(null)
 const abortController = ref(null)
+/** 本会话中已注入、待随下一条消息发给模型的临时文件 ID（多为图片） */
+const pendingVisionFileIds = ref([])
 
 const moveDialog = reactive({
   show: false,
@@ -262,6 +264,13 @@ const moveDialog = reactive({
   targetGroupId: '',
   otherGroups: []
 })
+
+watch(
+  () => chatStore.activeSessionId,
+  () => {
+    pendingVisionFileIds.value = []
+  }
+)
 
 // 当前状态
 const currentGroup = computed(() => chatStore.activeGroup)
@@ -421,26 +430,32 @@ const handleSend = async () => {
     let acc = ""
     abortController.value = new AbortController()
     
-    streamPersona(text, chatStore.activeSessionId, (content, done) => {
-      if (done) {
-        chatStore.saveLastMessage(acc, Math.floor(acc.length / 3))
-        isLoading.value = false
-        abortController.value = null
-      } else {
-        acc += content
-        // 临时更新UI展示
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && lastMsg.role === 'system') lastMsg.text = acc
-        scrollToBottom()
-      }
-    }, (err) => {
+    streamPersona(
+      text,
+      chatStore.activeSessionId,
+      (content, done) => {
+        if (done) {
+          chatStore.saveLastMessage(acc, Math.floor(acc.length / 3))
+          isLoading.value = false
+          abortController.value = null
+        } else {
+          acc += content
+          const lastMsg = messages.value[messages.value.length - 1]
+          if (lastMsg && lastMsg.role === 'system') lastMsg.text = acc
+          scrollToBottom()
+        }
+      },
+    (err) => {
       // 如果是手动取消，不报错
       if (err.name === 'AbortError') return
       
       isLoading.value = false
       abortController.value = null
       ElMessage.error('虚空链路中断: ' + (err.message || '未知错误'))
-    }, abortController.value.signal)
+    },
+    abortController.value.signal,
+    { sessionFileIds: [...pendingVisionFileIds.value] }
+    )
   } catch (e) {
     isLoading.value = false
     ElMessage.error('指令发送失败')
@@ -458,14 +473,27 @@ const handleFileUpload = async (e) => {
   try {
     const res = await sessionApi.uploadTemporaryFile(chatStore.activeSessionId, formData)
     if (res.data.success) {
+      const fid = res.data.data?.file_id
+      if (fid) {
+        if (!pendingVisionFileIds.value.includes(fid)) {
+          pendingVisionFileIds.value.push(fid)
+        }
+      }
       chatStore.addMessage({
         role: "system",
         text: `### 📁 外部数据注入成功\n---\n- **名称**: \`${file.name}\`\n- **大小**: \`${(file.size/1024).toFixed(1)} KB\`\n\n数据已解析并进入虚空缓存，现在可以针对此文件进行提问。`
       })
       ElMessage.success('注入成功')
+    } else {
+      const msg = res.data?.message || '服务器拒绝上传'
+      ElMessage.error('注入失败：' + msg)
     }
   } catch (err) {
-    ElMessage.error('注入失败')
+    const st = err.response?.status
+    const detail = err.response?.data?.message || err.response?.data?.detail || err.message
+    ElMessage.error(
+      '注入失败' + (st != null ? ` (HTTP ${st})` : '') + (detail ? `：${detail}` : '')
+    )
   } finally {
     isLoading.value = false
     if (fileInputRef.value) fileInputRef.value.value = ''
@@ -486,8 +514,7 @@ const renderMarkdown = (text) => {
     processed += '\n</think>'
   }
 
-  // 2. 拦截并格式化 <think> 区域，避免被 marked 误杀或污染外部 DOM
-  // 这里使用不会被 marked 解析的占位符
+  // 2. 拦截并格式化 <think> 区域
   const thinkBlocks = []
   processed = processed.replace(/<think>([\s\S]*?)<\/think>/g, (match, content) => {
     thinkBlocks.push(content)
@@ -497,14 +524,13 @@ const renderMarkdown = (text) => {
   // 3. 执行 marked 解析
   let html = marked.parse(processed)
 
-  // 4. 将提取的标记还原为带有美观样式的 details 卡片
+  // 4. 还原 think blocks
   thinkBlocks.forEach((content, index) => {
     const renderBlock = marked.parse(content)
     html = html.replace(`%%%VOID_THINK_${index}%%%`, `
       <details class="void-think-box">
         <summary>
-          <span class="think-icon">✨</span>
-          <span class="think-title">虚空引擎逻辑推演</span>
+          <span>✨ 虚空模型思维逻辑</span>
         </summary>
         <div class="think-content">${renderBlock}</div>
       </details>
@@ -535,251 +561,276 @@ onMounted(() => {
 <style scoped>
 .ai-console-layout {
   display: flex;
-  height: calc(100vh - 100px);
-  gap: 1.5rem;
-  max-width: 1600px;
+  height: calc(100vh - 120px);
+  gap: var(--spacing-lg);
   margin: 0 auto;
-  padding: 0 1rem;
 }
 
-/* 侧边栏 */
+/* Sidebar */
 .console-sidebar {
   width: 280px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-glass);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  transition: width 0.3s ease;
-  overflow: hidden;
+  transition: width var(--transition-normal);
 }
 
-.console-sidebar.collapsed { width: 60px; }
+.console-sidebar.collapsed { width: 64px; }
 
 .sidebar-header {
-  padding: 1.25rem;
+  padding: var(--spacing-md);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid var(--color-border-light);
+  border-bottom: 1px solid var(--border-color-light);
 }
 
 .sidebar-header h3 {
-  font-size: 1.1rem;
-  color: var(--color-primary-light);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
   margin: 0;
 }
 
 .sidebar-actions {
-  padding: 1rem;
+  padding: var(--spacing-md);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--spacing-sm);
 }
-
-.new-btn { width: 100%; font-weight: 700; box-shadow: var(--shadow-glow); }
-.new-group-btn { width: 100%; }
 
 .groups-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0.5rem;
+  padding: var(--spacing-sm);
 }
 
-.group-item { margin-bottom: 1.5rem; }
+.group-item { margin-bottom: var(--spacing-md); }
 
 .group-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  color: var(--color-text-muted);
+  padding: 8px;
+  color: var(--text-muted);
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
-  letter-spacing: 0.5px;
-}
-.group-title .el-icon:first-child { 
-  width: 20px; 
-  display: flex; 
-  justify-content: center; 
-  font-size: 15px; 
-  opacity: 0.7; 
 }
 
-.group-title:hover { color: var(--color-text-primary); }
-.more-icon { margin-left: auto; cursor: pointer; padding: 4px; border-radius: 4px; }
-.more-icon:hover { background: rgba(255,255,255,0.1); }
-
-.session-items-box { padding-left: 1.5rem; margin-top: 4px; }
+.group-title:hover { color: var(--text-primary); }
 
 .session-link {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 12px;
-  margin: 1px 0;
-  border-radius: 6px;
-  color: var(--color-text-secondary);
+  margin: 2px 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 0.85rem;
-}
-.session-icon { 
-  width: 20px; 
-  display: flex; 
-  justify-content: center; 
-  font-size: 15px; 
-  flex-shrink: 0; 
+  transition: all var(--transition-fast);
+  font-size: 0.9rem;
 }
 
-.session-link:hover { background: rgba(255,255,255,0.05); color: var(--color-text-primary); }
-.session-link.active { background: rgba(99, 102, 241, 0.15); color: var(--color-primary-light); border-right: 3px solid var(--color-primary); }
+.session-link:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.session-link.active {
+  background: var(--bg-tertiary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
 
 .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-more { opacity: 0; font-size: 14px; transition: opacity 0.2s; padding: 4px; }
-.session-link:hover .session-more { opacity: 0.6; }
-.session-more:hover { opacity: 1 !important; color: var(--color-primary-light); }
 
-/* 主对话区 */
+/* Main Console */
 .console-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-glass);
-  border: 1px solid var(--color-border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 .console-header {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--color-border-light);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
 .active-path { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
-.path-group { color: var(--color-text-muted); }
-.path-session { color: var(--color-text-primary); font-weight: 700; }
+.path-group { color: var(--text-muted); }
+.path-session { color: var(--text-primary); font-weight: 700; }
 
-.status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--color-text-muted); margin-top: 4px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+.status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
 .status-dot.online { background: var(--color-success); box-shadow: 0 0 8px var(--color-success); }
 .status-dot.loading { background: var(--color-primary); animation: pulse 1s infinite; }
 
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-
-/* 消息区 */
+/* Viewport */
 .messages-viewport {
   flex: 1;
   overflow-y: auto;
-  padding: 2rem 1.5rem;
+  padding: var(--spacing-xl);
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--spacing-lg);
 }
 
 .empty-state {
   margin: auto;
   text-align: center;
-  max-width: 500px;
+  max-width: 400px;
 }
 
 .void-logo {
-  width: 60px; height: 60px; background: var(--grad-cyber); color: #fff;
-  border-radius: 12px; display: flex; align-items: center; justify-content: center;
-  font-size: 2rem; font-weight: 900; margin: 0 auto 1.5rem; animation: rotateLogo 10s linear infinite;
+  width: 60px; height: 60px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem; font-weight: 900;
+  margin: 0 auto 1rem;
 }
-
-@keyframes rotateLogo { 0% {transform: rotateY(0)} 100% {transform: rotateY(360deg)} }
 
 .quick-starts { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 2rem; }
-.q-chip { padding: 6px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--color-border); border-radius: 20px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; }
-.q-chip:hover { border-color: var(--color-primary); color: var(--color-primary-light); background: rgba(99,102,241,0.1); }
+.q-chip {
+  padding: 6px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.q-chip:hover { border-color: var(--color-primary); color: var(--color-primary); }
 
-.message-wrapper { display: flex; flex-direction: column; width: 100%; transition: opacity 0.3s; }
-.message-wrapper.user { align-items: flex-end; }
-.message-wrapper.system { align-items: flex-start; }
+/* Messages */
+.void-chat-msg {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.void-chat-msg.user { align-items: flex-end; }
+.void-chat-msg.system { align-items: flex-start; }
+
+.void-msg-container {
+  display: flex;
+  gap: var(--spacing-md);
+  max-width: 90%;
+}
+
+.user .void-msg-container { flex-direction: row-reverse; }
+
+.void-msg-avatar {
+  flex-shrink: 0;
+}
+
+.avatar-inner {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 0.9rem;
+}
+
+.avatar-inner.user { background: var(--color-primary); color: white; }
+.avatar-inner.system { background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--color-primary); }
+
+.void-msg-bubble {
+  padding: var(--spacing-md);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  min-width: 60px;
+}
+
+.user .void-msg-bubble {
+  background: var(--bg-tertiary);
+  border-color: var(--color-primary-light);
+}
+
+.bubble-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xs);
+  opacity: 0.8;
+}
+
+.role-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--text-muted); }
+
+.bubble-text {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.bubble-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: var(--spacing-sm);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 
 .reply-context {
-  margin-bottom: 4px; padding: 4px 12px; background: rgba(255,255,255,0.05);
-  border-left: 2px solid var(--color-primary); border-radius: 4px;
-  font-size: 0.75rem; color: var(--color-text-muted); display: flex; align-items: center; gap: 6px;
-  max-width: 300px;
+  margin-bottom: 4px;
+  padding: 4px 12px;
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
 }
 
-.bubble-container { display: flex; gap: 12px; max-width: 85%; }
-.user .bubble-container { flex-direction: row-reverse; }
-
-.avatar {
-  width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 0.9rem;
+/* Typing Indicator */
+.typing-indicator { display: flex; gap: 4px; padding: 4px 0; }
+.typing-indicator span {
+  width: 6px; height: 6px; background: var(--text-muted);
+  border-radius: 50%; animation: typingAnim 1s infinite alternate;
 }
-.avatar.user { background: var(--color-primary); color: #fff/*用户头像字体颜色下面对应的是系统精灵的
-  */; }
-.avatar.system { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); color: var(--color-primary); }
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 
-.bubble-content {
-  color: #000000/*字体颜色*/;
-  padding: 12px 16px; border-radius: 12px; position: relative;
-  background: rgba(21, 105, 240, 0.4)/*系统精灵消息气泡背景颜色*/; border: 1px solid var(--color-border-light);
-}
+@keyframes typingAnim { from { opacity: 0.3; transform: scale(1); } to { opacity: 1; transform: scale(1.2); } }
 
-.user .bubble-content {  color: #000000/*字体颜色*/; background: var(--color-primary-dark); border-color: rgba(99, 102, 241, 0.3); }
-
-.bubble-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.role-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--color-text-muted)/*聊天对象名称*/; }
-.bubble-actions { opacity: 0; transition: 0.2s; display: flex; gap: 4px; }
-.bubble-content:hover .bubble-actions { opacity: 1; }
-
-.text-area { color: #000000;font-size: 0.95rem; line-height: 1.6; word-wrap: break-word; }
-.bubble-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; font-size: 0.7rem; color: var(--color-text-muted)/*消息跟脚-时间及tokens*/; }
-
-/* 输入栏 */
-.input-container { padding: 0 1.5rem 1.5rem; }
-
-.reply-bar {
-  background: rgba(99, 102, 241, 0.1); border: 1px solid var(--color-primary);
-  border-bottom: none; border-radius: 8px 8px 0 0; padding: 8px 12px;
-  display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;
-}
-.close-reply { cursor: pointer; color: var(--color-accent); }
+/* Input */
+.input-container { padding: 0 var(--spacing-lg) var(--spacing-lg); }
 
 .input-panel {
-  display: flex; align-items: flex-end; padding: 6px 12px; gap: 10px;
-  background: rgba(15, 23, 42, 0.6); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 16px;
+  gap: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
 }
-
-.panel-icon { cursor: pointer; padding: 8px; color: var(--color-text-muted); transition: 0.2s; }
-.panel-icon:hover { color: var(--color-primary-light); transform: scale(1.1); }
 
 .main-textarea :deep(.el-textarea__inner) {
-  background: transparent; border: none; box-shadow: none; color: #fff/*输入框字体颜色 */; padding: 8px 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 0.95rem;
 }
 
-.glow-btn {
-  width: 44px; height: 44px; background: var(--grad-cyber) !important; border: none !important;
-  box-shadow: 0 0 15px rgba(99,102,241,0.3); transition: 0.3s;
-}
-.glow-btn:hover { transform: scale(1.05); box-shadow: 0 0 25px rgba(99,102,241,0.5); }
-
-.stop-btn {
-  width: 44px; height: 44px; background: rgba(239, 68, 68, 0.2) !important; border: 1px solid #ef4444 !important;
-  color: #ef4444 !important; transition: 0.3s;
-}
-.stop-btn:hover { background: rgba(239, 68, 68, 0.3) !important; transform: scale(1.05); }
-
-/* 移动对话框样式 */
-.move-radio-group { display: flex; flex-direction: column; gap: 10px; width: 100%; }
-.move-radio-group :deep(.el-radio) { margin-right: 0; width: 100%; height: auto; padding: 12px; display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.02); }
-.move-radio-group :deep(.el-radio.is-bordered.is-checked) { border-color: var(--color-primary); background: rgba(99,102,241,0.1); }
-.dialog-tip { font-size: 13px; color: var(--color-text-secondary); margin-bottom: 15px; }
-
-/* Markdown */
-.markdown-body :deep(h1,h2,h3) { margin: 10px 0; color: var(--color-primary-light); }
-.markdown-body :deep(pre) { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; margin: 8px 0; overflow-x: auto; }
 .markdown-body :deep(code) { font-family: var(--font-family-mono); background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; }
 .markdown-body :deep(p) { margin-bottom: 0.8rem; }
 .markdown-body :deep(p:last-child) { margin-bottom: 0; }
@@ -787,22 +838,22 @@ onMounted(() => {
 /* 深度思考框样式 (极简风格防杂乱) */
 .markdown-body :deep(.void-think-box) {
   margin: 12px 0;
-  border: 1px solid rgba(255, 255, 255, 0.08); /* 极细淡边框 */
+  border: 1px solid var(--border-color-light); /* 极细淡边框 */
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15); /* 微黑暗底 */
+  background: var(--bg-tertiary); /* 微黑暗底 */
   overflow: hidden;
 }
 .markdown-body :deep(.void-think-box summary) {
   padding: 8px 14px;
   cursor: pointer;
   font-size: 0.85rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   list-style: none; /* 移除原生小三角 */
   user-select: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--border-dim);
   transition: all 0.2s ease;
 }
 .markdown-body :deep(.void-think-box summary::-webkit-details-marker) {
@@ -815,8 +866,8 @@ onMounted(() => {
 .markdown-body :deep(.void-think-box .think-content) {
   padding: 12px 14px;
   font-size: 0.85rem;
-  color: var(--color-text-secondary);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-dim);
   line-height: 1.5;
 }
 .markdown-body :deep(.void-think-box .think-content p) { margin-bottom: 0.5rem; }

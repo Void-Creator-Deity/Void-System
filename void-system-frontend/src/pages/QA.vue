@@ -1,104 +1,108 @@
 <template>
-  <div class="qa-container">
-    <!-- 页面标题 -->
-    <div class="qa-header">
-      <h2><span>📖 系统问答</span></h2>
-      <p class="subtitle">通过系统知识库获取精准信息</p>
-    </div>
-    
-    <div class="search-options">
-      <div class="search-mode-selector">
-        <el-radio-group v-model="searchMode" size="small" class="cyber-radio">
-          <el-radio-button label="vector">基础模式</el-radio-button>
-          <el-radio-button label="hybrid">混合模式</el-radio-button>
-        </el-radio-group>
-      </div>
-      
-      <div class="input-section">
-        <div class="input-wrapper">
-          <div class="input-prefix">❓</div>
+  <div class="void-page-container qa-page">
+    <div class="void-content">
+      <header class="page-header">
+        <h1 class="logo-text"><span class="void-text-gradient">虚空</span> 知识库</h1>
+        <p class="subtitle">通过虚空知识库进行神经检索。精准、合成。</p>
+      </header>
+
+      <!-- Search Area -->
+      <section class="selection-box void-card animate-float">
+        <div class="mode-selector">
+          <el-radio-group v-model="searchMode" size="small" class="void-radio-group">
+            <el-radio-button label="vector">向量路径 (Vector)</el-radio-button>
+            <el-radio-button label="hybrid">混合脉冲 (Hybrid)</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <div class="input-group">
+          <div class="input-icon">🔍</div>
           <el-input 
             v-model="question" 
-            placeholder="请输入您的问题... (Shift + Enter 换行)"
-            @keyup.enter.native="handleEnter"
+            placeholder="输入神经查询... (Shift + Enter 换行)"
             type="textarea"
-            :autosize="{ minRows: 1, maxRows: 4 }"
+            :autosize="{ minRows: 1, maxRows: 6 }"
+            class="void-input"
+            @keydown.enter="handleEnter"
             :disabled="isLoading"
           />
+          <el-button 
+            type="primary" 
+            @click="ask"
+            class="void-btn primary big"
+            :loading="isLoading"
+            :disabled="isLoading || !question.trim()"
+          >
+            {{ isLoading ? '检索中' : '询问虚空' }}
+          </el-button>
         </div>
-        <el-button 
-          class="cyber-button"
-          type="primary" 
-          @click="ask"
-          :loading="isLoading"
-          :disabled="isLoading || !question.trim()"
-        >
-          <span v-if="!isLoading">开始提问</span>
-          <span v-else>分析中...</span>
-        </el-button>
+      </section>
+
+      <!-- Synthesis State -->
+      <div v-if="isLoading" class="loading-state animate-fade-in">
+        <div class="synthesis-core">
+          <div class="core-ring"></div>
+          <p class="status-msg">正在扫描多维索引...</p>
+        </div>
       </div>
-    </div>
-    
-    <!-- 加载状态 -->
-    <div v-if="isLoading" class="loading-section">
-      <div class="loading-animation">
-        <div class="loading-ring"></div>
-        <p>正在搜索并分析您的问题...</p>
+
+      <!-- Result Area -->
+      <div v-else-if="answer" class="result-area animate-slide-up">
+        <div class="answer-card void-card">
+          <header class="card-header">
+            <div class="header-info">
+              <h3><el-icon><Reading /></el-icon> 检索到的知识</h3>
+              <span class="timestamp">{{ formatTime(new Date()) }}</span>
+            </div>
+            <div class="header-actions">
+              <el-button circle class="void-btn ghost" icon="Refresh" @click="clearAnswer" title="清空" />
+            </div>
+          </header>
+
+          <div class="card-body">
+            <div class="markdown-body void-markdown" v-html="renderMarkdown(answer)"></div>
+          </div>
+
+          <footer class="card-footer">
+            <el-button type="info" plain @click="clearAnswer" class="void-btn ghost">清空终端</el-button>
+            <el-button type="primary" @click="askNewQuestion" class="void-btn primary">重置上下文</el-button>
+          </footer>
+        </div>
       </div>
-    </div>
-    
-    <!-- 答案展示 -->
-    <div v-else-if="answer" class="answer-section fade-in">
-      <div class="answer-header">
-        <h3>📚 检索结果</h3>
-        <div class="timestamp">{{ formatTime(new Date()) }}</div>
+
+      <!-- Idle State -->
+      <div v-else class="empty-state animate-fade-in">
+        <div class="void-card subtle-placeholder">
+          <div class="icon">🔮</div>
+          <h3>系统就绪</h3>
+          <p>等待神经输入以进行知识检索。</p>
+        </div>
       </div>
-      
-      <div class="answer-content markdown-body" v-html="renderMarkdown(answer)"></div>
-      
-      <div class="action-buttons">
-        <el-button type="info" @click="clearAnswer" class="action-btn">
-          🔄 清空结果
-        </el-button>
-        <el-button type="success" @click="askNewQuestion" class="action-btn">
-          💬 继续提问
-        </el-button>
-      </div>
-    </div>
-    
-    <!-- 空状态 -->
-    <div v-else class="empty-state">
-      <div class="empty-icon">❓</div>
-      <p>准备就绪</p>
-      <p class="empty-subtitle">输入问题开始知识库检索</p>
     </div>
   </div>
 </template>
 
 <script setup>
-/**
- * QA Component - Knowledge Base Q&A
- * ----------------------------------
- * 知识库问答页面，基于 RAG 技术提供智能问答功能
- */
-
 import { ref, nextTick } from "vue"
 import { ElMessage } from "element-plus"
+import { 
+  Reading, 
+  Refresh, 
+  Search,
+  ChatDotRound
+} from "@element-plus/icons-vue"
 import { askQA } from "@/api/ai"
 import { getUserInfo } from "@/api/user"
 import { marked } from 'marked'
 
-// ==================== 响应式状态 ====================
+// ==================== State ====================
 const question = ref("")
 const answer = ref("")
 const isLoading = ref(false)
-const searchMode = ref("vector") // vector, hybrid
+const searchMode = ref("vector")
 
-// ==================== 业务逻辑 ====================
+// ==================== Logic ====================
 
-/**
- * 处理 Enter 键 (防抖 + Shift Enter 支持)
- */
 const handleEnter = (e) => {
   if (!e.shiftKey) {
     e.preventDefault()
@@ -106,13 +110,8 @@ const handleEnter = (e) => {
   }
 }
 
-/**
- * 提问并获取答案
- */
 const ask = async () => {
-  if (!question.value.trim()) {
-    return
-  }
+  if (!question.value.trim()) return
   
   isLoading.value = true
   try {
@@ -123,537 +122,200 @@ const ask = async () => {
       userId: userId
     })
     answer.value = result
-    ElMessage.success('检索完成')
+    ElMessage.success('神经链路已建立')
   } catch (error) {
-    console.error('提问失败:', error)
-    const errorMessage = error.response?.data?.detail || 
-                        error.message || 
-                        '检索过程中出现错误，请稍后再试'
-    answer.value = `抱歉，${errorMessage}`
-    ElMessage.error('检索失败，请稍后重试')
+    const errorDetail = error.response?.data?.detail || error.message || '接口错误'
+    answer.value = `### [系统异常]\n\n神经检索失败: ${errorDetail}`
+     ElMessage.error('检索失败')
   } finally {
     isLoading.value = false
   }
 }
 
-/**
- * 清空答案和问题
- */
 const clearAnswer = () => {
   answer.value = ''
   question.value = ''
 }
 
-/**
- * 渲染 Markdown 内容
- */
 const renderMarkdown = (text) => {
   if (!text) return ''
   return marked.parse(text)
 }
 
-/**
- * 准备新问题（清空当前问题并聚焦输入框）
- */
 const askNewQuestion = async () => {
   question.value = ''
   answer.value = ''
-  
-  // 等待 DOM 更新后聚焦输入框
   await nextTick()
-  const input = document.querySelector('.el-input__inner')
-  if (input) {
-    input.focus()
-  }
+  const input = document.querySelector('.el-textarea__inner')
+  input?.focus()
 }
 
-/**
- * 格式化时间
- * @param {Date} date - 日期对象
- * @returns {string} 格式化后的时间字符串
- */
-const formatTime = (date) => {
-  return new Date(date).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
 </script>
 
 <style scoped>
-.qa-container {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 2rem;
-  position: relative;
+.qa-page {
+  background: var(--bg-page);
+  min-height: 100vh;
 }
 
-.qa-container::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -20%;
-  right: -20%;
-  height: 200px;
-  background: radial-gradient(circle at center, rgba(67, 97, 238, 0.1) 0%, transparent 70%);
-  z-index: -1;
+.void-content {
+  padding: var(--spacing-xxl) 0;
 }
 
-.qa-header {
-  text-align: center;
-  margin-bottom: 2.5rem;
-  padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--color-border-light);
-  position: relative;
-}
-
-.qa-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 25%;
-  right: 25%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
-}
-
-.qa-header h2 {
-  font-size: 2.5rem;
-  margin: 0 0 1rem 0;
-  font-family: var(--main-font);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-md);
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.main-text {
-  background: linear-gradient(90deg, var(--color-text-primary), var(--color-primary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-weight: 700;
-  position: relative;
-}
-
-.main-text::after {
-  content: '';
-  position: absolute;
-  bottom: -5px;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, var(--color-primary), transparent);
-  opacity: 0.7;
-}
-
-.system-text {
-  color: var(--color-text-primary);
-  font-weight: 600;
+.page-header {
+  margin-bottom: var(--spacing-xxl);
 }
 
 .subtitle {
-  color: var(--color-text-secondary);
+  color: var(--text-muted);
   font-size: 1.1rem;
-  margin: 0;
-  background: linear-gradient(90deg, var(--color-text-primary), var(--color-text-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
-/* 搜索选项 */
-.search-options {
-  margin-bottom: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+/* Search Area */
+.selection-box {
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xxl);
 }
 
-.search-mode-selector {
+.mode-selector {
   display: flex;
   justify-content: center;
+  margin-bottom: var(--spacing-md);
 }
 
-.cyber-radio :deep(.el-radio-button__inner) {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  border-color: var(--color-border-light);
-  font-weight: 600;
-  letter-spacing: 1px;
-}
-
-.cyber-radio :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: var(--grad-cyber);
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-glow);
-}
-
-/* 输入区域 */
-.input-section {
+.input-group {
   display: flex;
-  gap: 1rem;
+  gap: var(--spacing-md);
   align-items: flex-end;
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem;
-  box-shadow: var(--shadow-md);
-  position: relative;
 }
 
-.cyber-button {
-  height: 54px;
-  padding: 0 25px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  background: var(--grad-cyber);
-  border: none;
-  box-shadow: var(--shadow-glow);
+.input-icon {
+  font-size: 1.5rem;
+  margin-bottom: var(--spacing-xs);
+  filter: drop-shadow(0 0 5px var(--color-primary-transparent));
 }
 
-.input-wrapper {
-  flex: 1;
-  display: flex;
-  align-items: flex-start;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  transition: all var(--transition-normal);
+.big {
+  height: 52px;
+  padding: 0 var(--spacing-xl);
 }
 
-.input-wrapper:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-cyber);
-}
-
-.input-prefix {
-  font-size: 1.2rem;
-  margin-right: 0.75rem;
-  margin-top: 4px;
-}
-
-.input-wrapper :deep(.el-textarea__inner) {
-  background: transparent;
-  border: none;
-  color: var(--color-text-primary);
-  font-size: 1rem;
-  padding: 0;
-  box-shadow: none !important;
-}
-
-/* 加载状态 */
-.loading-section {
+/* Synthesis State */
+.loading-state {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 3rem;
-  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  position: relative;
-  overflow: hidden;
+  padding: var(--spacing-xxl);
+  min-height: 200px;
 }
 
-.loading-section::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
-}
-
-.loading-animation {
+.synthesis-core {
   text-align: center;
 }
 
-.loading-ring {
-  width: 70px;
-  height: 70px;
-  border: 4px solid var(--color-border-light);
+.core-ring {
+  width: 60px;
+  height: 60px;
+  border: 4px solid var(--border-color);
   border-top-color: var(--color-primary);
   border-radius: 50%;
-  margin: 0 auto 1rem;
-  animation: spin 1s linear infinite;
-  box-shadow: 0 0 20px rgba(67, 97, 238, 0.3);
-  position: relative;
+  margin: 0 auto var(--spacing-lg);
+  animation: voidSpin 1s linear infinite;
 }
 
-.loading-ring::before {
-  content: '';
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  right: -4px;
-  bottom: -4px;
-  border: 4px solid transparent;
-  border-top-color: var(--color-secondary);
-  border-radius: 50%;
-  opacity: 0.7;
-  animation: spin 2s linear infinite;
+.status-msg {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: 0.9rem;
 }
 
-@keyframes spin {
-  to { 
-    transform: rotate(360deg); 
-    box-shadow: 0 0 25px rgba(67, 97, 238, 0.5);
-  }
+/* Result Area */
+.answer-card {
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xxl);
 }
 
-/* 答案展示 */
-.answer-section {
-  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-lg);
-  padding: 2rem;
-  box-shadow: 
-    var(--shadow-md),
-    inset 0 0 10px rgba(67, 97, 238, 0.05);
-  backdrop-filter: blur(10px);
-  animation: containerGlow 3s ease-in-out infinite alternate;
-  position: relative;
-  overflow: hidden;
-}
-
-.answer-section::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
-}
-
-@keyframes containerGlow {
-  0% { box-shadow: var(--shadow-md), 0 0 30px rgba(67, 97, 238, 0.1); }
-  100% { box-shadow: var(--shadow-md), 0 0 40px rgba(67, 97, 238, 0.2); }
-}
-
-.answer-header {
+.card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--color-border-light);
-  position: relative;
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 2px solid var(--border-color-light);
 }
 
-.answer-content {
-  margin-bottom: 1.5rem;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  padding: 2rem;
-  border-left: 4px solid var(--color-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-/* Markdown 样式 */
-.markdown-body {
-  color: var(--color-text-primary);
-  line-height: 1.7;
-}
-
-.markdown-body :deep(h1), 
-.markdown-body :deep(h2), 
-.markdown-body :deep(h3) {
-  color: var(--color-primary-light);
-  margin-top: 1.5em;
-  margin-bottom: 1em;
-  font-weight: 700;
-}
-
-.markdown-body :deep(p) {
-  margin-bottom: 1em;
-}
-
-.markdown-body :deep(ul), 
-.markdown-body :deep(ol) {
-  padding-left: 2em;
-  margin-bottom: 1em;
-}
-
-.markdown-body :deep(code) {
-  background: var(--color-bg-tertiary);
-  padding: 0.2em 0.4em;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-family-mono);
-  font-size: 0.9em;
-  color: var(--color-accent);
-}
-
-.markdown-body :deep(pre) {
-  background: var(--color-bg-secondary);
-  padding: 1.5em;
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-  margin-bottom: 1em;
-  border: 1px solid var(--color-border);
-}
-
-.markdown-body :deep(pre code) {
-  background: transparent;
-  padding: 0;
-  color: var(--color-text-primary);
-}
-
-.markdown-body :deep(blockquote) {
-  border-left: 4px solid var(--color-border-cyber);
-  padding-left: 1em;
-  color: var(--color-text-secondary);
-  font-style: italic;
-  margin: 1em 0;
-}
-
-/* 操作按钮 */
-.action-buttons {
+.header-info h3 {
   display: flex;
-  gap: 1rem;
-  justify-content: center;
-  margin-top: 2rem;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0;
 }
 
-.action-btn {
-  transition: all var(--transition-normal);
-  position: relative;
-  overflow: hidden;
+.timestamp {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+}
+
+.card-body {
+  margin-bottom: var(--spacing-xl);
+}
+
+.void-markdown {
+  background: var(--bg-tertiary);
+  padding: var(--spacing-xl);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  border-left: 4px solid var(--color-primary);
 }
 
-.action-btn::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left var(--transition-normal);
+.card-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-color-light);
 }
 
-.action-btn:hover::before {
-  left: 100%;
-}
-
-.action-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
-.action-btn:active {
-  transform: translateY(0);
-}
-
-/* 空状态 */
+/* Empty State */
 .empty-state {
+  padding: var(--spacing-xxl) 0;
   text-align: center;
-  padding: 3rem;
-  color: var(--color-text-secondary);
-  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  position: relative;
-  overflow: hidden;
 }
 
-.empty-state::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
-}
-
-.empty-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-  opacity: 0.8;
-  animation: float 3s ease-in-out infinite;
-  color: var(--color-primary);
-}
-
-.empty-state p {
-  margin: 0.5rem 0;
-  font-size: 1.2rem;
-  color: var(--color-text-primary);
-  background: linear-gradient(90deg, var(--color-text-primary), var(--color-primary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-weight: 600;
-}
-
-.empty-subtitle {
-  font-size: 1rem;
-  opacity: 0.9;
-  color: var(--color-text-secondary);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: var(--color-bg-tertiary);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border-light);
+.subtle-placeholder {
   display: inline-block;
-  margin-top: 0.5rem;
+  padding: var(--spacing-xxl);
+  max-width: 400px;
+  background: var(--bg-card);
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+.subtle-placeholder .icon {
+  font-size: 3rem;
+  margin-bottom: var(--spacing-md);
+  opacity: 0.5;
 }
 
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+.subtle-placeholder h3 {
+  margin-bottom: var(--spacing-sm);
+  color: var(--text-main);
 }
 
-.fade-in {
-  animation: fade-in 0.6s ease-out;
+.subtle-placeholder p {
+  color: var(--text-muted);
 }
 
-/* 响应式设计 */
+@keyframes voidSpin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 768px) {
-  .qa-container {
-    padding: 1rem;
-  }
-  
-  .qa-header h2 {
-    font-size: 2rem;
+  .input-group {
     flex-direction: column;
-    gap: 0.5rem;
+    align-items: stretch;
   }
   
-  .input-section {
+  .card-footer {
     flex-direction: column;
-    gap: 1rem;
-  }
-  
-  .input-wrapper {
-    width: 100%;
-  }
-  
-  .action-buttons {
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  
-  .answer-header {
-    flex-direction: column;
-    gap: 0.75rem;
-    align-items: flex-start;
   }
 }
 </style>

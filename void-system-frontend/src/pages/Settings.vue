@@ -44,32 +44,44 @@
             
             <div class="config-group">
               <div class="config-header">
-                <h4>界面设置</h4>
-                <el-switch v-model="systemConfig.themeEnabled" />
+                <h4><el-icon><Monitor /></el-icon> 界面主题</h4>
               </div>
               
-              <div class="config-details" v-if="systemConfig.themeEnabled">
+              <div class="config-details">
                 <div class="detail-group">
-                  <label>主题颜色</label>
-                  <div class="color-options">
-                    <span 
-                      v-for="color in colorOptions" 
-                      :key="color.value"
-                      class="color-option"
-                      :class="{ active: systemConfig.themeColor === color.value }"
-                      :style="{ backgroundColor: color.value }"
-                      @click="systemConfig.themeColor = color.value"
-                      :title="color.value"
-                    ></span>
+                  <label>主题预设</label>
+                  <div class="theme-choices">
+                    <div 
+                      class="theme-card dark" 
+                      :class="{ active: systemConfig.themeMode === 'dark' }"
+                      @click="systemConfig.themeMode = 'dark'"
+                    >
+                      <div class="preview-box">
+                        <div class="line"></div>
+                        <div class="line short"></div>
+                      </div>
+                      <span>骇客深邃 (Dark)</span>
+                    </div>
+                    
+                    <div 
+                      class="theme-card light" 
+                      :class="{ active: systemConfig.themeMode === 'light' }"
+                      @click="systemConfig.themeMode = 'light'"
+                    >
+                      <div class="preview-box">
+                        <div class="line"></div>
+                        <div class="line short"></div>
+                      </div>
+                      <span>双子光辉 (Light)</span>
+                    </div>
                   </div>
                 </div>
                 
                 <div class="detail-group">
-                  <label>动画效果</label>
+                  <label>系统特效</label>
                   <el-checkbox-group v-model="systemConfig.animations">
-                    <el-checkbox label="glow">发光效果</el-checkbox>
-                    <el-checkbox label="float">浮动效果</el-checkbox>
-                    <el-checkbox label="pulse">脉冲效果</el-checkbox>
+                    <el-checkbox label="glow">发光文字</el-checkbox>
+                    <el-checkbox label="float">悬浮动效</el-checkbox>
                   </el-checkbox-group>
                 </div>
               </div>
@@ -210,11 +222,10 @@ const loading = reactive({
 // 系统配置
 const systemConfig = reactive({
   aiAssistantEnabled: true,
-  responseStyle: "友好",
+  responseStyle: "专业",
   responseSpeed: 2,
-  themeEnabled: true,
-  themeColor: "#00ccff",
-  animations: ["glow", "float"]
+  themeMode: "dark",
+  animations: ["glow"]
 })
 
 // 学习偏好
@@ -237,16 +248,7 @@ const systemInfo = reactive({
 // 确认对话框状态
 const confirmLogoutVisible = ref(false)
 
-// ==================== 配置选项 ====================
-
-// 颜色选项
-const colorOptions = [
-  { value: "#00ccff" },
-  { value: "#00ff66" },
-  { value: "#ff6b6b" },
-  { value: "#ffcc00" },
-  { value: "#9966ff" }
-]
+// 已移除冗余的颜色选项
 
 // ==================== 工具函数 ====================
 
@@ -282,11 +284,8 @@ const saveSystemConfig = async () => {
     // 模拟 API 调用
     await new Promise(resolve => setTimeout(resolve, 500))
     
-    // 应用主题颜色 - 修正为全局使用的主要颜色变量
-    if (systemConfig.themeEnabled) {
-      document.documentElement.style.setProperty('--color-primary', systemConfig.themeColor)
-      document.documentElement.style.setProperty('--accent-primary', systemConfig.themeColor)
-    }
+    // 应用全局主题
+    document.documentElement.setAttribute('data-theme', systemConfig.themeMode)
     
     // 保存到本地存储
     localStorage.setItem('settings_cache', JSON.stringify({
@@ -460,6 +459,9 @@ onMounted(() => {
   // 启动运行时间更新定时器
   updateUptime()
   uptimeInterval = setInterval(updateUptime, 1000)
+  
+  // 初始化主题（从配置同步）
+  document.documentElement.setAttribute('data-theme', systemConfig.themeMode)
 })
 
 // 组件卸载前清理资源
@@ -469,18 +471,211 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* 现代化设置页面样式 - 基于高端赛博朋克设计 */
-
-/* 页面容器 */
 .settings-container {
   max-width: 1000px;
   margin: 0 auto;
-  padding: 2rem;
-  position: relative;
-  min-height: 100vh;
+  padding: var(--spacing-xl);
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: var(--spacing-xl);
+}
+
+.settings-header {
+  text-align: center;
+  margin-bottom: var(--spacing-xl);
+}
+
+.settings-header h2 {
+  font-size: 2.5rem;
+  margin-bottom: var(--spacing-sm);
+}
+
+.glitch {
+  color: var(--color-primary);
+  text-shadow: 0 0 10px var(--color-primary);
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+}
+
+/* Tabs Styling override */
+:deep(.el-tabs__header) {
+  margin-bottom: var(--spacing-xl);
+}
+
+:deep(.el-tabs__item) {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0 24px;
+}
+
+:deep(.el-tabs__item.is-active) {
+  color: var(--color-primary);
+}
+
+/* Settings Card and Groups */
+.settings-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-md);
+}
+
+.config-group {
+  margin-bottom: var(--spacing-xl);
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+  color: var(--text-primary);
+}
+
+.config-header h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 1.2rem;
+}
+
+.config-details {
+  padding-left: var(--spacing-md);
+  border-left: 2px solid var(--border-color-light);
+}
+
+.detail-group {
+  margin-bottom: var(--spacing-lg);
+}
+
+.detail-group label {
+  display: block;
+  margin-bottom: var(--spacing-sm);
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Theme Choices UI */
+.theme-choices {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin-top: var(--spacing-md);
+}
+
+.theme-card {
+  flex: 1;
+  padding: var(--spacing-md);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  background: var(--bg-secondary);
+}
+
+.theme-card:hover {
+  border-color: var(--color-primary-light);
+  transform: translateY(-2px);
+}
+
+.theme-card.active {
+  border-color: var(--color-primary);
+  background: var(--bg-tertiary);
+  box-shadow: 0 0 15px var(--shadow-glow);
+}
+
+.theme-card .preview-box {
+  width: 100%;
+  height: 60px;
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.theme-card.dark .preview-box {
+  background: #1e1e1e;
+}
+.theme-card.light .preview-box {
+  background: #ffffff;
+  border: 1px solid #ddd;
+}
+
+.preview-box .line {
+  height: 6px;
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+}
+.preview-box .line.short { width: 60%; }
+
+.theme-card span {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+/* Info Items */
+.info-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color-light);
+}
+
+.info-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.info-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.status-online { color: var(--color-success); }
+.status-offline { color: var(--color-error); }
+
+/* Card Actions */
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-color-light);
+}
+
+/* Animations */
+@keyframes glitchEffect {
+  0%, 100% { transform: none; }
+  50% { transform: skewX(2deg); }
+}
+
+@media (max-width: 768px) {
+  .theme-choices {
+    flex-direction: column;
+  }
 }
 
 /* 背景装饰元素 */
@@ -515,14 +710,12 @@ onBeforeUnmount(() => {
   margin-bottom: 2rem;
   position: relative;
   animation: fadeIn 0.8s ease-out;
-  background: rgba(10, 13, 32, 0.7);
+  background: var(--bg-glass);
   backdrop-filter: blur(12px);
   border-radius: 16px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--glass-border);
   padding: 2rem;
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.15),
-    0 0 20px rgba(0, 153, 255, 0.05);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -1166,7 +1359,7 @@ onBeforeUnmount(() => {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 3px solid rgba(10, 13, 32, 0.9);
+  border: 3px solid var(--bg-primary);
   box-shadow: 0 0 10px rgba(0, 255, 102, 0.5);
   transition: all 0.3s ease;
 }
@@ -1205,15 +1398,13 @@ onBeforeUnmount(() => {
 .config-group {
   margin-bottom: 2.5rem;
   padding: 2rem;
-  background: rgba(10, 13, 32, 0.6);
+  background: var(--bg-secondary);
   border-radius: 16px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color-light);
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   backdrop-filter: blur(10px);
-  box-shadow: 
-    0 4px 20px rgba(0, 0, 0, 0.15),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -1408,9 +1599,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 1.25rem 1.75rem;
-  background: rgba(10, 13, 32, 0.75);
+  background: var(--bg-secondary);
   border-radius: 16px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color-light);
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
@@ -1480,12 +1671,12 @@ onBeforeUnmount(() => {
 }
 
 .info-value {
-  color: rgba(255, 255, 255, 0.98);
+  color: var(--text-primary);
   font-weight: 700;
   font-size: 1.05rem;
   text-align: right;
   min-width: 120px;
-  text-shadow: 0 0 15px rgba(0, 0, 0, 0.15);
+  text-shadow: 0 0 15px rgba(0, 0, 0, 0.05);
   transition: all 0.3s ease;
   position: relative;
   z-index: 1;
@@ -1611,9 +1802,9 @@ onBeforeUnmount(() => {
 }
 
 .card-actions :deep(.el-button) {
-  background: rgba(10, 13, 32, 0.75);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text-primary);
   font-weight: 600;
   padding: 0.85rem 2.25rem;
   border-radius: 10px;
@@ -1971,4 +2162,3 @@ onBeforeUnmount(() => {
   }
 }
 </style>
-
