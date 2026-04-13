@@ -4,7 +4,6 @@ Void System - QA Chain (RAG Pipeline)
 基于 LangChain 的检索增强生成（RAG）管道，用于知识库问答。
 完全兼容 LangServe / FastAPI。
 """
-from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
@@ -12,25 +11,33 @@ from langchain_core.output_parsers import StrOutputParser
 from typing import Dict, Any
 from config import config
 from services.ai_services.llm_factory import get_chat_llm, get_embeddings
+
+_qa_chain_singleton: Any = None
+
+
 def load_qa_chain() -> Any:
     """
-    加载基于 LangChain 的检索问答管道
+    加载基于 LangChain 的检索问答管道（进程内单例，避免每次 HTTP 请求重建 Chroma/嵌入模型）。
     Returns:
         配置好的 RAG 问答链
     """
+    global _qa_chain_singleton
+    if _qa_chain_singleton is None:
+        _qa_chain_singleton = _build_qa_chain()
+    return _qa_chain_singleton
+
+
+def _build_qa_chain() -> Any:
     # 初始化嵌入模型（通过工厂，支持任意提供商）
     embeddings = get_embeddings()
-    # 确保 ChromaDB 持久化目录存在
-    chroma_dir = Path("./chroma_db").resolve()
+    # 与文档向量、系统 RAG 管理器一致：锚定到后端包目录，避免依赖进程 cwd 读到另一份 chroma
+    chroma_dir = config.get_chroma_path()
     chroma_dir.mkdir(parents=True, exist_ok=True)
     # 初始化向量数据库
     db = Chroma(
         persist_directory=str(chroma_dir),
         embedding_function=embeddings,
     )
-    # 创建检索器（返回 top 3 相关文档）
-    retriever = db.as_retriever(search_kwargs={"k": 3})
-    # 初始化 LLM 模型（通过工厂，支持任意提供商）
     llm = get_chat_llm(temperature=0.3)
 
     # 定义混合检索逻辑
@@ -64,9 +71,7 @@ def load_qa_chain() -> Any:
         else:
             # 基础模式
             system_docs = db.similarity_search(question, k=3)
-            
-        all_docs = system_docs + user_docs
-        
+
         # 按类型标注上下文
         context_parts = []
         for d in system_docs:
@@ -78,21 +83,25 @@ def load_qa_chain() -> Any:
 
     # 定义提示模板
     prompt = ChatPromptTemplate.from_template("""
-    你是虚空系统的智能助手。
-    目标：根据提供的【参考资料】回答【用户问题】。
-    
-    【参考资料】：
+    你是虚空系统知识问答助手，请依据资料回答用户问题。
+
+    【参考资料】
     {context}
-    
-    【用户问题】：
+
+    【用户问题】
     {question}
-    
-    【指令】：
-    1. 优先基于参考资料回答。资料包含系统知识库和用户个人库的内容。
-    2. 如果资料内容不足，可以结合通用知识系统地回答，但需指明资料来源。
-    3. 如果参考资料中完全没有相关信息，请告知无法从现有知识库中找到确切证据。
-    4. 保持系统风格：克制、专业、逻辑化。
-    5. 使用 Markdown 格式增强可读性。
+
+    【回答规则】
+    1) 优先使用参考资料作答，不要忽略资料中的关键信息。
+    2) 若资料不足，可补充通用知识，但需明确标注“通用知识补充”。
+    3) 若资料无法支持结论，必须明确说明“当前知识库证据不足”。
+    4) 不编造文档内容，不伪造出处，不做无法验证的绝对结论。
+    5) 输出使用简体中文，结构清晰，控制在务实风格。
+
+    【输出结构（Markdown）】
+    - 先给“结论”一段（1-3句）
+    - 再给“依据”要点（优先引用参考资料中的关键信息）
+    - 如存在不确定性，增加“限制与建议”小节
     """)
 
     def debug_input(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,6 +119,8 @@ def load_qa_chain() -> Any:
         | StrOutputParser()
     )
     return chain
+
+
 if __name__ == "__main__":
     # 测试管道
     qa_chain = load_qa_chain()

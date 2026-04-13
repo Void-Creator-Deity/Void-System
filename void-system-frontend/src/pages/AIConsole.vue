@@ -3,7 +3,7 @@
     <!-- 左侧会话侧边栏 -->
     <aside class="console-sidebar card-glass" :class="{ 'collapsed': isSidebarCollapsed }">
       <div class="sidebar-header">
-        <h3 v-if="!isSidebarCollapsed">量子指令集</h3>
+        <h3 v-if="!isSidebarCollapsed">会话指令集</h3>
         <el-button circle size="small" @click="isSidebarCollapsed = !isSidebarCollapsed">
           <el-icon><Fold v-if="!isSidebarCollapsed"/><Expand v-else/></el-icon>
         </el-button>
@@ -74,19 +74,20 @@
           </div>
           <div class="status-indicator">
             <div class="status-dot" :class="{ 'online': !isLoading, 'loading': isLoading }"></div>
-            <span>{{ isLoading ? '正在同步虚空指令...' : '虚空链路正常' }}</span>
+            <span>{{ isLoading ? '正在同步会话状态...' : '系统链路正常' }}</span>
           </div>
         </div>
       </div>
 
-      <!-- 聊天内容 -->
+      <!-- 聊天内容（主栏限宽居中，类似 Gemini） -->
       <div class="messages-viewport" ref="viewport">
+        <div class="messages-thread">
         <div v-if="!messages?.length" class="empty-state">
           <div class="void-logo">V</div>
           <h3>虚空系统 · 指令控制台</h3>
-          <p>请输入指令以开始。支持文件注入、跨会话引用与自动历史留档。</p>
+          <p>请输入内容开始对话。支持文件上传、跨会话引用与自动历史留档。</p>
           <div class="quick-starts">
-            <div class="q-chip" @click="sendQuick('分析我目前的进化进度')">进度分析</div>
+            <div class="q-chip" @click="sendQuick('分析我当前的任务推进情况')">进度分析</div>
             <div class="q-chip" @click="sendQuick('生成下一阶段任务建议')">任务建议</div>
             <div class="q-chip" @click="sendQuick('系统性能自检')">系统自检</div>
           </div>
@@ -94,6 +95,7 @@
 
         <div 
           v-for="(msg, idx) in messages" 
+          v-show="chatMessageVisible(msg, idx)"
           :key="msg.id"
           :id="'msg-' + msg.id"
           class="void-chat-msg"
@@ -137,15 +139,29 @@
         <div v-if="isLoading && !isStreamingMsg" class="void-chat-msg system">
           <div class="void-msg-container">
             <div class="void-msg-avatar"><div class="avatar-inner system">V</div></div>
-            <div class="void-msg-bubble">
-              <div class="typing-indicator"><span></span><span></span><span></span></div>
+            <div class="void-msg-bubble void-msg-bubble--loading" role="status" aria-live="polite" aria-busy="true">
+              <div class="bubble-header">
+                <span class="role-tag">虚空系统</span>
+              </div>
+              <div class="bubble-text">
+                <div class="void-loading-inline">
+                  <span class="void-loading-ring void-loading-ring--sm" aria-hidden="true"></span>
+                  <span class="void-loading-inline__text">
+                    <strong>正在生成</strong>
+                    模型回复稍候呈现
+                    <span class="void-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
         </div>
       </div>
 
       <!-- 输入区 -->
       <footer class="input-container">
+        <div class="input-thread">
         <!-- 引用提示栏 -->
         <div v-if="replyingMessage" class="reply-bar">
           <div class="reply-info">
@@ -153,6 +169,27 @@
             引用: {{ replyingMessage.text.substring(0, 50) }}...
           </div>
           <el-icon class="close-reply" @click="replyingMessage = null"><Close /></el-icon>
+        </div>
+
+        <div v-if="composerAttachments.length" class="void-composer-attachments">
+          <div
+            v-for="att in composerAttachments"
+            :key="att.localId"
+            class="void-composer-chip"
+          >
+            <img
+              v-if="att.previewUrl"
+              :src="att.previewUrl"
+              class="void-composer-chip-thumb"
+              alt=""
+            />
+            <span class="void-composer-chip-name" :title="att.fileName">{{ att.fileName }}</span>
+            <span v-if="att.uploading" class="void-composer-chip-loading" aria-hidden="true">
+              <span class="void-loading-ring void-loading-ring--sm"></span>
+            </span>
+            <span v-else-if="att.error" class="void-composer-chip-err" :title="att.error">!</span>
+            <el-icon class="void-composer-chip-remove" @click="removeComposerAttachment(att)"><Close /></el-icon>
+          </div>
         </div>
 
         <div class="input-panel card-glass">
@@ -169,7 +206,7 @@
             v-model="input"
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 8 }"
-            placeholder="在此键入指令... (Shift+Enter 换行, Enter 发送)"
+            :placeholder="inputPlaceholder"
             resize="none"
             class="main-textarea"
             @keydown.enter.prevent="handleKeyEnter"
@@ -183,7 +220,7 @@
               circle 
               class="glow-btn"
               @click="handleSend"
-              :disabled="!input.trim()"
+              :disabled="!canSendMessage"
             >
               <el-icon><Promotion /></el-icon>
             </el-button>
@@ -198,13 +235,14 @@
             </el-button>
           </div>
         </div>
+        </div>
       </footer>
     </main>
 
     <!-- 移动会话对话框 -->
     <el-dialog
       v-model="moveDialog.show"
-      title="转移虚空会话"
+      title="转移会话"
       width="300px"
       custom-class="void-dialog"
       append-to-body
@@ -242,7 +280,7 @@ import {
   ChatLineRound, Close, ArrowRight, Delete, DocumentCopy,
   ChatDotSquare, CopyDocument, Promotion, Link, EditPen, Rank, VideoPause
 } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderAssistantMarkdown } from '@/utils/markdownThink'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { streamPersona } from "@/api/ai"
 import { sessionApi } from "@/api/session"
@@ -255,8 +293,9 @@ const viewport = ref(null)
 const fileInputRef = ref(null)
 const replyingMessage = ref(null)
 const abortController = ref(null)
-/** 本会话中已注入、待随下一条消息发给模型的临时文件 ID（多为图片） */
-const pendingVisionFileIds = ref([])
+/** 仅图片：待发送区（Gemini 式），不自动发消息、不展示模型生成的中文描述 */
+const composerAttachments = ref([])
+let composerLocalSeq = 0
 
 const moveDialog = reactive({
   show: false,
@@ -265,10 +304,17 @@ const moveDialog = reactive({
   otherGroups: []
 })
 
+function clearComposerAttachments() {
+  for (const a of composerAttachments.value) {
+    if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+  }
+  composerAttachments.value = []
+}
+
 watch(
   () => chatStore.activeSessionId,
   () => {
-    pendingVisionFileIds.value = []
+    clearComposerAttachments()
   }
 )
 
@@ -276,11 +322,60 @@ watch(
 const currentGroup = computed(() => chatStore.activeGroup)
 const currentSession = computed(() => chatStore.activeSession)
 const messages = computed(() => chatStore.messages)
+/** 已有可见文本流式输出时，不再显示独立「正在生成」条（避免与占位气泡重复） */
 const isStreamingMsg = computed(() => {
   if (!messages.value.length) return false
   const last = messages.value[messages.value.length - 1]
-  return last.role === 'system' && isLoading.value
+  if (last.role !== 'system' || !isLoading.value) return false
+  const t = last.text
+  return typeof t === 'string' && t.length > 0
 })
+
+function chatMessageVisible(msg, idx) {
+  if (msg.role !== 'system') return true
+  if (!isLoading.value) return true
+  const lastIdx = messages.value.length - 1
+  if (idx === lastIdx && !msg.text) return false
+  return true
+}
+
+const hasComposerReadyIds = computed(() =>
+  composerAttachments.value.some((a) => a.fileId && !a.uploading && !a.error)
+)
+
+const canSendMessage = computed(() => {
+  if (isLoading.value) return false
+  const t = input.value.trim()
+  if (t) return true
+  return hasComposerReadyIds.value
+})
+
+const inputPlaceholder = computed(() =>
+  hasComposerReadyIds.value || composerAttachments.value.some((a) => a.fileId || a.uploading)
+    ? '可选：补充说明（Shift+Enter 换行，Enter 发送）'
+    : '在此键入指令…（Shift+Enter 换行，Enter 发送）'
+)
+
+function isImageFile(file) {
+  return (
+    (file.type && file.type.startsWith('image/')) ||
+    /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || '')
+  )
+}
+
+async function removeComposerAttachment(att) {
+  const idx = composerAttachments.value.findIndex((a) => a.localId === att.localId)
+  if (idx < 0) return
+  if (att.previewUrl) URL.revokeObjectURL(att.previewUrl)
+  if (att.fileId) {
+    try {
+      await sessionApi.deleteTemporaryFile(att.fileId)
+    } catch {
+      /* 忽略 */
+    }
+  }
+  composerAttachments.value.splice(idx, 1)
+}
 
 // --- 动作 ---
 
@@ -408,36 +503,42 @@ const sendQuick = (txt) => {
 
 const handleSend = async () => {
   const text = input.value.trim()
-  if (!text || isLoading.value) return
+  const ids = composerAttachments.value
+    .filter((a) => a.fileId && !a.uploading && !a.error)
+    .map((a) => a.fileId)
+  if ((!text && !ids.length) || isLoading.value) return
+
+  const userDisplayText = text || (ids.length ? '（附图）' : '')
+  const apiText = text || '请结合附图回答。'
 
   const userMsg = {
     role: 'user',
-    text: text,
+    text: userDisplayText,
     replyTo: replyingMessage.value ? { id: replyingMessage.value.id, text: replyingMessage.value.text } : null
   }
 
   input.value = ''
   replyingMessage.value = null
   chatStore.addMessage(userMsg)
-  
+
   isLoading.value = true
-  
-  // 占位响应（不立即保存到数据库，等流结束后统一保存）
+
   chatStore.addMessage({ role: 'system', text: '', tokens: 0 }, false)
   scrollToBottom()
 
   try {
     let acc = ""
     abortController.value = new AbortController()
-    
+
     streamPersona(
-      text,
+      apiText,
       chatStore.activeSessionId,
       (content, done) => {
         if (done) {
           chatStore.saveLastMessage(acc, Math.floor(acc.length / 3))
           isLoading.value = false
           abortController.value = null
+          clearComposerAttachments()
         } else {
           acc += content
           const lastMsg = messages.value[messages.value.length - 1]
@@ -446,15 +547,14 @@ const handleSend = async () => {
         }
       },
     (err) => {
-      // 如果是手动取消，不报错
       if (err.name === 'AbortError') return
-      
+
       isLoading.value = false
       abortController.value = null
       ElMessage.error('虚空链路中断: ' + (err.message || '未知错误'))
     },
     abortController.value.signal,
-    { sessionFileIds: [...pendingVisionFileIds.value] }
+    { sessionFileIds: ids }
     )
   } catch (e) {
     isLoading.value = false
@@ -465,23 +565,62 @@ const handleSend = async () => {
 const handleFileUpload = async (e) => {
   const file = e.target.files?.[0]
   if (!file) return
-  
-  isLoading.value = true
+  if (!chatStore.activeSessionId) {
+    ElMessage.warning('请先选择或创建一个对话会话')
+    if (fileInputRef.value) fileInputRef.value.value = ''
+    return
+  }
+
   const formData = new FormData()
   formData.append('file', file)
-  
+
+  if (isImageFile(file)) {
+    const localId = `img-${++composerLocalSeq}-${Date.now()}`
+    const previewUrl = URL.createObjectURL(file)
+    composerAttachments.value.push({
+      localId,
+      previewUrl,
+      fileName: file.name,
+      fileId: null,
+      uploading: true,
+      error: '',
+    })
+    const idx = composerAttachments.value.length - 1
+
+    try {
+      const res = await sessionApi.uploadTemporaryFile(chatStore.activeSessionId, formData)
+      if (!res.data.success) {
+        composerAttachments.value[idx].uploading = false
+        composerAttachments.value[idx].error = res.data?.message || '×'
+        ElMessage.error('上传失败：' + (res.data?.message || ''))
+        return
+      }
+      const fid = res.data.data?.file_id
+      composerAttachments.value[idx].fileId = fid || null
+      composerAttachments.value[idx].uploading = false
+      ElMessage.success('已加入待发送')
+    } catch (err) {
+      composerAttachments.value[idx].uploading = false
+      const detail =
+        err.response?.data?.message || err.response?.data?.detail || err.message || '×'
+      composerAttachments.value[idx].error = detail
+      const st = err.response?.status
+      ElMessage.error(
+        '上传失败' + (st != null ? ` (HTTP ${st})` : '') + (detail ? `：${detail}` : '')
+      )
+    } finally {
+      if (fileInputRef.value) fileInputRef.value.value = ''
+    }
+    return
+  }
+
+  isLoading.value = true
   try {
     const res = await sessionApi.uploadTemporaryFile(chatStore.activeSessionId, formData)
     if (res.data.success) {
-      const fid = res.data.data?.file_id
-      if (fid) {
-        if (!pendingVisionFileIds.value.includes(fid)) {
-          pendingVisionFileIds.value.push(fid)
-        }
-      }
       chatStore.addMessage({
-        role: "system",
-        text: `### 📁 外部数据注入成功\n---\n- **名称**: \`${file.name}\`\n- **大小**: \`${(file.size/1024).toFixed(1)} KB\`\n\n数据已解析并进入虚空缓存，现在可以针对此文件进行提问。`
+        role: 'system',
+        text: `### 📁 外部数据注入成功\n---\n- **名称**: \`${file.name}\`\n- **大小**: \`${(file.size / 1024).toFixed(1)} KB\`\n\n数据已解析并进入虚空缓存，现在可以针对此文件进行提问。`,
       })
       ElMessage.success('注入成功')
     } else {
@@ -502,43 +641,7 @@ const handleFileUpload = async (e) => {
 
 // --- 工具 ---
 
-const renderMarkdown = (text) => {
-  if (!text) return ''
-  let processed = text
-
-  // 1. 处理流式输出中未闭合的 <think>
-  const openCount = (processed.match(/<think>/g) || []).length
-  const closeCount = (processed.match(/<\/think>/g) || []).length
-  
-  if (openCount > closeCount) {
-    processed += '\n</think>'
-  }
-
-  // 2. 拦截并格式化 <think> 区域
-  const thinkBlocks = []
-  processed = processed.replace(/<think>([\s\S]*?)<\/think>/g, (match, content) => {
-    thinkBlocks.push(content)
-    return `%%%VOID_THINK_${thinkBlocks.length - 1}%%%`
-  })
-
-  // 3. 执行 marked 解析
-  let html = marked.parse(processed)
-
-  // 4. 还原 think blocks
-  thinkBlocks.forEach((content, index) => {
-    const renderBlock = marked.parse(content)
-    html = html.replace(`%%%VOID_THINK_${index}%%%`, `
-      <details class="void-think-box">
-        <summary>
-          <span>✨ 虚空模型思维逻辑</span>
-        </summary>
-        <div class="think-content">${renderBlock}</div>
-      </details>
-    `)
-  })
-
-  return html
-}
+const renderMarkdown = renderAssistantMarkdown
 
 const formatTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -561,9 +664,11 @@ onMounted(() => {
 <style scoped>
 .ai-console-layout {
   display: flex;
-  height: calc(100vh - 120px);
+  min-height: calc(100vh - 120px);
+  max-height: calc(100vh - 120px);
   gap: var(--spacing-lg);
   margin: 0 auto;
+  align-items: stretch;
 }
 
 /* Sidebar */
@@ -678,14 +783,30 @@ onMounted(() => {
 .status-dot.online { background: var(--color-success); box-shadow: 0 0 8px var(--color-success); }
 .status-dot.loading { background: var(--color-primary); animation: pulse 1s infinite; }
 
-/* Viewport */
+/* Viewport：外层滚动，内层限宽居中 */
 .messages-viewport {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-xl);
+  overflow-x: hidden;
+  padding: var(--spacing-lg) var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.messages-thread {
+  width: 100%;
+  max-width: var(--chat-thread-max-width);
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
+  flex: 1 1 auto;
+}
+
+.input-thread {
+  width: 100%;
+  max-width: var(--chat-thread-max-width);
+  margin: 0 auto;
 }
 
 .empty-state {
@@ -800,28 +921,42 @@ onMounted(() => {
   cursor: pointer;
 }
 
-/* Typing Indicator */
-.typing-indicator { display: flex; gap: 4px; padding: 4px 0; }
-.typing-indicator span {
-  width: 6px; height: 6px; background: var(--text-muted);
-  border-radius: 50%; animation: typingAnim 1s infinite alternate;
+.void-msg-bubble--loading .bubble-header {
+  margin-bottom: 6px;
 }
-.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes typingAnim { from { opacity: 0.3; transform: scale(1); } to { opacity: 1; transform: scale(1.2); } }
+.void-msg-bubble--loading .bubble-text {
+  min-height: 2.5rem;
+}
 
-/* Input */
-.input-container { padding: 0 var(--spacing-lg) var(--spacing-lg); }
+/* 引用条 */
+.reply-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 8px 12px;
+  margin-bottom: var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-primary);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.reply-bar .close-reply { cursor: pointer; flex-shrink: 0; }
+
+/* Input（Gemini 式圆角条） */
+.input-container { padding: 0 0 var(--spacing-lg); flex-shrink: 0; }
 
 .input-panel {
   display: flex;
   align-items: flex-end;
-  padding: 8px 16px;
+  padding: 10px 16px;
   gap: 12px;
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color-light);
+  border-radius: 28px;
+  box-shadow: var(--shadow-md);
 }
 
 .main-textarea :deep(.el-textarea__inner) {
@@ -830,56 +965,6 @@ onMounted(() => {
   padding: 0;
   font-size: 0.95rem;
 }
-
-.markdown-body :deep(code) { font-family: var(--font-family-mono); background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; }
-.markdown-body :deep(p) { margin-bottom: 0.8rem; }
-.markdown-body :deep(p:last-child) { margin-bottom: 0; }
-
-/* 深度思考框样式 (极简风格防杂乱) */
-.markdown-body :deep(.void-think-box) {
-  margin: 12px 0;
-  border: 1px solid var(--border-color-light); /* 极细淡边框 */
-  border-radius: 8px;
-  background: var(--bg-tertiary); /* 微黑暗底 */
-  overflow: hidden;
-}
-.markdown-body :deep(.void-think-box summary) {
-  padding: 8px 14px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  list-style: none; /* 移除原生小三角 */
-  user-select: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--border-dim);
-  transition: all 0.2s ease;
-}
-.markdown-body :deep(.void-think-box summary::-webkit-details-marker) {
-  display: none;
-}
-.markdown-body :deep(.void-think-box summary:hover) {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--color-primary-light);
-}
-.markdown-body :deep(.void-think-box .think-content) {
-  padding: 12px 14px;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  border-top: 1px solid var(--border-dim);
-  line-height: 1.5;
-}
-.markdown-body :deep(.void-think-box .think-content p) { margin-bottom: 0.5rem; }
-.markdown-body :deep(.void-think-box .think-content p:last-child) { margin-bottom: 0; }
-
-
-/* Typing */
-.typing { display: flex; gap: 4px; margin: 4px 0; }
-.typing span { width: 6px; height: 6px; background: var(--color-primary); border-radius: 50%; animation: typAnim 1s infinite alternate; }
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes typAnim { from {opacity: 0.3} to {opacity: 1} }
 
 .highlight-flash {
   animation: flashBg 2s ease;

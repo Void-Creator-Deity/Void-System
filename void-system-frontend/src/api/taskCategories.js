@@ -18,8 +18,11 @@ export const getTaskCategories = async (includePreset = true) => {
       Authorization: `Bearer ${localStorage.getItem('access_token')}`
     }
   })
-  
-  return res.data
+  // 后端 data 为 { categories: [...] }，不是顶层数组
+  const raw = res.data?.data
+  if (Array.isArray(raw?.categories)) return raw.categories
+  if (Array.isArray(raw)) return raw
+  return []
 }
 
 /**

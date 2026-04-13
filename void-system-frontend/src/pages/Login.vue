@@ -192,13 +192,4 @@ onMounted(() => {
   color: var(--text-muted);
   font-family: var(--font-family-mono);
 }
-
-@keyframes voidFadeIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-float {
-  animation: voidFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-}
 </style>

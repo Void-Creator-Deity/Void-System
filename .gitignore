@@ -3,9 +3,11 @@
 .history/
 .DS_Store
 Thumbs.db
+.cursor/
 
 # === Python ===
 __pycache__/
+.mypy_cache/
 *.py[cod]
 *$py.class
 .venv/
@@ -17,21 +19,55 @@ ENV/
 .env.*
 !.env.example
 *.log
+debug-*.log
+logs/
+*.out
+*.err
+*.tmp
+*.temp
+
+# === Sensitive Credentials / Secrets ===
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.kdbx
+*.ovpn
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+credentials*.json
+secrets*.json
+secret*.json
+token*.json
+auth*.json
+*.secret
 
 # === Database & RAG ===
 *.db
 *.db-journal
 *.sqlite3
+*.sqlite
 chroma_db/
 user_documents/
 !user_documents/.gitkeep
+void-system-backend/data/session_temp/*
+!void-system-backend/data/session_temp/.gitkeep
+void-system-backend/user_files/**
+!void-system-backend/user_files/.gitkeep
+void-system-backend/data/session_temp/**
+!void-system-backend/data/session_temp/.gitkeep
+void-system-backend/data/uploads/**
+!void-system-backend/data/uploads/.gitkeep
 
 # === Node.js ===
 node_modules/
 dist/
 .npm
 .eslintcache
-package-lock.json (if using yarn or pnpm)
+# package-lock.json (if using yarn or pnpm)
 
 # === Project Specific ===
 temp/
@@ -39,3 +75,6 @@ scratch/
 void-system-backend/void_system.db
 void-system-backend/chroma_db/
 void-system-backend/.env
+void-system-backend/backend_routes.txt
+docs/archive/history/**
+docs/archive/inventory/**

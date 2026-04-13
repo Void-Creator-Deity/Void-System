@@ -1,7 +1,7 @@
 """
 Void System - User Document Parser
 ----------------------------------
-多格式文档解析器，支持DeepSeek风格的文件处理
+多格式文档解析器，支持虚空系统统一文档处理流程
 """
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -9,8 +9,18 @@ import logging
 from abc import ABC, abstractmethod
 import pandas as pd
 import io
+import re
 
 logger = logging.getLogger("void-system-doc-parser")
+
+
+def _excel_sheet_display_name(sheet_name: str) -> str:
+    """将 Excel 默认英文工作表名（如 Sheet1）转为中文描述，其余名称原样保留。"""
+    name = str(sheet_name).strip()
+    m = re.match(r"^Sheet(\d+)$", name, re.IGNORECASE)
+    if m:
+        return f"第 {m.group(1)} 个工作表"
+    return name
 
 class DocumentParser(ABC):
     """文档解析器基类"""
@@ -261,7 +271,9 @@ class ExcelDocumentParser(DocumentParser):
 
                     for sheet_name in excel_data.sheet_names:
                         df = pd.read_excel(excel_data, sheet_name=sheet_name)
-                        sheet_content = self._dataframe_to_text(df, f"工作表: {sheet_name}")
+                        sheet_content = self._dataframe_to_text(
+                            df, _excel_sheet_display_name(sheet_name)
+                        )
                         all_content.append(sheet_content)
                         total_rows += len(df)
                         total_columns = max(total_columns, len(df.columns))

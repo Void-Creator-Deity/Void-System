@@ -3,7 +3,7 @@
     <div class="void-content">
       <header class="page-header">
         <h1 class="logo-text"><span class="void-text-gradient">任务顾问</span></h1>
-        <p class="subtitle">通过虚空引擎进行实时分析。获取结构化的进化路径。</p>
+        <p class="subtitle">通过系统引擎进行实时分析，生成结构化任务推进路径。</p>
       </header>
 
       <!-- Input Section -->
@@ -12,7 +12,7 @@
           <div class="input-icon">🧬</div>
           <el-input 
             v-model="userQuery" 
-            placeholder="注入您的进化目标... (例如：精通 Rust 异步编程)"
+            placeholder="输入你的目标... (例如：精通 Rust 异步编程)"
             class="void-input"
             @keyup.enter="submitQuery"
             :disabled="isLoading"
@@ -25,12 +25,12 @@
             :loading="isLoading"
             :disabled="isLoading || !userQuery.trim()"
           >
-            {{ isLoading ? '合成中' : '生成路径' }}
+            {{ isLoading ? '分析中' : '生成路径' }}
           </el-button>
         </div>
         <div class="input-hint">
           <el-icon><InfoFilled /></el-icon>
-          <span>协议：描述性越强的目标，生成的神经图谱精度越高。</span>
+          <span>建议：目标描述越具体，生成结果越可执行。</span>
         </div>
       </section>
 
@@ -53,8 +53,8 @@
       <!-- Synthesis Progress Overlay -->
       <div v-if="isLoading" class="synthesis-overlay">
         <div class="synthesis-core">
-          <div class="core-ring"></div>
-          <h3 class="synthesis-title void-text-gradient">正在分析神经链...</h3>
+          <div class="void-loading-ring void-loading-ring--xl" aria-hidden="true"></div>
+          <h3 class="synthesis-title void-text-gradient">正在分析任务链路...</h3>
           <div class="void-progress-bar">
             <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
           </div>
@@ -67,11 +67,11 @@
         <!-- AI Edit Panel (Crisis Mode) -->
         <div v-if="showAiEdit" class="void-card alert-box warning active">
           <div class="card-header">
-            <h3><el-icon><Warning /></el-icon> 神经结构修正</h3>
+            <h3><el-icon><Warning /></el-icon> 结构修正</h3>
             <el-button type="primary" size="small" class="void-btn primary" @click="rebuildFromEdit">重构</el-button>
           </div>
           <div class="card-body">
-            <p class="hint-text">检测到数据不完整。JSON 配置需要人工干预。</p>
+            <p class="hint-text">检测到结果结构不完整，需要人工修正后再继续。</p>
             <el-input
               v-model="aiEditContent"
               type="textarea"
@@ -86,7 +86,7 @@
         <div class="manifest-card void-card">
           <header class="manifest-header">
             <div class="manifest-info">
-              <h2 class="manifest-title">进化图谱: {{ advisorResult.query }}</h2>
+              <h2 class="manifest-title">任务路径: {{ advisorResult.query }}</h2>
               <div class="manifest-meta">
                 <span class="tag"><el-icon><Calendar /></el-icon> {{ formattedDate }}</span>
                 <span class="tag" v-if="estimatedDuration"><el-icon><Timer /></el-icon> 预计用时 {{ estimatedDuration }}</span>
@@ -99,7 +99,7 @@
               :loading="isLoading" 
               :disabled="!isValidTaskStructure"
             >
-              部署到系统
+              发布到任务系统
             </el-button>
           </header>
 
@@ -125,7 +125,7 @@
 
         <!-- 原始数据 (存档) -->
         <div class="raw-data-card void-card">
-          <h3 class="card-title"><el-icon><Memo /></el-icon> 原始神经数据</h3>
+          <h3 class="card-title"><el-icon><Memo /></el-icon> 原始结果数据</h3>
           <div class="data-terminal">
             <pre>{{ formattedFullResponse }}</pre>
           </div>
@@ -135,18 +135,18 @@
       <!-- 消息 -->
       <div v-if="errorMessage" class="void-card alert-box error animate-fade-in">
         <el-icon><Warning /></el-icon>
-        <span>警报: {{ errorMessage }}</span>
+        <span>异常: {{ errorMessage }}</span>
       </div>
       <div v-if="successMessage" class="void-card alert-box success animate-fade-in">
         <el-icon><Check /></el-icon>
-        <span>确认: {{ successMessage }}</span>
+        <span>完成: {{ successMessage }}</span>
       </div>
     </div>
 
     <!-- History Sidebar -->
     <div class="history-sidebar" :class="{ open: showHistory }">
       <header class="sidebar-header">
-        <h3 class="sidebar-title">神经存档</h3>
+        <h3 class="sidebar-title">历史存档</h3>
         <div class="sidebar-btns">
           <el-button circle class="void-btn ghost" icon="Delete" @click="clearHistory" title="清除所有存档" />
           <el-button circle class="void-btn ghost" icon="Close" @click="toggleHistory" title="关闭" />
@@ -200,6 +200,7 @@ import {
   Close
 } from '@element-plus/icons-vue'
 import { getAdvisor } from '@/api/ai'
+import { formatAxiosErrorMessage } from '@/utils/apiPayload'
 import api from '@/api/index'
 import { getTaskCategories } from '@/api/taskCategories'
 
@@ -400,7 +401,7 @@ const submitQuery = async () => {
     saveToHistory(advisorResult.value)
     ElMessage.success('合成已完成')
   } catch (error) {
-    errorMessage.value = error.response?.data?.detail || '神经链路故障'
+    errorMessage.value = formatAxiosErrorMessage(error, '神经链路故障')
     ElMessage.error(errorMessage.value)
   } finally {
     setTimeout(() => {
@@ -432,7 +433,7 @@ const publishTask = async () => {
     advisorResult.value = null
     userQuery.value = ''
   } catch (error) {
-    ElMessage.error('部署失败: ' + (error.response?.data?.detail || error.message))
+    ElMessage.error('部署失败: ' + formatAxiosErrorMessage(error, error?.message || '未知错误'))
   } finally {
     isLoading.value = false
   }
@@ -483,7 +484,7 @@ const rebuildFromEdit = () => {
 
 <style scoped>
 .advisor-page {
-  background: var(--bg-page);
+  position: relative;
   min-height: 100vh;
 }
 
@@ -499,25 +500,15 @@ const rebuildFromEdit = () => {
   z-index: 0;
 }
 
-.void-content {
+.advisor-page .void-content {
   position: relative;
   z-index: 1;
-  padding: var(--spacing-xxl) 0;
 }
 
-.page-header {
-  margin-bottom: var(--spacing-xxl);
-}
-
-.logo-text {
+.advisor-page .page-header .logo-text {
   font-size: 3rem;
   letter-spacing: -2px;
   margin-bottom: var(--spacing-xs);
-}
-
-.subtitle {
-  color: var(--text-muted);
-  font-size: 1.1rem;
 }
 
 /* Input Box */
@@ -611,15 +602,8 @@ const rebuildFromEdit = () => {
   width: 400px;
 }
 
-.core-ring {
-  width: 100px;
-  height: 100px;
-  border: 4px solid var(--border-color);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
+.synthesis-core .void-loading-ring--xl {
   margin: 0 auto var(--spacing-xl);
-  animation: voidSpin 1s linear infinite;
-  box-shadow: 0 0 30px var(--color-primary-transparent);
 }
 
 .synthesis-title {
@@ -856,10 +840,6 @@ const rebuildFromEdit = () => {
 
 .sidebar-toggle:hover {
   transform: scale(1.1) rotate(15deg);
-}
-
-@keyframes voidSpin {
-  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 768px) {

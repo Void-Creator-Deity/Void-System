@@ -5,7 +5,7 @@ import api from "./index"
  */
 export const getChatHistory = async () => {
     const res = await api.get("/api/chat/groups")
-    return res.data.data.groups
+    return res.data?.data?.groups ?? []
 }
 
 /**
@@ -13,7 +13,7 @@ export const getChatHistory = async () => {
  */
 export const createChatGroup = async (groupName) => {
     const res = await api.post("/api/chat/groups", { group_name: groupName })
-    return res.data.data.group_id
+    return res.data?.data?.group_id ?? null
 }
 
 /**
@@ -41,7 +41,7 @@ export const createChatSession = async (groupId, sessionName, sessionId = null) 
         session_name: sessionName,
         session_id: sessionId
     })
-    return res.data.data.session_id
+    return res.data?.data?.session_id ?? null
 }
 
 /**
@@ -68,7 +68,7 @@ export const deleteChatSession = async (sessionId) => {
  */
 export const duplicateChatSession = async (sessionId) => {
     const res = await api.post(`/api/chat/sessions/${sessionId}/duplicate`)
-    return res.data.data.session_id
+    return res.data?.data?.session_id ?? null
 }
 
 /**
@@ -76,7 +76,7 @@ export const duplicateChatSession = async (sessionId) => {
  */
 export const getChatMessages = async (sessionId, limit = 100) => {
     const res = await api.get(`/api/chat/sessions/${sessionId}/messages`, { params: { limit } })
-    return res.data.data.messages
+    return res.data?.data?.messages ?? []
 }
 
 /**
@@ -89,7 +89,7 @@ export const addChatMessage = async (sessionId, { role, content, tokens = 0, rep
         tokens,
         reply_to_id: replyToId
     })
-    return res.data.data.message_id
+    return res.data?.data?.message_id ?? null
 }
 
 /**

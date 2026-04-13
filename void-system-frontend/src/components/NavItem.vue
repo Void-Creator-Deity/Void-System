@@ -70,19 +70,22 @@ const handleClick = (navigate, event) => {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 0.5rem);
-  padding: var(--spacing-sm, 0.5rem) var(--spacing-lg, 1.25rem);
+  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 0.75rem);
   color: var(--color-text-secondary, #cbd5e1);
   text-decoration: none;
   border-radius: var(--radius-lg, 12px);
   transition: all var(--transition-normal, 0.3s ease);
   cursor: pointer;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   font-weight: 500;
-  font-size: 0.95rem;
+  font-size: 0.875rem;
+  line-height: 1.25;
   border: 1px solid transparent;
   background: rgba(30, 41, 59, 0.3);
   backdrop-filter: blur(8px);
+  flex-shrink: 0;
+  max-width: 11rem;
 }
 
 .nav-link::before {
@@ -111,7 +114,7 @@ const handleClick = (navigate, event) => {
 }
 
 .nav-link.active {
-  color: var(--color-primary, #6366f1);
+  color: var(--color-primary-light, #93c5fd);
   background: linear-gradient(135deg, 
     rgba(99, 102, 241, 0.2), 
     rgba(6, 182, 212, 0.15)
@@ -119,7 +122,7 @@ const handleClick = (navigate, event) => {
   box-shadow: 
     0 6px 20px rgba(99, 102, 241, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  text-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+  text-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
   border: 1px solid rgba(99, 102, 241, 0.4);
   transform: translateY(-1px);
 }
@@ -187,16 +190,18 @@ const handleClick = (navigate, event) => {
 
 .nav-text {
   font-weight: 500;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.02em;
   position: relative;
   z-index: 1;
-  transition: all var(--transition-normal, 0.3s ease);
+  transition: color var(--transition-normal, 0.3s ease);
+  word-break: keep-all;
+  white-space: normal;
+  text-align: left;
 }
 
+/* 勿用 background-clip:text + transparent 填充：深色主题下常导致选中态文字「消失」 */
 .nav-link.active .nav-text {
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-primary, #e8eaed);
+  text-shadow: 0 0 20px rgba(147, 197, 253, 0.45);
 }
 </style>

@@ -108,6 +108,22 @@ export const streamPersona = async (text, sessionId, onMessage, onError, signal,
 };
 
 /**
+ * 对已上传的会话临时图片请求无状态中文摘要（不污染多轮记忆）
+ * @param {{ fileId: string, sessionId: string }} params
+ * @returns {Promise<{ summary: string }>}
+ */
+export async function requestImageCaption({ fileId, sessionId }) {
+  const { data } = await api.post("/api/ai/image-caption", {
+    file_id: fileId,
+    session_id: sessionId,
+  })
+  if (!data.success) {
+    throw new Error(data.message || "看图摘要失败")
+  }
+  return { summary: data.data?.summary ?? "" }
+}
+
+/**
  * 流式调用学习任务建议生成
  * @param {string} topic - 学习主题
  * @param {function} onMessage - 接收消息的回调函数
@@ -339,9 +355,16 @@ export const getAdvisor = async (topic, cancelToken) => {
       },
       {
         cancelToken,
-        timeout: 120000  // AI生成可能需要较长时间，设置2分钟超时
+        // 本地 Ollama / 慢速 API 常超过 2 分钟；与全局 60s 区分，仅本接口放宽
+        timeout: 600000
       }
     )
+
+    if (res.data && res.data.success === false) {
+      const err = new Error(res.data.message || "任务建议失败")
+      err.response = { data: res.data }
+      throw err
+    }
 
     // 直接返回结构化数据
     return res.data.data
@@ -358,20 +381,17 @@ export const getAdvisor = async (topic, cancelToken) => {
 /**
  * 调用知识问答（基于 RAG）
  * @param {string} question - 用户问题
- * @param {Object} [options] - 可选的参数（如 mode）
+ * @param {Object} [options] - mode、userId（混合模式个人库检索）
  * @returns {Promise<string>} 问答结果
  */
 export const askQA = async (question, options = {}) => {
-  const res = await api.post(
-    "/api/lc/qa/invoke",
-    {
-      input: {
-        question,
-        mode: options.mode || 'vector',
-        user_id: options.userId || null
-      }
-    }
-  )
+  const res = await api.post("/api/lc/qa/invoke", {
+    input: {
+      question,
+      mode: options.mode || "vector",
+      user_id: options.userId || null,
+    },
+  })
 
   return res.data.output
 }

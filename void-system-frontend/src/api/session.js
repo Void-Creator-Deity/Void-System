@@ -25,11 +25,20 @@ export const sessionApi = {
    * @returns {Promise}
    */
   uploadTemporaryFile(sessionId, formData) {
-    return api.post(`/api/session/upload-temporary?session_id=${sessionId}`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
+    return api.post(
+      `/api/session/upload-temporary?session_id=${encodeURIComponent(sessionId)}`,
+      formData,
+      {
+        transformRequest: [
+          (data, headers) => {
+            if (data instanceof FormData) {
+              delete headers['Content-Type']
+            }
+            return data
+          },
+        ],
       }
-    })
+    )
   },
 
   /**

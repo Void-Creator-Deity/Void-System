@@ -25,15 +25,15 @@ logger = logging.getLogger("void-system-llm-factory")
 
 def get_chat_llm(
     temperature: float = 0.5,
-    json_mode: bool = False
+    json_mode: bool = False,
 ) -> Any:
     """
     根据配置返回合适的 ChatLLM 实例。
-    
+
     Args:
         temperature: 温度参数 (创意度)
         json_mode:   是否强制 JSON 输出 (仅 Ollama 支持 format='json')
-    
+
     Returns:
         LangChain ChatModel 实例
     """
@@ -104,7 +104,7 @@ def get_chat_llm(
 def get_embeddings() -> Any:
     """
     根据配置返回合适的 Embeddings 实例。
-    
+
     Returns:
         LangChain Embeddings 实例
     """
@@ -128,9 +128,9 @@ def get_embeddings() -> Any:
         )
 
     elif provider == "huggingface":
-        from langchain_huggingface import HuggingFaceEmbeddings
-        return HuggingFaceEmbeddings(
-            model_name=config.EMBEDDING_MODEL or "BAAI/bge-small-zh-v1.5",
+        raise EnvironmentError(
+            "EMBEDDING_PROVIDER=huggingface 已在当前项目中移除。"
+            "请改用 EMBEDDING_PROVIDER=ollama 或 EMBEDDING_PROVIDER=openai。"
         )
 
     else:

@@ -50,7 +50,8 @@ const routes = [
     component: AIConsole,
     meta: { 
       requiresAuth: true,
-      title: '系统精灵'
+      title: '系统精灵',
+      fullBleed: true
     }
   },
   {

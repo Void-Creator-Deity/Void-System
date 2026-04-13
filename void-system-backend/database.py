@@ -297,7 +297,7 @@ class Database:
         )
         ''')
 
-        # 用户文档表 - DeepSeek风格文档管理
+        # 用户文档表 - 虚空系统文档管理
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_documents (
             doc_id VARCHAR(36) PRIMARY KEY,

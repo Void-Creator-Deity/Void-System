@@ -1,10 +1,10 @@
 <template>
   <div class="void-page-container document-manager">
-    <div class="void-content">
+    <div class="void-content void-content--wide">
       <!-- Page Header -->
       <header class="page-header">
         <h1 class="logo-text"><span class="void-text-gradient">文件</span> 归档</h1>
-        <p class="subtitle">用于深度智能集成的神经仓库。</p>
+        <p class="subtitle">用于知识检索与问答的文档仓库。</p>
       </header>
       
       <!-- 注入部分 -->
@@ -29,7 +29,7 @@
             <div v-if="!uploading" class="upload-prompt">
               <el-icon class="prompt-icon"><Plus /></el-icon>
               <div class="prompt-text">
-                <p class="main-text">通过拖拽或 <span class="highlight">点击此处</span> 部署新切片</p>
+                <p class="main-text">通过拖拽或 <span class="highlight">点击此处</span> 上传新文档</p>
                 <p class="sub-text">支持格式: PDF, Word, Excel, 图片, 文本 (最大 50MB)</p>
               </div>
             </div>
@@ -51,11 +51,11 @@
           
           <div class="upload-meta">
             <div class="void-form-group">
-              <label>切片标识符 (可选标题)</label>
+              <label>文档标识 (可选标题)</label>
               <el-input v-model="uploadTitle" placeholder="指定标题..." class="void-input" />
             </div>
             <div class="void-form-group">
-              <label>索引分类器 (标签)</label>
+              <label>分类标签</label>
               <el-select 
                 v-model="uploadTags" 
                 multiple 
@@ -75,7 +75,7 @@
         <div class="void-stat-card animate-float">
           <div class="stat-icon"><DocumentIcon /></div>
           <div class="stat-info">
-            <span class="stat-label">切片总数</span>
+            <span class="stat-label">文档总数</span>
             <span class="stat-value">{{ stats.total_documents }}</span>
           </div>
         </div>
@@ -106,14 +106,14 @@
       <section class="archive-section">
         <header class="section-header">
           <div class="title-group">
-            <h2 class="section-title">知识内核</h2>
+            <h2 class="section-title">知识文档库</h2>
             <div class="void-badge primary">{{ totalCount }} 条目</div>
           </div>
           
           <div class="header-filters">
             <el-input 
               v-model="vectorSearchQuery" 
-              placeholder="查询神经模式..." 
+              placeholder="输入关键词进行检索..." 
               clearable 
               class="void-input search-input"
               @keyup.enter="performVectorSearch"
@@ -137,7 +137,7 @@
         <!-- 搜索结果覆盖层 -->
         <div v-if="vectorSearchResults.length > 0" class="search-overlay void-card animate-fade-in">
           <div class="overlay-header">
-            <h3>神经模式匹配 ({{ vectorSearchResults.length }})</h3>
+            <h3>检索匹配结果 ({{ vectorSearchResults.length }})</h3>
             <button class="void-btn text" @click="vectorSearchResults = []">关闭</button>
           </div>
           <div class="results-list">
@@ -156,7 +156,7 @@
 
         <!-- 空状态 -->
         <div v-else-if="documents.length === 0" class="void-empty-state">
-          <el-empty description="系统归档库目前处于虚空状态。" />
+          <el-empty description="当前文档库为空，请先上传文档。" />
         </div>
 
         <!-- Document Grid -->
@@ -176,7 +176,7 @@
               <div class="doc-info">
                 <h4 class="doc-title">{{ doc.title }}</h4>
                 <div class="doc-specs">
-                  <span>{{ doc.file_type.toUpperCase() }}</span>
+                  <span>{{ fileTypeLabel(doc.file_type) }}</span>
                   <span class="divider"></span>
                   <span>{{ formatFileSize(doc.file_size) }}</span>
                 </div>
@@ -209,7 +209,7 @@
                   class="void-btn primary sm" 
                   @click="askWithDocument(doc)"
                 >
-                  DEEP_ANALYZE
+                  深度解析
                 </el-button>
                 
                 <button class="void-icon-btn sm" @click="editDocument(doc)">
@@ -222,8 +222,8 @@
                   </button>
                   <template #dropdown>
                     <el-dropdown-menu class="void-dropdown">
-                      <el-dropdown-item command="preview">Preview Buffer</el-dropdown-item>
-                      <el-dropdown-item command="delete" class="text-error">Wipe Data</el-dropdown-item>
+                      <el-dropdown-item command="preview">预览原文</el-dropdown-item>
+                      <el-dropdown-item command="delete" class="text-error">删除文档</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
@@ -252,38 +252,43 @@
     </div>
 
     <!-- Modals -->
-    <el-dialog v-model="editDialogVisible" title="Neural Metadata Shift" width="500px" class="void-dialog">
+    <el-dialog v-model="editDialogVisible" title="编辑文档信息" width="500px" class="void-dialog">
       <div class="modal-body">
         <div class="void-form-group">
-          <label>Redefine Shard Title</label>
-          <el-input v-model="editingDoc.title" placeholder="New identifier..." class="void-input" />
+          <label>标题</label>
+          <el-input v-model="editingDoc.title" placeholder="输入文档标题…" class="void-input" />
         </div>
         <div class="void-form-group">
-          <label>Update Classifiers</label>
-          <el-select v-model="editingDoc.tags" multiple filterable allow-create class="void-select" placeholder="Add classification..." style="width: 100%" />
+          <label>标签</label>
+          <el-select v-model="editingDoc.tags" multiple filterable allow-create class="void-select" placeholder="添加或选择标签…" style="width: 100%" />
         </div>
       </div>
       <template #footer>
         <div class="modal-footer">
-          <el-button class="void-btn text" @click="editDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" class="void-btn primary" @click="saveDocumentEdit" :loading="saving">Synchronize</el-button>
+          <el-button class="void-btn text" @click="editDialogVisible = false">取消</el-button>
+          <el-button type="primary" class="void-btn primary" @click="saveDocumentEdit" :loading="saving">保存</el-button>
         </div>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="previewDialogVisible" title="Buffer Preview" width="80%" class="void-dialog full-height">
+    <el-dialog v-model="previewDialogVisible" title="原文预览" width="80%" class="void-dialog full-height">
       <div class="preview-scroll">
         <pre class="void-code-block">{{ previewContent }}</pre>
       </div>
     </el-dialog>
 
-    <el-dialog v-model="qaDialogVisible" :title="`DEEP ANALYSIS: ${selectedDocForQA?.title}`" width="900px" class="void-dialog has-footer">
+    <el-dialog v-model="qaDialogVisible" :title="`深度分析：${selectedDocForQA?.title || ''}`" width="900px" class="void-dialog has-footer">
       <div class="qa-neural-link">
         <div class="chat-viewport" ref="msgList">
           <div v-for="m in qaMessages" :key="m.id" class="neural-message" :class="m.type">
-            <div class="msg-bubble">{{ m.content }}</div>
+            <div
+              v-if="m.type === 'answer'"
+              class="msg-bubble markdown-body void-markdown"
+              v-html="answerHtmlForMessage(m)"
+            ></div>
+            <div v-else class="msg-bubble">{{ m.content }}</div>
             <div v-if="m.sources?.length" class="msg-knowledge">
-              <div class="meta-label">SOURCE_SHARDS:</div>
+              <div class="meta-label">引用片段</div>
               <div class="source-cloud">
                 <el-tag v-for="(s, i) in m.sources" :key="i" size="small" class="void-tag sm">{{ s.title }}</el-tag>
               </div>
@@ -293,7 +298,7 @@
         <div class="chat-input-area">
           <el-input 
             v-model="qaQuestion" 
-            placeholder="Initialize query pattern..." 
+            placeholder="输入针对该文档的问题…" 
             class="void-input" 
             @keyup.enter="sendQuestion" 
             :disabled="asking"
@@ -328,6 +333,8 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { documentApi } from '@/api/document'
+import { formatAxiosErrorMessage } from '@/utils/apiPayload'
+import { renderAssistantMarkdown } from '@/utils/markdownThink'
 
 // 响应式数据
 const fileInput = ref(null)
@@ -360,6 +367,11 @@ const selectedDocForQA = ref(null)
 const qaQuestion = ref('')
 const qaMessages = ref([])
 const asking = ref(false)
+
+function answerHtmlForMessage(m) {
+  if (m.type !== 'answer') return ''
+  return renderAssistantMarkdown(m.content || '')
+}
 
 // 向量搜索相关
 const vectorSearchQuery = ref('')
@@ -413,10 +425,30 @@ const getStatusClass = (status) => {
 }
 
 // 工具方法
+const fileTypeLabel = (ft) => {
+  if (!ft) return ''
+  const t = String(ft).toLowerCase()
+  const map = {
+    pdf: 'PDF 文档',
+    doc: 'Word 文档',
+    docx: 'Word 文档',
+    xls: 'Excel 表格',
+    xlsx: 'Excel 表格',
+    csv: 'CSV 表格',
+    txt: '文本',
+    md: 'Markdown',
+    jpg: '图片',
+    jpeg: '图片',
+    png: '图片',
+    gif: '图片'
+  }
+  return map[t] || t.toUpperCase()
+}
+
 const formatFileSize = (bytes) => {
-  if (!bytes) return '0 B'
+  if (!bytes) return '0 字节'
   const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
+  const sizes = ['字节', '千字节', '兆字节', '吉字节']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
@@ -613,19 +645,33 @@ const sendQuestion = async () => {
   try {
     const response = await documentApi.ask(question, [selectedDocForQA.value.doc_id])
     const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
-    
-    if (response.data.success && answerIndex !== -1) {
+    if (answerIndex === -1) return
+
+    if (response.data.success) {
       qaMessages.value[answerIndex] = {
         id: answerId,
         type: 'answer',
         content: response.data.data.answer,
         sources: response.data.data.sources
       }
+    } else {
+      qaMessages.value[answerIndex] = {
+        id: answerId,
+        type: 'answer',
+        content: response.data.message || '问答请求未成功',
+        sources: []
+      }
     }
   } catch (error) {
     const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
     if (answerIndex !== -1) {
-      qaMessages.value[answerIndex].content = '问答系统暂时不可用'
+      const msg = formatAxiosErrorMessage(error, '问答失败，请检查网络或登录状态')
+      qaMessages.value[answerIndex] = {
+        id: answerId,
+        type: 'answer',
+        content: msg,
+        sources: []
+      }
     }
   } finally {
     asking.value = false
@@ -702,16 +748,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.document-manager {
-  min-height: 100vh;
-}
-
-.void-content {
-  padding: var(--spacing-xxl) 0;
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
 /* Page Header */
 .page-header {
   margin-bottom: var(--spacing-xxxl);

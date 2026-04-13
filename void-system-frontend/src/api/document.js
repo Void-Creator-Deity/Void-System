@@ -75,10 +75,14 @@ export const documentApi = {
      * @param {string} question 
      * @param {string[]} documentIds 
      */
-    ask(question, documentIds = []) {
-        return api.post('/api/user/qa/ask', {
-            question,
-            document_ids: documentIds
-        })
+    ask(question, documentIds = [], options = {}) {
+        return api.post(
+            '/api/user/qa/ask',
+            {
+                question,
+                document_ids: documentIds
+            },
+            { timeout: options.timeoutMs ?? 300000 }
+        )
     }
 }

@@ -208,24 +208,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.profile-page {
-  background: var(--bg-page);
-  min-height: 100vh;
-}
-
-.void-content {
-  padding: var(--spacing-xxl) 0;
-}
-
-.page-header {
-  margin-bottom: var(--spacing-xxl);
-}
-
-.subtitle {
-  color: var(--text-muted);
-  font-size: 1.1rem;
-}
-
 .profile-layout {
   display: grid;
   grid-template-columns: 360px 1fr;
@@ -1088,37 +1070,6 @@ xt {
     box-shadow: 
       0 0 40px var(--accent-primary),
       inset 0 2px 10px rgba(255, 255, 255, 0.3);
-  }
-}
-
-@keyframes statusPulse {
-  0%, 100% {
-    box-shadow: 0 0 15px #00ff66;
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 25px #00ff66, 0 0 35px rgba(0, 255, 102, 0.5);
-    transform: scale(1.1);
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 

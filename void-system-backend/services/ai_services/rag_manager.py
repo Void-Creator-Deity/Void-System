@@ -5,7 +5,6 @@ Void System - RAG Document Manager
 """
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -21,6 +20,8 @@ if backend_dir not in sys.path:
 
 from database import Database
 from api.user_document_parser import document_parser
+from config import config
+from services.ai_services.llm_factory import get_embeddings
 
 class SystemRAGManager:
     """
@@ -28,17 +29,15 @@ class SystemRAGManager:
     负责系统知识库的文档管理，包括添加、删除、列出和更新文档。
     """
 
-    def __init__(self, chroma_dir: str = "./chroma_db", db_path: str = "void_system.db"):
+    def __init__(self, chroma_dir: Optional[str] = None, db_path: str = "void_system.db"):
         """
         初始化RAG文档管理器
         """
-        self.chroma_dir = Path(chroma_dir).resolve()
+        self.chroma_dir = config.get_chroma_path() if chroma_dir is None else Path(chroma_dir).resolve()
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
 
-        # 初始化嵌入模型
-        self.embeddings = OllamaEmbeddings(
-            model="hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0"
-        )
+        # 与 qa_chain、用户向量共用同一嵌入工厂，保证入库与检索维度、模型一致
+        self.embeddings = get_embeddings()
 
         # 初始化向量数据库
         self.vector_db = Chroma(

@@ -6,6 +6,7 @@
 
 <template>
   <div class="void-page-container rag-management void-fade-in">
+    <div class="void-content void-content--wide">
     <!-- 页面头部 -->
     <header class="page-header">
       <h1 class="logo-text"><span class="void-text-gradient">RAG</span> 引擎</h1>
@@ -166,6 +167,8 @@ Line 109:           </div>
         class="void-pagination"
       />
     </footer>
+
+    </div>
 
     <!-- 上传对话框 -->
     <el-dialog
@@ -633,10 +636,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.rag-management {
-  min-height: 100vh;
-}
-
 .page-header {
   margin-bottom: var(--spacing-xxxl);
   text-align: center;

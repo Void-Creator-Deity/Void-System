@@ -57,60 +57,31 @@ def load_structured_task_chain() -> Runnable[Dict[str, Any], StructuredTaskPlan]
     # 定义包含格式指令的提示模板
     prompt = PromptTemplate(
         template="""
-        你是虚空学习系统的AI引导精灵，专门为用户创建可执行、结构化的学习计划。
+        你是虚空系统任务顾问。你的职责是把用户目标转成可执行的任务路径。
 
-        ### 用户目标：
+        【用户目标】
         {topic}
 
-        ### 你的任务：
-        根据用户目标，生成一个详细、可执行的任务计划。
-
-        ### 输出格式要求：
+        【输出格式要求】
         {format_instructions}
 
-        ### 内容要求：
-        1. **response字段**：一句友好的开场白，如"基于您的目标，我已经为您规划了以下任务路径："
-        2. **steps字段**：根据任务目标，提炼出 1到8个 可执行的步骤。
-           - 【重要说明】如果用户的目标只是一个很简单、单一的事情（比如"做5个俯卧撑"、"倒杯水"、"写一篇日记"），你只需要生成 **1个** 步骤即可，不要强行拉长或拆分成多个毫无意义的阶段！如果是庞大的系统工程才需要拆分多阶段任务链。
-           - 每个步骤必须是独立、完整的行动指南。
-           - 步骤的 `title` 要清晰指出阶段名称和主题。
-           - 步骤的 `description` 必须包含具体的执行动作。
-        3. **estimatedDuration字段**：给出实际可行的总时间预估，如"45分钟"或"2天"。
+        【生成规则】
+        1) 只输出 JSON，不要输出 Markdown、解释或代码块标记。
+        2) response：1 句简短确认语，说明已生成任务路径。
+        3) steps：生成 1-8 个步骤，数量依据目标复杂度决定：
+           - 简单单步目标（如一次性动作）= 1 步；
+           - 常规目标 = 3-5 步；
+           - 复杂长期目标 = 5-8 步。
+        4) 每个 step 必须包含：
+           - title：清晰阶段名，长度 8-24 字；
+           - description：具体行动说明，包含可执行动作与完成标准，长度 20-120 字。
+        5) estimatedDuration：给出可执行总时长（如“45分钟”“2周（每天40分钟）”）。
+        6) 不要编造无法执行的资源前提；若目标信息不足，按最小可行路径给出步骤。
 
-        ### 示例1：主题"学习Python编程"
-        输出示例：
-        {{
-          "response": "基于您的目标，我已为您规划了Python编程的完整学习路径。",
-          "steps": [
-            {{"title": "阶段一：Python基础与环境搭建", "description": "安装Python环境，学习基础语法、数据类型和流程控制。"}},
-            {{"title": "阶段二：面向对象编程", "description": "掌握类、对象、继承和多态等面向对象概念。"}},
-            {{"title": "阶段三：项目实战练习", "description": "完成一个完整的Python项目，如网页爬虫或数据分析工具。"}},
-            {{"title": "阶段四：高级特性学习", "description": "学习装饰器、生成器、异步编程等高级特性。"}}
-          ],
-          "estimatedDuration": "8周（每周6小时）"
-        }}
-
-        ### 示例2：主题"减肥塑形计划"
-        输出示例：
-        {{
-          "response": "基于您的健身目标，我已为您制定了系统化的减肥塑形计划。",
-          "steps": [
-            {{"title": "阶段一：基础体测与习惯建立", "description": "进行身体基础数据测量，建立规律的饮食和运动习惯。"}},
-            {{"title": "阶段二：有氧运动强化", "description": "进行跑步、游泳等有氧运动，每周4-5次，每次45分钟。"}},
-            {{"title": "阶段三：力量训练加入", "description": "在有氧基础上加入力量训练，塑造肌肉线条。"}},
-            {{"title": "阶段四：巩固与调整", "description": "根据身体反馈调整计划，巩固减肥成果。"}}
-          ],
-          "estimatedDuration": "12周（每周5次运动）"
-        }}
-
-        ### 现在，请为以下用户目标生成计划：
-        用户目标：{topic}
-
-        ### 重要提醒：
-        - 输出必须是有效的JSON格式
-        - 不要有任何额外的文本、Markdown标记或解释
-        - steps数组必须有3-6个步骤
-        - 每个步骤必须有title和description字段
+        【质量约束】
+        - 步骤之间应有顺序依赖，避免重复与空话。
+        - 优先给出能马上执行的第一步。
+        - 语言务实、明确、可落地。
         """,
         input_variables=["topic"],
         partial_variables={"format_instructions": format_instructions}
@@ -175,10 +146,7 @@ def load_json_task_chain() -> Runnable[Dict[str, Any], Dict]:
     现在为这个目标生成计划：{topic}
     """)
 
-    llm = ChatOllama(
-        model=config.CHAT_MODEL,
-        temperature=0.5
-    )
+    llm = get_chat_llm(temperature=0.5, json_mode=False)
 
     # 使用JsonOutputParser
     json_parser = JsonOutputParser()

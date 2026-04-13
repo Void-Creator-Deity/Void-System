@@ -3,15 +3,15 @@
     <div class="void-content">
       <header class="page-header">
         <h1 class="logo-text"><span class="void-text-gradient">虚空</span> 知识库</h1>
-        <p class="subtitle">通过虚空知识库进行神经检索。精准、合成。</p>
+        <p class="subtitle">基于知识库进行检索问答，输出可追溯答案。</p>
       </header>
 
       <!-- Search Area -->
       <section class="selection-box void-card animate-float">
         <div class="mode-selector">
           <el-radio-group v-model="searchMode" size="small" class="void-radio-group">
-            <el-radio-button label="vector">向量路径 (Vector)</el-radio-button>
-            <el-radio-button label="hybrid">混合脉冲 (Hybrid)</el-radio-button>
+            <el-radio-button label="vector">向量检索 (Vector)</el-radio-button>
+            <el-radio-button label="hybrid">混合检索 (Hybrid)</el-radio-button>
           </el-radio-group>
         </div>
 
@@ -19,7 +19,7 @@
           <div class="input-icon">🔍</div>
           <el-input 
             v-model="question" 
-            placeholder="输入神经查询... (Shift + Enter 换行)"
+            placeholder="输入问题内容... (Shift + Enter 换行)"
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 6 }"
             class="void-input"
@@ -33,16 +33,16 @@
             :loading="isLoading"
             :disabled="isLoading || !question.trim()"
           >
-            {{ isLoading ? '检索中' : '询问虚空' }}
+            {{ isLoading ? '检索中' : '提交问题' }}
           </el-button>
         </div>
       </section>
 
       <!-- Synthesis State -->
       <div v-if="isLoading" class="loading-state animate-fade-in">
-        <div class="synthesis-core">
-          <div class="core-ring"></div>
-          <p class="status-msg">正在扫描多维索引...</p>
+        <div class="void-loading-block">
+          <div class="void-loading-ring void-loading-ring--lg" aria-hidden="true"></div>
+          <p class="void-loading-block__msg">正在检索并生成答案（本地大模型 + 嵌入可能较慢，请稍候）…</p>
         </div>
       </div>
 
@@ -55,12 +55,12 @@
               <span class="timestamp">{{ formatTime(new Date()) }}</span>
             </div>
             <div class="header-actions">
-              <el-button circle class="void-btn ghost" icon="Refresh" @click="clearAnswer" title="清空" />
+              <el-button circle class="void-btn ghost" :icon="Refresh" @click="clearAnswer" title="清空" />
             </div>
           </header>
 
           <div class="card-body">
-            <div class="markdown-body void-markdown" v-html="renderMarkdown(answer)"></div>
+            <div class="markdown-body void-markdown" v-html="answerHtml"></div>
           </div>
 
           <footer class="card-footer">
@@ -75,7 +75,7 @@
         <div class="void-card subtle-placeholder">
           <div class="icon">🔮</div>
           <h3>系统就绪</h3>
-          <p>等待神经输入以进行知识检索。</p>
+          <p>等待输入问题以执行知识检索。</p>
         </div>
       </div>
     </div>
@@ -83,23 +83,21 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from "vue"
+import { ref, computed, nextTick, onUnmounted } from "vue"
 import { ElMessage } from "element-plus"
-import { 
-  Reading, 
-  Refresh, 
-  Search,
-  ChatDotRound
-} from "@element-plus/icons-vue"
+import { Reading, Refresh } from "@element-plus/icons-vue"
 import { askQA } from "@/api/ai"
 import { getUserInfo } from "@/api/user"
-import { marked } from 'marked'
+import { formatAxiosErrorMessage } from "@/utils/apiPayload"
+import { renderAssistantMarkdown } from "@/utils/markdownThink"
 
 // ==================== State ====================
 const question = ref("")
 const answer = ref("")
 const isLoading = ref(false)
 const searchMode = ref("vector")
+
+const answerHtml = computed(() => renderAssistantMarkdown(answer.value))
 
 // ==================== Logic ====================
 
@@ -111,66 +109,61 @@ const handleEnter = (e) => {
 }
 
 const ask = async () => {
-  if (!question.value.trim()) return
-  
+  const q = question.value.trim()
+  if (!q || isLoading.value) return
+
   isLoading.value = true
   try {
     const userInfo = getUserInfo()
     const userId = userInfo?.user_id || userInfo?.user?.user_id
-    const result = await askQA(question.value.trim(), { 
+    const result = await askQA(q, {
       mode: searchMode.value,
-      userId: userId
+      userId: userId ?? null,
     })
     answer.value = result
-    ElMessage.success('神经链路已建立')
+    ElMessage.success("检索完成")
   } catch (error) {
-    const errorDetail = error.response?.data?.detail || error.message || '接口错误'
-    answer.value = `### [系统异常]\n\n神经检索失败: ${errorDetail}`
-     ElMessage.error('检索失败')
+    console.error("知识库提问失败:", error)
+    const msg = formatAxiosErrorMessage(error, error?.message || "接口错误")
+    answer.value = `### 检索失败\n\n${msg}`
+    ElMessage.error(msg.length > 80 ? msg.slice(0, 80) + "…" : msg)
   } finally {
     isLoading.value = false
   }
 }
 
+onUnmounted(() => {
+  isLoading.value = false
+})
+
 const clearAnswer = () => {
-  answer.value = ''
-  question.value = ''
+  answer.value = ""
+  question.value = ""
 }
 
-const renderMarkdown = (text) => {
-  if (!text) return ''
-  return marked.parse(text)
+/** 与 main 分支一致：结果区时间戳（此前未定义会导致渲染报错、界面卡住） */
+const formatTime = (date) => {
+  return new Date(date).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
 }
 
 const askNewQuestion = async () => {
-  question.value = ''
-  answer.value = ''
+  question.value = ""
+  answer.value = ""
   await nextTick()
-  const input = document.querySelector('.el-textarea__inner')
+  const input = document.querySelector(".el-textarea__inner")
   input?.focus()
 }
 
 </script>
 
 <style scoped>
-.qa-page {
-  background: var(--bg-page);
-  min-height: 100vh;
-}
-
-.void-content {
-  padding: var(--spacing-xxl) 0;
-}
-
-.page-header {
-  margin-bottom: var(--spacing-xxl);
-}
-
-.subtitle {
-  color: var(--text-muted);
-  font-size: 1.1rem;
-}
-
 /* Search Area */
 .selection-box {
   padding: var(--spacing-xl);
@@ -209,26 +202,6 @@ const askNewQuestion = async () => {
   min-height: 200px;
 }
 
-.synthesis-core {
-  text-align: center;
-}
-
-.core-ring {
-  width: 60px;
-  height: 60px;
-  border: 4px solid var(--border-color);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  margin: 0 auto var(--spacing-lg);
-  animation: voidSpin 1s linear infinite;
-}
-
-.status-msg {
-  color: var(--text-muted);
-  font-family: var(--font-family-mono);
-  font-size: 0.9rem;
-}
-
 /* Result Area */
 .answer-card {
   padding: var(--spacing-xl);
@@ -259,13 +232,6 @@ const askNewQuestion = async () => {
 
 .card-body {
   margin-bottom: var(--spacing-xl);
-}
-
-.void-markdown {
-  background: var(--bg-tertiary);
-  padding: var(--spacing-xl);
-  border-radius: var(--radius-md);
-  border-left: 4px solid var(--color-primary);
 }
 
 .card-footer {
@@ -302,10 +268,6 @@ const askNewQuestion = async () => {
 
 .subtle-placeholder p {
   color: var(--text-muted);
-}
-
-@keyframes voidSpin {
-  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 768px) {

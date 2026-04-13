@@ -6,7 +6,6 @@ Void System - Session Context Manager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import uuid
-import base64
 import mimetypes
 from datetime import datetime, timedelta
 import sys
@@ -303,33 +302,3 @@ class SessionContextManager:
                 "success": False,
                 "message": f"获取活跃会话失败: {str(e)}",
             }
-
-
-def build_data_urls_for_session_files(
-    db: Database, user_id: str, session_id: str, file_ids: List[str]
-) -> List[str]:
-    """
-    将会话临时图片文件读为 data URL，供多模态模型使用。
-    仅处理仍有效且属于该用户、该会话、且存在 storage_path 的记录。
-    """
-    urls: List[str] = []
-    for fid in file_ids:
-        if not fid:
-            continue
-        row = db.get_user_session_file(user_id, fid)
-        if not row or row.get("session_id") != session_id:
-            continue
-        path_str = row.get("storage_path")
-        if not path_str:
-            continue
-        p = Path(path_str)
-        if not p.is_file():
-            continue
-        mime = row.get("mime_type") or mimetypes.guess_type(row.get("file_name") or "")[0] or "application/octet-stream"
-        try:
-            raw = p.read_bytes()
-            b64 = base64.standard_b64encode(raw).decode("ascii")
-            urls.append(f"data:{mime};base64,{b64}")
-        except OSError as e:
-            logger.warning(f"读取会话文件失败 {path_str}: {e}")
-    return urls

@@ -70,9 +70,9 @@
       </div>
     </header>
 
-    <!-- 主界面内容区 -->
-    <main class="main">
-      <div class="container">
+    <!-- 主界面内容区（系统精灵等页全宽，避免与 calc 视高叠加裁切） -->
+    <main class="main" :class="{ 'main--fullbleed': route.meta.fullBleed }">
+      <div :class="route.meta.fullBleed ? 'main-inner--fullbleed' : 'container'">
         <RouterView />
       </div>
     </main>
@@ -98,7 +98,7 @@
  */
 
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { User, Setting, SwitchButton } from '@element-plus/icons-vue'
 import { authState, logout as logoutApi } from '@/api/user'
 import NavItem from '@/components/NavItem.vue'
@@ -197,15 +197,15 @@ onMounted(() => {
     const savedSettings = localStorage.getItem('settings_cache')
     if (savedSettings) {
       const parsed = JSON.parse(savedSettings)
-      const themeMode = parsed?.systemConfig?.themeMode || 'dark'
+      const themeMode = parsed?.systemConfig?.themeMode || 'light'
       document.documentElement.setAttribute('data-theme', themeMode)
     } else {
-      // 默认主题
-      document.documentElement.setAttribute('data-theme', 'dark')
+      // 与 style.css :root（Gemini 浅色）一致
+      document.documentElement.setAttribute('data-theme', 'light')
     }
   } catch(e) {
     console.warn('Failed to load local theme settings', e)
-    document.documentElement.setAttribute('data-theme', 'dark')
+    document.documentElement.setAttribute('data-theme', 'light')
   }
 })
 </script>
@@ -269,12 +269,14 @@ onMounted(() => {
 
 .header-content {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 0 var(--spacing-lg);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--spacing-md);
+  min-height: 64px;
 }
 
 .brand-area {
@@ -282,37 +284,99 @@ onMounted(() => {
   align-items: center;
   gap: var(--spacing-sm);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.brand-label {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  gap: 2px;
 }
 
 .brand-name {
   font-weight: 800;
-  font-size: 1.2rem;
-  letter-spacing: 1px;
+  font-size: 1.15rem;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+
+.brand-suffix {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
 /* Nav */
 .nav-links {
   display: flex;
-  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 var(--spacing-xs);
 }
 
 .central-ops {
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
+  flex-shrink: 0;
 }
 
 /* User Menu */
 .user-node {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: 6px 12px;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
   cursor: pointer;
   transition: all var(--transition-normal);
+  max-width: min(260px, 42vw);
+}
+
+.user-info-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: right;
+  line-height: 1.2;
+}
+
+.user-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.user-rank {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.user-hex-avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .user-node:hover {
@@ -323,12 +387,13 @@ onMounted(() => {
   width: 32px;
   height: 32px;
   background: var(--color-primary);
-  color: white;
+  color: #fff;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
+  font-size: 0.9rem;
 }
 
 .user-ops-menu {
@@ -370,6 +435,20 @@ onMounted(() => {
 .main {
   min-height: calc(100vh - 120px);
   padding: var(--spacing-xl) 0;
+}
+
+.main--fullbleed {
+  padding-top: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  min-height: calc(100vh - 120px);
+}
+
+.main-inner--fullbleed {
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  padding: 0 clamp(12px, 2vw, 24px);
+  box-sizing: border-box;
 }
 
 .footer {
