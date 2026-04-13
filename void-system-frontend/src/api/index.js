@@ -12,7 +12,8 @@ import axios from "axios"
  */
 const api = axios.create({
   baseURL: "",  // 使用相对路径，让 Vite 代理自动处理 CORS
-  timeout: 60000,  // 超时时间 60 秒（AI 生成内容可能需要较长时间）
+  // 默认放宽：本地大模型 + RAG 常超过 60s；单接口仍可在 config 里覆盖 timeout
+  timeout: 300000,
   headers: {
     'Content-Type': 'application/json'
   }

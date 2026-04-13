@@ -1,5 +1,7 @@
 # 虚空系统 (Void System) 项目展示
 
+> 状态：ARCHIVED（早期展示稿，部分信息可能过时）
+
 ## 目录
 
 1. [项目概述](#项目概述)
@@ -90,6 +92,7 @@ void-system-frontend/
 ### 3.1 用户管理系统
 
 ✅ **已实现功能**：
+
 - 用户注册、登录、登出
 - JWT令牌认证
 - 用户资料管理
@@ -99,6 +102,7 @@ void-system-frontend/
 ### 3.2 文档管理系统
 
 ✅ **已实现功能**：
+
 - 文档上传与存储
 - 文档元数据管理
 - 文档处理与解析
@@ -108,6 +112,7 @@ void-system-frontend/
 ### 3.3 向量搜索系统
 
 ✅ **已实现功能**：
+
 - ChromaDB向量库集成
 - 向量搜索API
 - 向量统计信息
@@ -116,6 +121,7 @@ void-system-frontend/
 ### 3.4 个性化QA系统
 
 ✅ **已实现功能**：
+
 - 基于用户文档的智能问答
 - 相关文档检索
 - 回答置信度计算
@@ -124,6 +130,7 @@ void-system-frontend/
 ### 3.5 任务管理系统
 
 ✅ **已实现功能**：
+
 - 任务创建与管理
 - 任务分类
 - 任务状态更新
@@ -133,6 +140,7 @@ void-system-frontend/
 ### 3.6 AI智能助手
 
 ✅ **已实现功能**：
+
 - 多种AI角色（顾问、角色扮演者、知识引擎）
 - 流式响应支持
 - 思考过程净化
@@ -144,25 +152,29 @@ void-system-frontend/
 
 ### 4.1 后端技术栈
 
-| 技术/框架       | 用途                  | 版本/说明                          |
-|---------------|----------------------|----------------------------------|
-| FastAPI       | 后端API框架           | 高性能异步Web框架                  |
-| Python        | 后端开发语言          | 3.10+                             |
-| SQLite        | 关系型数据库          | 内置数据库，用于用户和任务数据       |
-| ChromaDB      | 向量数据库            | 用于文档向量存储和检索             |
-| LangChain     | AI应用框架            | 连接LLM和外部数据源                |
-| Ollama        | LLM推理引擎           | 本地运行开源大模型                 |
-| Qwen3         | 大语言模型            | 用于生成式AI功能                  |
-| JWT           | 用户认证              | 基于token的认证机制               |
+
+| 技术/框架     | 用途      | 版本/说明           |
+| --------- | ------- | --------------- |
+| FastAPI   | 后端API框架 | 高性能异步Web框架      |
+| Python    | 后端开发语言  | 3.10+           |
+| SQLite    | 关系型数据库  | 内置数据库，用于用户和任务数据 |
+| ChromaDB  | 向量数据库   | 用于文档向量存储和检索     |
+| LangChain | AI应用框架  | 连接LLM和外部数据源     |
+| Ollama    | LLM推理引擎 | 本地运行开源大模型       |
+| Qwen3     | 大语言模型   | 用于生成式AI功能       |
+| JWT       | 用户认证    | 基于token的认证机制    |
+
 
 ### 4.2 前端技术栈
 
-| 技术/框架       | 用途                  | 版本/说明                          |
-|---------------|----------------------|----------------------------------|
-| Vue 3         | 前端框架              | Composition API                   |
-| Element Plus  | UI组件库              | 丰富的Vue组件                     |
-| Vue Router    | 前端路由              | 单页应用路由管理                   |
-| Axios         | HTTP客户端            | API调用封装                       |
+
+| 技术/框架        | 用途      | 版本/说明           |
+| ------------ | ------- | --------------- |
+| Vue 3        | 前端框架    | Composition API |
+| Element Plus | UI组件库   | 丰富的Vue组件        |
+| Vue Router   | 前端路由    | 单页应用路由管理        |
+| Axios        | HTTP客户端 | API调用封装         |
+
 
 ---
 
@@ -193,6 +205,7 @@ void-system-frontend/
 ### 5.4 潜在安全隐患
 
 ⚠️ **待优化安全点**：
+
 - 缺少API速率限制
 - 未实现令牌黑名单机制
 - 敏感信息日志记录需进一步优化
@@ -207,24 +220,27 @@ void-system-frontend/
 - 提供Swagger UI和ReDoc文档
 - 自动生成API文档，便于测试和集成
 - 访问地址：
-  - Swagger UI: http://localhost:8000/api/docs
-  - ReDoc: http://localhost:8000/api/redoc
+  - Swagger UI: [http://localhost:8000/api/docs](http://localhost:8000/api/docs)
+  - ReDoc: [http://localhost:8000/api/redoc](http://localhost:8000/api/redoc)
 
 ### 6.2 核心API端点示例
 
-| API端点                    | 功能描述                      | 状态 |
-|--------------------------|-----------------------------|------|
-| POST /api/token          | 用户登录，获取访问令牌          | ✅  |
-| GET /api/user/profile    | 获取用户资料                   | ✅  |
-| POST /api/documents      | 上传用户文档                   | ✅  |
-| POST /api/vector/search  | 向量搜索                      | ✅  |
-| POST /api/qa/personalized| 基于用户文档的个性化问答         | ✅  |
-| GET /api/tasks           | 获取任务列表                   | ✅  |
-| POST /api/tasks          | 创建新任务                    | ✅  |
+
+| API端点                     | 功能描述         | 状态  |
+| ------------------------- | ------------ | --- |
+| POST /api/token           | 用户登录，获取访问令牌  | ✅   |
+| GET /api/user/profile     | 获取用户资料       | ✅   |
+| POST /api/documents       | 上传用户文档       | ✅   |
+| POST /api/vector/search   | 向量搜索         | ✅   |
+| POST /api/qa/personalized | 基于用户文档的个性化问答 | ✅   |
+| GET /api/tasks            | 获取任务列表       | ✅   |
+| POST /api/tasks           | 创建新任务        | ✅   |
+
 
 ### 6.3 系统运行状态
 
 ✅ **服务状态**：
+
 - 后端服务正常运行
 - 数据库连接正常
 - AI服务已注册
@@ -237,11 +253,13 @@ void-system-frontend/
 ### 7.1 计划实现功能
 
 🔄 **开发中**：
+
 - 文档向量生成与优化
 - AI响应质量提升
 - 前端界面完善
 
 📋 **计划中**：
+
 - Redis缓存支持
 - API速率限制
 - 微服务架构迁移
@@ -319,9 +337,9 @@ npm run dev
 
 ### 访问地址
 
-- 后端API: http://localhost:8000
-- API文档: http://localhost:8000/api/docs
-- 前端应用: http://localhost:5173
+- 后端API: [http://localhost:8000](http://localhost:8000)
+- API文档: [http://localhost:8000/api/docs](http://localhost:8000/api/docs)
+- 前端应用: [http://localhost:5173](http://localhost:5173)
 
 ---
 

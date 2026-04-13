@@ -1,7 +1,7 @@
 """
 Void System - User Document Manager
 -----------------------------------
-用户文档管理器，实现DeepSeek风格的文件上传和处理
+用户文档管理器，实现虚空系统统一文件上传和处理流程
 """
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -48,7 +48,7 @@ class UserDocumentManager:
         tags: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        上传并处理文档（DeepSeek风格）
+        上传并处理文档（虚空系统标准流程）
         Args:
             user_id: 用户ID
             file_data: 文件数据

@@ -1,9 +1,0 @@
-﻿0|chain_id|TEXT|0||1
-1|user_id|TEXT|1||0
-2|chain_name|TEXT|1||0
-3|description|TEXT|0||0
-4|total_tasks|INTEGER|0|0|0
-5|completed_tasks|INTEGER|0|0|0
-6|status|TEXT|0|'active'|0
-7|created_at|TEXT|0|CURRENT_TIMESTAMP|0
-8|updated_at|TEXT|0|CURRENT_TIMESTAMP|0

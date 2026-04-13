@@ -5,13 +5,11 @@ Void System - Personalized QA Engine
 """
 from typing import Dict, Any, Optional, List
 import logging
-from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
 from .user_vector_manager import vector_manager
-from config import config
+from services.ai_services.llm_factory import get_chat_llm
 
 logger = logging.getLogger("void-system-personalized-qa")
 
@@ -19,11 +17,7 @@ class PersonalizedQAEngine:
     """个性化问答引擎"""
 
     def __init__(self):
-        # 初始化LLM
-        self.llm = ChatOllama(
-            model=config.CHAT_MODEL,
-            temperature=0.3  # 较低温度保证回答稳定性
-        )
+        self.llm = get_chat_llm(temperature=0.3)
 
         # 定义问答提示模板
         self.qa_prompt = ChatPromptTemplate.from_template("""

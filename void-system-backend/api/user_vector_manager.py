@@ -6,7 +6,6 @@ Void System - User Vector Manager
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
-from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -19,27 +18,28 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 from database import Database
+from config import config
+from services.ai_services.llm_factory import get_embeddings
 
 logger = logging.getLogger("void-system-vector-manager")
 
 class UserVectorManager:
     """用户向量管理器"""
 
-    def __init__(self, chroma_dir: str = "./chroma_db", db_path: str = "void_system.db"):
+    def __init__(self, chroma_dir: Optional[str] = None, db_path: str = "void_system.db"):
         """
         初始化向量管理器
         Args:
-            chroma_dir: ChromaDB存储目录
+            chroma_dir: ChromaDB存储目录（默认与虚空知识库相同：config.get_chroma_path()）
             db_path: 数据库路径
         """
+        if chroma_dir is None:
+            chroma_dir = str(config.get_chroma_path())
         self.chroma_dir = Path(chroma_dir)
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
         self.db = Database(db_path)
 
-        # 初始化嵌入模型
-        self.embeddings = OllamaEmbeddings(
-            model="hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0"
-        )
+        self.embeddings = get_embeddings()
 
         # 基础文本分割器 (默认)
         self.default_splitter = RecursiveCharacterTextSplitter(

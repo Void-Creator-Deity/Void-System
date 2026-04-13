@@ -1,125 +1,128 @@
 <template>
-  <div class="settings-container">
-    <!-- 页面标题 -->
-    <div class="settings-header">
-      <h2><span class="glitch">个人</span> <span class="system-text">资料</span></h2>
-      <p class="subtitle">管理您的档案和学习目标</p>
-    </div>
-    
-    <div class="profile-layout">
-      <!-- 左侧身份卡 -->
-      <div class="settings-card id-card">
-        <div class="id-card-header">
-          <span class="id-label">VOID_ID_AUTH</span>
-          <span class="id-status online"></span>
-        </div>
-        <div class="avatar-container">
-          <div class="avatar">
-            <span class="avatar-text">{{ userInfo.username ? userInfo.username.charAt(0).toUpperCase() : 'U' }}</span>
-          </div>
-        </div>
-        
-        <h3 class="user-display-name">{{ userInfo.username || '未知执行者' }}</h3>
-        <p class="user-major-badge">{{ majorOptions.find(o => o.value === userInfo.major)?.label || '未定专业' }}</p>
-        
-        <div class="user-goal-display">
-          <span class="goal-label">当前运行指令:</span>
-          <p class="goal-text">"{{ userInfo.learningGoal || '尚未设定目标指令...' }}"</p>
-        </div>
-        
-        <div class="cyber-lines">
-          <div class="line"></div>
-          <div class="line short"></div>
-          <div class="line"></div>
-        </div>
-      </div>
+  <div class="void-page-container profile-page">
+    <div class="void-content">
+      <header class="page-header">
+        <h1 class="logo-text"><span class="void-text-gradient">个人</span> 资料</h1>
+        <p class="subtitle">管理您的神经身份与学习轨迹。</p>
+      </header>
       
-      <!-- 右侧设定表单 -->
-      <div class="settings-card profile-main">
-        <div class="card-header">
-          <div class="header-icon">🛡️</div>
-          <h3>实体档案设定</h3>
-        </div>
-        
-        <div class="user-details" style="flex:1;">
-          <div class="detail-row" style="display:flex; gap:1.5rem; margin-bottom:1.5rem;">
-            <div class="detail-group" style="flex:1;">
-              <label>系统编号(UID)</label>
-              <el-input 
-                v-model="userInfo.uid" 
-                readonly
-                disabled
-                class="form-input read-only-input"
-              />
+      <div class="profile-layout">
+        <!-- Identity Card -->
+        <aside class="identity-section">
+          <div class="void-card identity-card animate-float">
+            <div class="card-status-bar">
+              <span class="status-label">链路连接稳定</span>
+              <span class="status-indicator online"></span>
             </div>
-            <div class="detail-group" style="flex:1;">
-              <label>接入邮箱</label>
-              <el-input 
-                v-model="userInfo.email" 
-                readonly
-                disabled
-                class="form-input read-only-input"
-              />
+            
+            <div class="avatar-wrapper">
+              <div class="void-avatar-hex">
+                <span class="avatar-char">{{ userInfo.username ? userInfo.username.charAt(0).toUpperCase() : 'V' }}</span>
+              </div>
+            </div>
+            
+            <div class="user-info">
+              <h2 class="display-name">{{ userInfo.username || '虚空行者' }}</h2>
+              <div class="major-pill">
+                {{ majorOptions.find(o => o.value === userInfo.major)?.label || '未设定路径' }}
+              </div>
+            </div>
+            
+            <div class="goal-display">
+              <span class="section-label">当前指令：</span>
+              <p class="directive-text">"{{ userInfo.learningGoal || '当前周期尚未设置目标...' }}"</p>
+            </div>
+            
+            <div class="void-divider"></div>
+            
+            <div class="system-stats">
+              <div class="stat-item">
+                <span class="stat-label">UID</span>
+                <span class="stat-value mono">{{ userInfo.uid || '---' }}</span>
+              </div>
             </div>
           </div>
+        </aside>
+        
+        <!-- Form Card -->
+        <main class="form-section">
+          <div class="void-card profile-card animate-slide-up">
+            <header class="card-header">
+              <el-icon><User /></el-icon>
+              <h3>神经概况配置</h3>
+            </header>
+            
+            <div class="form-body">
+              <div class="form-grid">
+                <div class="void-form-group disabled">
+                  <label>系统标识符符 (UID)</label>
+                  <el-input v-model="userInfo.uid" disabled class="void-input" />
+                </div>
+                
+                <div class="void-form-group disabled">
+                  <label>神经链路地址 (邮箱)</label>
+                  <el-input v-model="userInfo.email" disabled class="void-input" />
+                </div>
+                
+                <div class="void-form-group">
+                  <label>档案别名</label>
+                  <el-input 
+                    v-model="userInfo.username" 
+                    placeholder="输入您的别名..." 
+                    class="void-input"
+                  />
+                  <span v-if="errors.username" class="error-text">{{ errors.username }}</span>
+                </div>
+                
+                <div class="void-form-group">
+                  <label>专业化路径</label>
+                  <el-select 
+                    v-model="userInfo.major" 
+                    placeholder="选择专业化..." 
+                    class="void-select"
+                  >
+                    <el-option v-for="option in majorOptions" :key="option.value" :label="option.label" :value="option.value" />
+                  </el-select>
+                  <span v-if="errors.major" class="error-text">{{ errors.major }}</span>
+                </div>
 
-          <div class="detail-group">
-            <label>用户名</label>
-            <el-input 
-              v-model="userInfo.username" 
-              placeholder="输入对外显示的档案代号" 
-              class="form-input"
-              :validate-event="false"
-            />
-            <div v-if="errors.username" class="error-message">{{ errors.username }}</div>
+                <div class="void-form-group full-width">
+                  <label>核心指令 (学习目标)</label>
+                  <el-input 
+                    v-model="userInfo.learningGoal" 
+                    placeholder="指定您的核心学习目标..." 
+                    type="textarea"
+                    :rows="4"
+                    class="void-input"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <footer class="card-footer">
+              <el-button 
+                type="primary" 
+                @click="saveUserInfo" 
+                :loading="loading.profile" 
+                class="void-btn primary big"
+              >
+                同步配置
+              </el-button>
+            </footer>
           </div>
-          
-          <div class="detail-group">
-            <label>目标指令 (Learning Objective)</label>
-            <el-input 
-              v-model="userInfo.learningGoal" 
-              placeholder="输入最高优先级的学习目标..." 
-              class="form-input"
-              type="textarea"
-              :rows="3"
-            />
-          </div>
-          
-          <div class="detail-group">
-            <label>专精领域 (Expertise Area) *</label>
-            <el-select 
-              v-model="userInfo.major" 
-              placeholder="选择你的进阶修习领域" 
-              class="form-select"
-              :validate-event="false"
-            >
-              <el-option v-for="option in majorOptions" :key="option.value" :label="option.label" :value="option.value" />
-            </el-select>
-            <div v-if="errors.major" class="error-message">{{ errors.major }}</div>
-          </div>
-        </div>
-        
-        <div class="card-actions" style="margin-top: 2rem; justify-content: flex-end;">
-          <el-button type="primary" @click="saveUserInfo" :loading="loading.profile" class="cyber-btn" size="large">同步更新档案</el-button>
-        </div>
+        </main>
       </div>
     </div>
-    
   </div>
 </template>
 
 <script setup>
-/**
- * Profile Component
- * ------------------
- * 用户资料页面
- */
-
 import { reactive, onMounted } from "vue"
 import { ElMessage } from 'element-plus'
+import { User, Connection, Monitor, Management } from "@element-plus/icons-vue"
 import { getCurrentUser, updateUserProfile } from '../api/user.js'
 
-// ==================== 响应式状态 ====================
+// ==================== State ====================
 const loading = reactive({
   profile: false
 })
@@ -128,9 +131,6 @@ const errors = reactive({
   major: ''
 })
 
-// ==================== 数据模型 ====================
-
-// 用户信息
 const userInfo = reactive({
   username: '',
   email: '',
@@ -139,9 +139,6 @@ const userInfo = reactive({
   uid: ''
 })
 
-// ==================== 配置选项 ====================
-
-// 专业选项
 const majorOptions = [
   { label: "计算机科学", value: "computer_science" },
   { label: "数学", value: "mathematics" },
@@ -153,712 +150,234 @@ const majorOptions = [
   { label: "其他", value: "other" }
 ]
 
-// ==================== 业务逻辑 ====================
+// ==================== Logic ====================
 
-/**
- * 验证表单
- * @returns {boolean} 表单是否有效
- */
 const validateForm = () => {
   let isValid = true
-  
-  // 重置错误信息
   errors.username = ''
   errors.major = ''
   
-  // 验证用户名
-  if (!userInfo.username || userInfo.username.trim() === '') {
-    errors.username = '用户名不能为空'
+  if (!userInfo.username?.trim()) {
+    errors.username = 'Alias cannot be empty'
     isValid = false
   }
   
-  // 验证专业领域
   if (!userInfo.major) {
-    errors.major = '请选择专业领域'
+    errors.major = 'Paths must be defined'
     isValid = false
   }
   
   return isValid
 }
 
-/**
- * 保存用户信息
- */
 const saveUserInfo = async () => {
-  if (!validateForm()) {
-    ElMessage.warning('请修正表单中的错误后再保存')
-    return
-  }
+  if (!validateForm()) return
   
   loading.profile = true
   try {
     const response = await updateUserProfile(userInfo)
     if (response.success) {
-      ElMessage.success('用户信息保存成功')
+      ElMessage.success('Neural profile synchronized')
     } else {
-      ElMessage.error(response.message || '保存失败')
+      ElMessage.error(response.message || 'Synchronization failed')
     }
   } catch (error) {
-    console.error('保存用户信息失败:', error)
-    ElMessage.error('保存失败，请检查网络或稍后重试')
+    ElMessage.error('Link unstable. Persist failed.')
   } finally {
     loading.profile = false
   }
 }
 
-
-
-
-
-/**
- * 加载用户信息
- */
 const loadUserInfo = async () => {
   try {
     const userData = await getCurrentUser()
-    
-    // 更新用户信息 (数据已经是接口返回的 data 内容)
-    userInfo.username = userData.username || '学习者'
+    userInfo.username = userData.username || 'Learner'
     userInfo.email = userData.email || ''
     userInfo.uid = userData.user_id || ''
     userInfo.learningGoal = userData.learning_goal || ''
     userInfo.major = userData.specialization || ''
   } catch (error) {
-    console.error('加载用户信息失败:', error)
-    // 失败时保持现有的或使用默认占位
-    if (!userInfo.username) userInfo.username = '学习者'
+    console.error('[PROFILE_SHARD_LOAD_FAIL]', error)
+    if (!userInfo.username) userInfo.username = 'Learner'
   }
 }
-    
-// ==================== 生命周期 ====================
 
-// 组件挂载时
 onMounted(() => {
-  // 加载用户信息
   loadUserInfo()
 })
 </script>
 
 <style scoped>
-/* 现代化设置页面样式 - 基于高端赛博朋克设计 */
+.profile-layout {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: var(--spacing-xxl);
+  align-items: start;
+}
 
-/* 页面容器 */
-.settings-container {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 2rem;
-  position: relative;
-  min-height: 100vh;
+/* Identity Card */
+.identity-card {
+  padding: var(--spacing-xl);
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  align-items: center;
 }
 
-/* 背景装饰元素 */
-.settings-container::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -10%;
-  width: 120%;
-  height: 300px;
-  background: radial-gradient(circle at center, var(--accent-glow) 0%, transparent 60%);
-  filter: blur(80px);
-  z-index: -1;
-  opacity: 0.3;
-  animation: backgroundGlow 8s ease-in-out infinite;
-}
-
-@keyframes backgroundGlow {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.3;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.4;
-  }
-}
-
-/* 页面标题 - 科技感标题 */
-.settings-header {
-  text-align: center;
-  margin-bottom: 2rem;
-  position: relative;
-  animation: fadeIn 0.8s ease-out;
-  background: rgba(10, 13, 32, 0.7);
-  backdrop-filter: blur(12px);
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  padding: 2rem;
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.15),
-    0 0 20px rgba(0, 153, 255, 0.05);
-  overflow: hidden;
-}
-
-.settings-header::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  animation: headerGlow 4s ease-in-out infinite;
-}
-
-@keyframes headerGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
-}
-
-.settings-header h2 {
-  font-size: 3rem;
-  margin-bottom: 0.8rem;
+.card-status-bar {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xl);
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+  color: var(--color-primary);
   letter-spacing: 1px;
-  font-weight: 800;
-  line-height: 1.2;
-  position: relative;
-  display: inline-block;
-  text-shadow: 0 0 20px var(--accent-glow);
 }
 
-.glitch {
-  color: var(--accent-primary);
-  text-shadow: 
-    0 0 10px var(--accent-primary),
-    0 0 20px var(--accent-primary),
-    0 0 40px var(--accent-glow);
-  animation: glitchEffect 5s infinite;
+.status-indicator.online {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 10px var(--color-success);
 }
 
-.system-text {
-  color: var(--text-primary);
-  font-weight: 700;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+.avatar-wrapper {
+  margin-bottom: var(--spacing-xl);
 }
 
-.subtitle {
-  color: rgba(220, 220, 240, 0.8);
-  font-size: 1.2rem;
-  font-weight: 400;
-  max-width: 700px;
-  margin: 0 auto;
-  opacity: 0.9;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-/* 标签页样式 - 现代化导航 */
-.settings-tabs {
-  background: transparent;
-  margin-bottom: 2rem;
-  position: relative;
-}
-
-.settings-tabs :deep(.el-tabs__header) {
-  margin-bottom: 2rem;
+.void-avatar-hex {
+  width: 120px;
+  height: 120px;
+  background: var(--void-gradient);
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
   display: flex;
+  align-items: center;
   justify-content: center;
-}
-
-.settings-tabs :deep(.el-tabs__nav) {
-  background: rgba(16, 25, 54, 0.75);
-  padding: 0.5rem;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(15px);
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.2),
-    0 0 15px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   position: relative;
-  overflow: hidden;
-  animation: navGlow 3s ease-in-out infinite alternate;
 }
 
-@keyframes navGlow {
-  0% {
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.2),
-      0 0 15px var(--accent-glow),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  }
-  100% {
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.25),
-      0 0 20px var(--accent-primary),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  }
-}
-
-.settings-tabs :deep(.el-tabs__nav)::before {
+.void-avatar-hex::after {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.7;
-  animation: tabHeaderGlow 3s ease-in-out infinite;
+  inset: 4px;
+  background: var(--bg-card);
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  z-index: 0;
 }
 
-@keyframes tabHeaderGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
+.avatar-char {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 0 15px var(--color-primary-transparent);
 }
 
-.settings-tabs :deep(.el-tabs__item) {
-  color: rgba(200, 200, 220, 0.7);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  padding: 0.85rem 2.25rem;
-  margin: 0;
-  font-weight: 500;
+.user-info {
+  text-align: center;
+  margin-bottom: var(--spacing-xl);
+}
+
+.display-name {
+  font-size: 1.75rem;
+  margin-bottom: var(--spacing-xs);
+  letter-spacing: -0.5px;
+}
+
+.major-pill {
+  display: inline-block;
+  padding: 4px 16px;
+  background: var(--color-primary-transparent);
+  border: 1px solid var(--color-primary);
+  border-radius: 20px;
+  color: var(--color-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.goal-display {
+  width: 100%;
+  background: var(--bg-tertiary);
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-xl);
+}
+
+.section-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--spacing-sm);
+}
+
+.directive-text {
   font-size: 1rem;
-  position: relative;
-  overflow: hidden;
-  border-radius: 10px;
-  backdrop-filter: blur(5px);
+  color: var(--text-main);
+  font-style: italic;
+  line-height: 1.5;
 }
 
-.settings-tabs :deep(.el-tabs__item)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, 0.05);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  z-index: -1;
+.system-stats {
+  width: 100%;
 }
 
-.settings-tabs :deep(.el-tabs__item::after) {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 0;
-  height: 2px;
-  background: var(--accent-primary);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  transform: translateX(-50%);
-  box-shadow: 0 0 10px var(--accent-primary);
+.stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.settings-tabs :deep(.el-tabs__item:hover) {
-  color: var(--accent-primary);
-  background: rgba(255, 255, 255, 0.08);
-  opacity: 1;
-  transform: translateY(-1px);
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
-.settings-tabs :deep(.el-tabs__item:hover::before) {
-  opacity: 1;
+.stat-value.mono {
+  font-family: var(--font-family-mono);
+  font-size: 0.85rem;
+  color: var(--color-primary-light);
 }
 
-.settings-tabs :deep(.el-tabs__item:hover::after) {
-  width: 80%;
-}
-
-.settings-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--accent-primary);
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 
-    0 4px 15px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  font-weight: 600;
-  transform: translateY(-1px);
-}
-
-.settings-tabs :deep(.el-tabs__item.is-active::after) {
-  width: 80%;
-}
-
-.settings-tabs :deep(.el-tabs__active-bar) {
-  display: none;
-}
-
-/* 设置卡片 - 玻璃态设计 */
-.settings-card {
-  background: rgba(16, 25, 54, 0.75);
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-  padding: 2.5rem;
-  margin-bottom: 2rem;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(20px);
-  box-shadow: 
-    0 12px 40px rgba(0, 0, 0, 0.25),
-    0 0 20px rgba(0, 153, 255, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.settings-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  animation: cardHeaderGlow 4s ease-in-out infinite;
-  opacity: 0.8;
-}
-
-@keyframes cardHeaderGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
-}
-
-.settings-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 
-    0 15px 45px rgba(0, 0, 0, 0.3),
-    0 0 30px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.settings-card::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: radial-gradient(circle at 50% -20%, rgba(0, 153, 255, 0.15), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
-}
-
-.settings-card:hover::after {
-  opacity: 1;
+/* Form Card */
+.profile-card {
+  padding: var(--spacing-xl);
 }
 
 .card-header {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  position: relative;
-}
-
-.card-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1rem;
-  left: 0;
-  width: 60px;
-  height: 2px;
-  background: var(--accent-primary);
-  opacity: 0.7;
-}
-
-.settings-card:hover::before {
-  opacity: 0.2;
-}
-
-.settings-card:hover {
-  border-color: var(--accent-primary);
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    0 0 20px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  transform: translateY(-4px);
-}
-
-/* 卡片头部 - 增强视觉层次 */
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--border-color);
-  position: relative;
-}
-
-.card-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 60px;
-  height: 3px;
-  background: var(--accent-primary);
-  border-radius: 3px;
-}
-
-.header-icon {
-  font-size: 1.8rem;
-  color: var(--accent-primary);
-  filter: drop-shadow(0 0 8px var(--accent-glow));
-  animation: float 4s ease-in-out infinite;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xxl);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--border-color-light);
 }
 
 .card-header h3 {
-  font-family: var(--main-font);
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.98);
-  margin: 0;
-  text-shadow: 
-    0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 10px var(--accent-glow);
   font-size: 1.5rem;
-  letter-spacing: 0.5px;
+  margin: 0;
 }
 
-/* 表单样式 - 玻璃态输入控件 */
-.form-input :deep(.el-input__wrapper) {
-  background: rgba(10, 13, 32, 0.75);
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(10px);
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  position: relative;
-  overflow: hidden;
-}
-
-.form-input :deep(.el-input__wrapper)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  opacity: 0.5;
-}
-
-.form-input :deep(.el-input__wrapper:hover) {
-  border-color: var(--accent-primary);
-  background: rgba(10, 13, 32, 0.85);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  transform: translateY(-1px);
-}
-
-.form-input :deep(.el-input__wrapper.is-focus) {
-  border-color: var(--accent-primary);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 25px var(--accent-primary),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  background: rgba(10, 13, 32, 0.95);
-  transform: translateY(-2px);
-  animation: inputGlow 2s ease-in-out infinite alternate;
-}
-
-@keyframes inputGlow {
-  0% {
-    box-shadow: 
-      inset 0 1px 3px rgba(0, 0, 0, 0.3),
-      0 0 25px var(--accent-primary),
-      0 0 15px var(--accent-glow),
-      0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-  100% {
-    box-shadow: 
-      inset 0 1px 3px rgba(0, 0, 0, 0.3),
-      0 0 30px var(--accent-primary),
-      0 0 20px var(--accent-glow),
-      0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-}
-
-.form-input :deep(.el-input__inner) {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.98);
-  font-weight: 500;
-  font-size: 1rem;
-  letter-spacing: 0.5px;
-  padding: 12px 16px;
-  transition: all 0.3s ease;
-}
-
-.form-input :deep(.el-input__inner:focus) {
-  color: var(--accent-primary);
-  text-shadow: 0 0 5px var(--accent-glow);
-}
-
-/* 占位符文本颜色 */
-.form-input :deep(.el-input__placeholder) {
-  color: rgba(150, 150, 170, 0.5) !important;
-  font-style: italic;
-  letter-spacing: 0.5px;
-  transition: color 0.3s ease;
-}
-
-.form-input :deep(.el-input__wrapper:hover .el-input__placeholder) {
-  color: rgba(180, 180, 200, 0.7) !important;
-}
-
-/* 选择器样式 */
-.form-select :deep(.el-input__wrapper) {
-  background: rgba(10, 13, 32, 0.75);
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(10px);
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  position: relative;
-}
-
-.form-select :deep(.el-input__wrapper)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  opacity: 0.5;
-}
-
-.form-select :deep(.el-input__wrapper:hover) {
-  border-color: var(--accent-primary);
-  background: rgba(10, 13, 32, 0.85);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  transform: translateY(-1px);
-}
-
-.form-select :deep(.el-input__inner) {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.98);
-  font-weight: 500;
-  font-size: 1rem;
-  letter-spacing: 0.5px;
-  padding: 12px 16px;
-  transition: all 0.3s ease;
-}
-
-.form-select :deep(.el-input__inner:focus) {
-  color: var(--accent-primary);
-  text-shadow: 0 0 5px var(--accent-glow);
-}
-
-.form-select :deep(.el-scrollbar__view) {
-  background: rgba(10, 13, 32, 1);
-  color: rgba(255, 255, 255, 0.9);
-  padding: 0 8px;
-}
-
-.form-select :deep(.el-select-dropdown) {
-  background: rgba(10, 13, 32, 0.9);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  box-shadow: 
-    0 15px 40px rgba(0, 0, 0, 0.4),
-    0 0 20px rgba(0, 153, 255, 0.1);
-  margin-top: 8px;
-  backdrop-filter: blur(15px);
-  animation: dropdownAppear 0.3s ease-out;
-  position: relative;
-  overflow: hidden;
-}
-
-@keyframes dropdownAppear {
-  from {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.form-select :deep(.el-select-dropdown)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.7;
-}
-
-.form-select :deep(.el-select-dropdown__item) {
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-  padding: 12px 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 8px;
-  margin: 6px 8px;
-  position: relative;
-  overflow: hidden;
-}
-
-.form-select :deep(.el-select-dropdown__item)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  background: var(--accent-primary);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.form-select :deep(.el-select-dropdown__item:hover) {
-  background: rgba(0, 153, 255, 0.2);
-  color: var(--accent-primary);
-  box-shadow: 0 4px 15px rgba(0, 153, 255, 0.3);
-  transform: translateX(5px);
-}
-
-.form-select :deep(.el-select-dropdown__item:hover)::before {
-  opacity: 1;
-}
-
-.form-select :deep(.el-select-dropdown__item.selected) {
-  background: rgba(0, 153, 255, 0.3);
-  color: var(--accent-primary);
-  font-weight: 600;
-  box-shadow: 0 0 15px rgba(0, 153, 255, 0.4);
-}
-
-.form-select :deep(.el-select-dropdown__item.selected)::before {
-  opacity: 1;
-}
-
-.profile-layout {
+.form-grid {
   display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 2.5rem;
-  align-items: stretch;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-xl);
+}
+
+.full-width {
+  grid-column: span 2;
+}
+
+.card-footer {
+  margin-top: var(--spacing-xxl);
+  padding-top: var(--spacing-xl);
+  border-top: 1px solid var(--border-color-light);
+  display: flex;
+  justify-content: flex-end;
 }
 
 @media (max-width: 900px) {
@@ -867,200 +386,16 @@ onMounted(() => {
   }
 }
 
-.id-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 2.5rem 2rem;
-}
-
-.id-card-header {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-  font-family: monospace;
-  color: var(--accent-primary);
-  font-size: 0.9rem;
-  letter-spacing: 2px;
-}
-
-.id-status.online {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #00ff66;
-  box-shadow: 0 0 10px #00ff66;
-  animation: pulse 2s infinite;
-}
-@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; box-shadow: 0 0 20px #00ff66; } 100% { opacity: 0.6; } }
-
-.user-display-name {
-  font-size: 2rem;
-  font-weight: 800;
-  margin-top: 2rem;
-  color: #fff;
-  text-shadow: 0 0 10px var(--accent-glow);
-  letter-spacing: 2px;
-}
-
-.user-major-badge {
-  margin-top: 0.75rem;
-  padding: 0.4rem 1.25rem;
-  border-radius: 20px;
-  background: rgba(0, 153, 255, 0.15);
-  border: 1px solid var(--accent-primary);
-  color: var(--accent-primary);
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: 1px;
-}
-
-.user-goal-display {
-  margin-top: 3rem;
-  width: 100%;
-  background: rgba(10, 13, 32, 0.5);
-  padding: 1.5rem;
-  border-radius: 10px;
-  border-left: 3px solid var(--accent-primary);
-}
-
-.goal-label {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.goal-text {
-  margin-top: 0.8rem;
-  font-size: 1.1rem;
-  color: rgba(200, 200, 220, 0.9);
-  font-style: italic;
-  line-height: 1.6;
-}
-
-.cyber-lines {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: auto;
-  padding-top: 4rem;
-  opacity: 0.4;
-}
-
-.cyber-lines .line {
-  height: 2px;
-  background: var(--accent-primary);
-  box-shadow: 0 0 5px var(--accent-glow);
-}
-
-.cyber-lines .line.short {
-  width: 60%;
-}
-
-.profile-main {
-  display: flex;
-  flex-direction: column;
-}
-
-.cyber-btn {
-  font-weight: bold;
-  letter-spacing: 2px;
-  padding: 1.5rem 3rem !important;
-  text-transform: uppercase;
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(0,153,255,0.8), rgba(0,255,102,0.8));
-  border: none;
-  box-shadow: 0 0 20px rgba(0,153,255,0.4);
-}
-.cyber-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 30px rgba(0,153,255,0.6);
-}
-
-.avatar-container {
-  position: relative;
-  transition: transform 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-}
-
-.avatar-container:hover {
-  transform: scale(1.05);
-}
-
-.avatar {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: var(--bg-primary);
-  box-shadow: 
-    0 0 30px var(--accent-glow),
-    inset 0 2px 10px rgba(255, 255, 255, 0.3),
-    0 5px 15px rgba(0, 0, 0, 0.2);
-  animation: avatarGlow 4s ease-in-out infinite;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-@keyframes avatarGlow {
-  0%, 100% {
-    box-shadow: 
-      0 0 30px var(--accent-glow),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3),
-      0 5px 15px rgba(0, 0, 0, 0.2);
+@media (max-width: 600px) {
+  .form-grid {
+    grid-template-columns: 1fr;
   }
-  50% {
-    box-shadow: 
-      0 0 40px var(--accent-primary),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3),
-      0 5px 15px rgba(0, 0, 0, 0.2);
+  
+  .full-width {
+    grid-column: span 1;
   }
 }
-
-.avatar::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
-  animation: avatarShimmer 3s ease-in-out infinite;
-}
-
-@keyframes avatarShimmer {
-  0%, 100% {
-    transform: rotate(0deg) scale(1);
-    opacity: 0.3;
-  }
-  50% {
-    transform: rotate(45deg) scale(1.2);
-    opacity: 0.5;
-  }
-}
-
-.avatar:hover {
-  transform: scale(1.05);
-  box-shadow: 
-    0 0 45px var(--accent-primary),
-    inset 0 2px 10px rgba(255, 255, 255, 0.3),
-    0 5px 15px rgba(0, 0, 0, 0.2);
-}
-
-.avatar-text {
+xt {
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
   position: relative;
   z-index: 1;
@@ -1738,144 +1073,4 @@ onMounted(() => {
   }
 }
 
-@keyframes statusPulse {
-  0%, 100% {
-    box-shadow: 0 0 15px #00ff66;
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 25px #00ff66, 0 0 35px rgba(0, 255, 102, 0.5);
-    transform: scale(1.1);
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 响应式设计 - 全面优化移动体验 */
-@media (max-width: 768px) {
-  .settings-container {
-    padding: 1.5rem 1rem;
-  }
-  
-  .settings-header h2 {
-    font-size: 2rem;
-  }
-  
-  .subtitle {
-    font-size: 1rem;
-  }
-  
-  .settings-tabs :deep(.el-tabs__nav) {
-    padding: 0.25rem;
-    width: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
-  }
-  
-  .settings-tabs :deep(.el-tabs__item) {
-    padding: 0.6rem 1.2rem;
-    font-size: 0.9rem;
-  }
-  
-  .settings-card {
-    padding: 1.5rem 1rem;
-    border-radius: 12px;
-  }
-  
-  .profile-content {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 1.5rem;
-  }
-  
-  .user-details {
-    width: 100%;
-  }
-  
-  .avatar {
-    width: 80px;
-    height: 80px;
-    font-size: 2rem;
-  }
-  
-  .card-actions {
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  
-  .card-actions :deep(.el-button) {
-    width: 100%;
-  }
-  
-  .config-details {
-    padding-left: 0.5rem;
-  }
-  
-  .info-item {
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    gap: 0.5rem;
-  }
-  
-  .info-value {
-    min-width: auto;
-    width: 100%;
-  }
-  
-  .color-options {
-    justify-content: center;
-  }
-  
-  .color-option {
-    width: 35px;
-    height: 35px;
-  }
-}
-
-/* 平板设备响应式调整 */
-@media (min-width: 769px) and (max-width: 1024px) {
-  .settings-container {
-    padding: 2rem 1.5rem;
-  }
-  
-  .settings-header h2 {
-    font-size: 2.5rem;
-  }
-  
-  .settings-tabs :deep(.el-tabs__nav) {
-    flex-wrap: wrap;
-  }
-  
-  .profile-content {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 1.5rem;
-  }
-  
-  .user-details {
-    width: 100%;
-  }
-}
 </style>
-

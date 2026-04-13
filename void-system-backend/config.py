@@ -73,7 +73,7 @@ class Config:
     # openai_compat - 任意兼容 OpenAI 协议的 API (月之暗面/通义/Yi/Groq 等)
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
 
-    # Embedding 提供商: ollama | openai | huggingface
+    # Embedding 提供商: ollama | openai
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "ollama")
 
     # Ollama服务地址 (LLM_PROVIDER=ollama 时使用)
@@ -89,7 +89,6 @@ class Config:
     # 嵌入模型名称
     # ollama 示例: hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0
     # openai 示例: text-embedding-3-small
-    # huggingface 示例: BAAI/bge-small-zh-v1.5
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q8_0")
 
     # OpenAI / OpenAI 兼容 API Key (openai / deepseek / openai_compat 时使用)
@@ -121,7 +120,11 @@ class Config:
 
     # ==================== 前端配置 ====================
     # CORS允许的源
-    CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:5174").split(",")
+    CORS_ORIGINS: list = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://localhost:5173,http://localhost:5174,"
+        "http://127.0.0.1:5173,http://127.0.0.1:5174",
+    ).split(",")
 
     # ==================== 任务系统配置 ====================
     # 最大任务并发数

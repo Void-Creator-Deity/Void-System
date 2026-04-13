@@ -7,7 +7,7 @@ Void System Backend - Main Application
 - 模块化设计：config.py(配置), errors.py(错误处理), utils.py(工具函数)
 - 清晰的代码组织：api/目录包含业务逻辑，lc_server/包含AI服务
 - 统一的响应格式和错误处理
-- 支持DeepSeek风格的文件上传和RAG问答
+- 支持虚空系统标准文档上传与 RAG 问答
 
 TODO:
 - [ ] 完善单元测试覆盖率
@@ -28,6 +28,7 @@ from io import StringIO
 from contextlib import asynccontextmanager
 from typing import Any, Optional, List, Dict, Literal, Union, AsyncGenerator, Callable, Awaitable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # 第三方库导入
 from fastapi import FastAPI, Request, Response, status, Depends, HTTPException, UploadFile, File, Form, Query, Body, BackgroundTasks
@@ -44,8 +45,10 @@ import uvicorn
 import logging
 from dotenv import load_dotenv
 
-# 加载环境变量
-load_dotenv()
+# 从后端包目录加载 .env，不依赖进程启动时的 cwd
+_BACKEND_ROOT = Path(__file__).resolve().parent
+_ENV_FILE = _BACKEND_ROOT / ".env"
+load_dotenv(_ENV_FILE)
 
 # 配置日志
 logging.basicConfig(
@@ -75,6 +78,14 @@ elif len(Config.SECRET_KEY) < 32:
     logger.warning("⚠️ SECRET_KEY长度不足32字符，建议使用更长的密钥以提高安全性")
 else:
     logger.info("✅ SECRET_KEY配置正确")
+
+logger.info(
+    "AI 配置: LLM_PROVIDER=%s | EMBEDDING_PROVIDER=%s | CHAT_MODEL=%s | EMBEDDING_MODEL=%s",
+    Config.LLM_PROVIDER,
+    Config.EMBEDDING_PROVIDER,
+    Config.CHAT_MODEL,
+    Config.EMBEDDING_MODEL,
+)
 
 # ==================== 数据库实例 ====================
 db_instance: Optional[Database] = None
@@ -198,6 +209,31 @@ class TaskCreate(BaseModel):
     is_optional: Optional[bool] = False
     is_daily: Optional[bool] = False
     
+    @field_validator('category_id', 'chain_id', mode='before')
+    @classmethod
+    def blank_id_to_none(cls, v: Any) -> Any:
+        if v is None or v == '':
+            return None
+        return str(v)
+
+    @field_validator('prerequisites', mode='before')
+    @classmethod
+    def prerequisites_to_str_list(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return v
+
+    @field_validator('is_optional', 'is_daily', mode='before')
+    @classmethod
+    def coerce_bool_flags(cls, v: Any) -> Any:
+        if v in (0, '0', 'false', False):
+            return False
+        if v in (1, '1', 'true', True):
+            return True
+        return v
+    
     @field_validator('related_attrs')
     @classmethod
     def validate_related_attrs(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -301,6 +337,13 @@ class ChatMessageCreate(BaseModel):
     tokens: int = 0
     reply_to_id: Optional[str] = None
 
+
+class ImageCaptionRequest(BaseModel):
+    """会话临时图片的无状态看图摘要（不写入 persona 历史）。"""
+    file_id: str = Field(..., min_length=1, max_length=80)
+    session_id: str = Field(..., min_length=1, max_length=80)
+
+
 # ==================== 自定义异常 ====================
 class VoidSystemException(Exception):
     """虚空系统自定义异常"""
@@ -362,6 +405,9 @@ def create_error_response(
 
 # ==================== 依赖注入 ====================
 oauth2_scheme: OAuth2PasswordBearer = OAuth2PasswordBearer(tokenUrl="api/v1/token")
+oauth2_scheme_optional: OAuth2PasswordBearer = OAuth2PasswordBearer(
+    tokenUrl="api/v1/token", auto_error=False
+)
 
 def get_db() -> Database:
     """获取数据库实例依赖"""
@@ -425,6 +471,31 @@ async def get_current_user(
         )
     
     return user
+
+
+async def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Database = Depends(get_db),
+) -> Optional[Dict[str, Any]]:
+    """与 get_current_user 相同解析逻辑，但无令牌或无效时令牌不抛错，返回 None。"""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            Config.SECRET_KEY,
+            algorithms=[Config.ALGORITHM],
+        )
+        sub: Optional[str] = payload.get("sub")
+        if sub is None:
+            return None
+    except JWTError:
+        return None
+    user: Optional[Dict[str, Any]] = db.get_user_by_id(sub)
+    if user is None:
+        user = db.get_user_by_username(sub)
+    return user
+
 
 async def get_current_admin(
     current_user: Dict[str, Any] = Depends(get_current_user)
@@ -683,13 +754,16 @@ def purify_ai_response(raw_content: Any) -> str:
     return purified
 
 # 流式响应支持
-from sse_starlette.sse import EventSourceResponse
 import json
 from typing import Dict, Any
 
 # 流式响应端点
 @app.post("/api/stream-chat")
-async def stream_chat_endpoint(user_input: Dict[str, Any]):
+async def stream_chat_endpoint(
+    current_user_optional: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    db: Database = Depends(get_db),
+    user_input: Dict[str, Any] = Body(...),
+):
     """
     处理流式聊天请求
     """
@@ -711,11 +785,27 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
             input_data = {"question": user_question}
         else:  # 默认persona
             from services.ai_services.persona_chain import load_persona_chain
+            from api.session_file_access import build_data_urls_for_session_files
+
             chain = load_persona_chain()
             # 从输入中提取或生成session_id
             session_id = user_input.get("session_id", "user-" + str(asyncio.get_event_loop().time()).replace(".", "")[:10])
+            client_images: List[str] = list(user_input.get("images") or [])
+            session_file_ids: List[str] = list(user_input.get("session_file_ids") or [])
+            merged_images: List[str] = list(client_images)
+            if session_file_ids and current_user_optional:
+                merged_images.extend(
+                    build_data_urls_for_session_files(
+                        db,
+                        current_user_optional["user_id"],
+                        session_id,
+                        session_file_ids,
+                    )
+                )
             input_data = {
                 "text": user_text,
+                "images": merged_images,
+                "session_id": session_id,
                 "config": {
                     "configurable": {
                         "session_id": session_id
@@ -771,11 +861,14 @@ async def stream_chat_endpoint(user_input: Dict[str, Any]):
         return EventSourceResponse(event_generator())
     except Exception as e:
         logger.error(f"❌ 流式响应失败: {e}")
-        # 返回错误信息
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "message": str(e),
+                "error": str(e),
+            },
+        )
 
 # ==================== LangChain 服务路由 ====================
 try:
@@ -864,6 +957,38 @@ async def get_ai_advisor(
             error_code="ADVISOR_FAILED",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@app.post("/api/ai/image-caption", summary="会话图片无状态摘要", tags=["AI服务"], response_model=APIResponse)
+async def image_caption_endpoint(
+    body: ImageCaptionRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    """对已上传的会话临时图片生成简短中文描述，不写入多轮 persona 记忆。"""
+    from api.session_file_access import load_session_image_data_url
+    from services.ai_services.vision_caption import caption_one_image_data_url
+
+    if not db.user_owns_chat_session(body.session_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    data_url = load_session_image_data_url(
+        db, current_user["user_id"], body.session_id, body.file_id
+    )
+    if not data_url:
+        raise HTTPException(
+            status_code=400,
+            detail="文件不是可用的会话图片或已过期",
+        )
+    try:
+        summary = await caption_one_image_data_url(data_url)
+    except Exception as e:
+        logger.error("看图摘要失败: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"模型摘要失败: {str(e)}",
+        )
+    return create_success_response("摘要已生成", data={"summary": summary})
+
 
 # ==================== 系统信息路由 ====================
 @app.get("/", summary="系统状态", tags=["系统"], response_model=APIResponse)
@@ -1919,9 +2044,9 @@ async def get_task_chains(
 @app.post("/api/task-chains", summary="创建任务链及子任务", tags=["任务链"], response_model=APIResponse)
 async def create_task_chain(
     chain_data: TaskChainCreate,
+    background_tasks: BackgroundTasks,
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Database = Depends(get_db),
-    background_tasks: BackgroundTasks = None
 ) -> APIResponse:
     # 1. 创建链
     chain_id = db.create_task_chain(
@@ -1993,11 +2118,7 @@ async def create_task_chain(
             except Exception as e:
                 logger.error(f"AI 任务链生成失败: {e}")
 
-        if background_tasks:
-            background_tasks.add_task(generate_tasks)
-        else:
-            # 兼容非背景任务调用
-            generate_tasks()
+        background_tasks.add_task(generate_tasks)
 
     return create_success_response("任务链创建成功，正在生成子任务..." if chain_data.target_goal else "任务链创建成功", {"chain_id": chain_id})
 
@@ -2031,76 +2152,6 @@ async def update_task_progress(
         pass
 
     return create_success_response("进度更新成功")
-
-@app.post("/api/tasks/{task_id}/ai-evaluate", summary="AI 自动评判任务", tags=["任务"], response_model=APIResponse)
-async def ai_evaluate_task(
-    task_id: str,
-    request_data: AIEvaluateRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: Database = Depends(get_db)
-) -> APIResponse:
-    # 1. 获取任务信息
-    tasks = db.get_user_tasks(current_user["user_id"])
-    task = next((t for t in tasks if t["task_id"] == task_id), None)
-    if not task:
-        return create_error_response("任务未找到")
-    
-    # 2. 调用 AI 进行评估
-    try:
-        from langchain_ollama import ChatOllama
-        from langchain_core.prompts import PromptTemplate
-        from langchain_core.output_parsers import JsonOutputParser
-        
-        # 定义评判提示词
-        prompt_tmpl = PromptTemplate.from_template("""
-        你是虚空系统的任务评判AI，请根据以下信息判断任务是否完成：
-
-        【任务名称】：{task_name}
-        【任务描述】：{description}
-        【完成标准】：{criteria}
-        【用户提交内容】：{submission}
-
-        请输出严格的JSON格式评判结果：
-        {{
-          "passed": 布尔值(true/false),
-          "score": 0-100之间的数字,
-          "feedback": "200字以内的详尽反馈",
-          "suggestions": ["建议1", "建议2"]
-        }}
-        """)
-        
-        llm = ChatOllama(model=Config.CHAT_MODEL, temperature=0.3)
-        chain = prompt_tmpl | llm | JsonOutputParser()
-        
-        # 准备输入
-        criteria = task.get("completion_criteria") or "无明确标准，请根据描述自行判断"
-        if isinstance(criteria, dict):
-            criteria = criteria.get("criteria", "")
-            
-        result = await chain.ainvoke({
-            "task_name": task["task_name"],
-            "description": task["description"],
-            "criteria": criteria,
-            "submission": request_data.submission
-        })
-        
-        # 3. 保存 AI 评估结果
-        passed = result.get("passed", False)
-        db.save_ai_evaluation(task_id, current_user["user_id"], result, passed)
-        
-        return create_success_response("AI 评估完成", {"evaluation": result})
-        
-    except Exception as e:
-        logger.error(f"AI 评估失败: {e}")
-        # 降级处理
-        fallback_result = {
-            "passed": True, 
-            "score": 60, 
-            "feedback": "AI 评估系统暂时忙碌，已先行标记为待确认。", 
-            "suggestions": []
-        }
-        db.save_ai_evaluation(task_id, current_user["user_id"], fallback_result, True)
-        return create_success_response("AI 评估已提交（降级模式）", {"evaluation": fallback_result})
 
 # ==================== 商店系统相关路由 ====================
 @app.get("/api/shop/items", summary="获取商店商品列表", tags=["商店"], response_model=APIResponse)
@@ -2727,7 +2778,7 @@ async def upload_user_document(
 ) -> APIResponse:
     """
     上传用户文档（支持多文件批量上传）
-    DeepSeek风格的文件上传接口
+    虚空系统标准文档上传接口
     """
     from api.user_document_manager import document_manager
 
@@ -3257,17 +3308,155 @@ async def clear_chat_messages(
     db.clear_chat_history(session_id, current_user["user_id"])
     return create_success_response("对话历史已清空")
 
+
+def _public_session_file_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """将 user_session_files 行转为前端 TemporaryUpload / AIConsole 期望字段。"""
+    return {
+        "file_id": row.get("id"),
+        "file_name": row.get("file_name"),
+        "file_size": row.get("original_size"),
+        "upload_time": row.get("upload_time"),
+        "content_preview": row.get("content_preview"),
+        "mime_type": row.get("mime_type"),
+    }
+
+
+@app.post("/api/session/new", summary="创建临时会话标识", tags=["会话文件"], response_model=APIResponse)
+async def session_create_standalone(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    """生成独立 session_id（未写入 chat_sessions）；与聊天持久化会话 ID 可混用为临时文件桶键。"""
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.create_new_session(current_user["user_id"])
+    if not result.get("success"):
+        return create_error_response(result.get("message", "创建失败"), error_code="SESSION_CREATE_FAILED")
+    return create_success_response(
+        result.get("message", "创建成功"),
+        data={"session_id": result.get("session_id")},
+    )
+
+
+@app.post("/api/session/upload-temporary", summary="上传会话临时文件", tags=["会话文件"], response_model=APIResponse)
+async def session_upload_temporary(
+    session_id: str = Query(..., description="须为当前用户的 chat_sessions.session_id"),
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    if not db.user_owns_chat_session(session_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    raw = await file.read()
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.upload_temporary_file(
+        current_user["user_id"], session_id, raw, file.filename or "unnamed"
+    )
+    if not result.get("success"):
+        return create_error_response(
+            result.get("message", "上传失败"), error_code="SESSION_UPLOAD_FAILED"
+        )
+    return create_success_response(
+        result.get("message", "临时文件上传成功"),
+        data={
+            "file_id": result["file_id"],
+            "file_name": result.get("file_name"),
+            "file_size": result.get("file_size"),
+            "content_preview": result.get("content_preview"),
+            "mime_type": result.get("mime_type"),
+        },
+    )
+
+
+@app.get("/api/session/context/{session_id}", summary="获取会话临时文件列表", tags=["会话文件"], response_model=APIResponse)
+async def session_get_context(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    if not db.user_owns_chat_session(session_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    mgr = SessionContextManager(db.db_path)
+    ctx = mgr.get_session_context(current_user["user_id"], session_id)
+    if not ctx.get("success"):
+        return create_error_response(ctx.get("message", "获取失败"), error_code="SESSION_CONTEXT_FAILED")
+    files = [_public_session_file_row(dict(r)) for r in ctx.get("files", [])]
+    return create_success_response(
+        "获取会话上下文成功",
+        data={"files": files, "file_count": len(files), "session_id": session_id},
+    )
+
+
+@app.get("/api/session/active", summary="获取活跃会话列表", tags=["会话文件"], response_model=APIResponse)
+async def session_get_active(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    out = mgr.get_active_sessions(current_user["user_id"])
+    if not out.get("success"):
+        return create_error_response(out.get("message", "获取失败"))
+    return create_success_response(
+        out.get("message", "获取成功"),
+        data={"sessions": out.get("sessions", []), "session_count": out.get("session_count", 0)},
+    )
+
+
+@app.get("/api/session/files/{file_id}", summary="获取临时文件信息", tags=["会话文件"], response_model=APIResponse)
+async def session_get_file(
+    file_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.get_file_content(current_user["user_id"], file_id)
+    if not result.get("success"):
+        return create_error_response(result.get("message", "获取失败"), error_code="SESSION_FILE_NOT_FOUND")
+    return create_success_response(result.get("message", "成功"), data=result)
+
+
+@app.delete("/api/session/files/{file_id}", summary="删除临时文件", tags=["会话文件"], response_model=APIResponse)
+async def session_delete_file(
+    file_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> APIResponse:
+    from api.session_context_manager import SessionContextManager
+
+    mgr = SessionContextManager(db.db_path)
+    result = mgr.delete_session_file(current_user["user_id"], file_id)
+    if not result.get("success"):
+        return create_error_response(result.get("message", "删除失败"), error_code="SESSION_FILE_DELETE_FAILED")
+    return create_success_response(result.get("message", "删除成功"))
+
+
 # ==================== 应用启动 ====================
 if __name__ == "__main__":
-    # 检查必要的环境变量
-    if not os.path.exists(".env"):
-        logger.warning("⚠️ 未找到 .env 文件，使用默认配置")
+    if not _ENV_FILE.exists():
+        logger.warning("⚠️ 未找到 .env 文件 (%s)，使用默认配置", _ENV_FILE)
     
     # 启动服务器
+    # reload=True 时，长耗时 Ollama 请求进行中若保存代码会触发重载并中断该请求。
+    # 稳定联调长任务时可改为 reload=False，或等请求结束后再保存。
     uvicorn.run(
         "main:app",
         host="127.0.0.1",
         port=8000,
         log_level="info",
-        reload=True
+        reload=True,
+        reload_excludes=[
+            "**/data/**",
+            "**/session_temp/**",
+            "**/__pycache__/**",
+            "**/.git/**",
+        ],
     )
