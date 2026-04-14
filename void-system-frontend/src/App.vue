@@ -312,13 +312,20 @@ onMounted(() => {
 /* Nav */
 .nav-links {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
   gap: var(--spacing-sm);
   flex: 1 1 auto;
   min-width: 0;
   padding: 0 var(--spacing-xs);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.nav-links::-webkit-scrollbar {
+  display: none;
 }
 
 .central-ops {

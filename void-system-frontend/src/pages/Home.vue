@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="home-page">
     <!-- 系统终端头图区：标题 + 副文案 + 等级 + 进度 -->
     <header class="home-hero" aria-labelledby="home-main-heading">
@@ -233,7 +233,9 @@
                       </el-tooltip>
                       <template v-else>
                         <el-button v-if="task.status === 'pending'" size="small" class="void-btn secondary" @click="startTask(task.task_id)">激活</el-button>
-                        <el-button v-if="task.status === 'in_progress'" type="success" size="small" class="void-btn success" @click="completeTask(task.task_id)">同步</el-button>
+                        <el-button v-if="task.status === 'in_progress'" type="success" size="small" class="void-btn success" @click="completeTask(task.task_id)">
+                          {{ task.completion_type === 'ai_eval' ? '提交评审' : '完成' }}
+                        </el-button>
                       </template>
                     </div>
                   </div>
@@ -346,21 +348,43 @@
       
       <div class="coins-summary">
         <div class="summary-item">
-          <span class="label">累计获取</span>
-          <span class="value">{{ coinStats?.total_income ?? coinStats?.total_coins ?? 0 }}</span>
+          <span class="label">累计收入</span>
+          <span class="value">+{{ coinStats?.total_income ?? coinStats?.total_coins ?? 0 }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="label">累计支出</span>
+          <span class="value">-{{ coinStats?.total_expense ?? 0 }}</span>
         </div>
         <div class="summary-item">
           <span class="label">净收支</span>
-          <span class="value">{{ coinStats?.net_income ?? 0 }}</span>
+          <span class="value">{{ coinStats?.net_income ?? ((coinStats?.total_income ?? 0) - (coinStats?.total_expense ?? 0)) }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="label">近7天收支</span>
+          <span class="value">
+            +{{ coinStats?.weekly_income ?? 0 }} / -{{ coinStats?.weekly_expense ?? 0 }}
+          </span>
         </div>
       </div>
       
       <div class="coins-history mt-lg">
         <h4 class="history-title">数据同步历史</h4>
         <el-table :data="coinHistory.slice(0, 5)" class="void-table">
-          <el-table-column prop="type" label="类别" width="100"></el-table-column>
-          <el-table-column prop="amount" label="分值" width="100"></el-table-column>
-          <el-table-column prop="source" label="来源"></el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              {{ row?.type || row?.transaction_type || '未知' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="变动" width="120">
+            <template #default="{ row }">
+              {{ formatCoinAmount(row?.amount) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="来源/说明" min-width="220">
+            <template #default="{ row }">
+              {{ row?.source || row?.reason || row?.description || '系统记录' }}
+            </template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
@@ -398,21 +422,33 @@
           <div class="detail-grid">
             <div class="det-item">
               <span class="det-label">周期/预计:</span>
-              <span class="det-value">{{ currentTask.estimated_time || 0 }}m</span>
+              <span class="det-value">{{ currentTask.estimated_time || 0 }} 分钟</span>
             </div>
             <div class="det-item">
-              <span class="det-label">同步点数:</span>
-              <span class="det-value">+{{ currentTask.reward_coins }} VC | +{{ currentTask.attribute_points }} AP</span>
+              <span class="det-label">任务奖励:</span>
+              <span class="det-value">系统币 +{{ currentTask.reward_coins || 0 }}（VC） / 属性成长 +{{ currentTask.attribute_points || 0 }} 点</span>
             </div>
           </div>
           <div class="det-full mt-md">
             <span class="det-label">关联矩阵:</span>
             <span class="det-value">{{ getRelatedAttrsText(currentTask.related_attrs) }}</span>
           </div>
+          <div v-if="getTaskAttrRewardBreakdown(currentTask).length" class="det-full mt-md">
+            <span class="det-label">属性分配:</span>
+            <div class="task-attr-breakdown">
+              <span
+                v-for="row in getTaskAttrRewardBreakdown(currentTask)"
+                :key="`${row.attr_id}-${row.points}`"
+                class="task-attr-chip"
+              >
+                {{ row.attr_name }} +{{ row.points }} 点
+              </span>
+            </div>
+          </div>
         </div>
 
         <div class="detail-desc mb-xl">
-          <div class="section-tag mb-sm">指令详情</div>
+          <div class="section-tag mb-sm">任务详情</div>
           <p class="desc-text">{{ currentTask.description || 'VOID_DATA_MISSING' }}</p>
         </div>
 
@@ -1229,6 +1265,29 @@ const getRelatedAttrsText = (relatedAttrs) => {
   return names.length > 0 ? names.join('、') : '未关联'
 }
 
+const formatCoinAmount = (amount) => {
+  const n = Number(amount || 0)
+  if (!Number.isFinite(n)) return '0'
+  if (n > 0) return `+${n}`
+  return `${n}`
+}
+
+const getTaskAttrRewardBreakdown = (task) => {
+  if (!task || typeof task !== 'object') return []
+  const plan = Array.isArray(task?.completion_criteria?.attribute_plan)
+    ? task.completion_criteria.attribute_plan
+    : Array.isArray(task?.attribute_plan)
+      ? task.attribute_plan
+      : []
+  return plan
+    .map((row) => ({
+      attr_id: row?.attr_id || row?.attrId || '',
+      attr_name: row?.attr_name || row?.attrName || row?.attr_id || row?.attrId || '未命名属性',
+      points: Number(row?.points ?? 0)
+    }))
+    .filter((row) => row.attr_id && row.points > 0)
+}
+
 /**
  * 获取前置任务名称列表
  */
@@ -1602,7 +1661,7 @@ const submitAIReview = async () => {
   })
 
   api
-    .post(`/api/tasks/${taskId}/ai-evaluate`, payload)
+    .post(`/api/tasks/${taskId}/ai-evaluate`, payload, { timeout: 900000 })
     .then(async (resp) => {
       pending.close()
       const evalData = resp.data?.data
@@ -1624,13 +1683,14 @@ const submitAIReview = async () => {
       await loadTasks()
       await loadUserData()
     })
-    .catch(() => {
+    .catch((error) => {
       pending.close()
+      const msg = formatAxiosErrorMessage(error, '网络或服务异常，请稍后重试')
       ElNotification({
         title: '评核请求失败',
-        message: '网络或服务异常，请稍后重试',
+        message: msg,
         type: 'error',
-        duration: 8000
+        duration: 10000
       })
     })
 }
@@ -2493,7 +2553,8 @@ onMounted(async () => {
 
 /* Financials */
 .coins-summary {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: var(--spacing-xl);
 }
 
@@ -2501,6 +2562,26 @@ onMounted(async () => {
   font-size: 2.2rem;
   font-weight: 800;
   font-family: var(--font-family-mono);
+}
+
+.summary-item .label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.task-attr-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-attr-chip {
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-full);
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  color: var(--text-primary);
 }
 
 /* Responsive */

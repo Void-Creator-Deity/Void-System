@@ -740,6 +740,38 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 1.25rem;
 }
 
+/* --- Metric Cards (可跨页面复用的统计卡片) --- */
+.void-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.void-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 88px;
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color-light);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+}
+
+.void-metric-card__label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.4px;
+}
+
+.void-metric-card__value {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
 /* --- Composer attachments (Gemini-style chips; theme tokens only) --- */
 .void-composer-attachments {
   display: flex;

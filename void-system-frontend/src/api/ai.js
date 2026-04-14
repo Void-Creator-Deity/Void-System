@@ -6,6 +6,23 @@
 
 import api from "./index"
 
+const getAdvisorPrefsFromSettings = () => {
+  const raw = localStorage.getItem('settings_cache')
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    const systemConfig = parsed?.systemConfig || {}
+    const responseStyle = typeof systemConfig.responseStyle === 'string' ? systemConfig.responseStyle : '专业'
+    const aiTemperature = Number(systemConfig.aiTemperature)
+    return {
+      response_style: responseStyle,
+      response_temperature: Number.isFinite(aiTemperature) ? Math.min(100, Math.max(0, aiTemperature)) : 35
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * 流式调用系统精灵对话（带会话记忆和打字机效果）
  * @param {string} text - 用户输入的文本
@@ -346,17 +363,21 @@ export const askPersona = async (text, cancelToken) => {
  * @param {import('axios').CancelToken} [cancelToken] - 可选的取消令牌
  * @returns {Promise<Object>} 结构化任务建议内容
  */
-export const getAdvisor = async (topic, cancelToken) => {
+export const getAdvisor = async (topic, cancelToken, signal, options = {}) => {
   try {
+    const advisorPrefs = getAdvisorPrefsFromSettings()
     const res = await api.post(
       "/api/ai/advisor",
       {
-        topic: topic
+        topic: topic,
+        force_mode: options.forceMode || 'auto',
+        advisor_prefs: advisorPrefs
       },
       {
         cancelToken,
-        // 本地 Ollama / 慢速 API 常超过 2 分钟；与全局 60s 区分，仅本接口放宽
-        timeout: 600000
+        signal,
+        // 长任务链可能触发多轮审查与修补，进一步放宽超时（15分钟）
+        timeout: 9000000
       }
     )
 

@@ -17,7 +17,10 @@ Void System - LLM Factory
   - huggingface  : HuggingFace 本地嵌入 (不需要 API Key)
 """
 import logging
-from typing import Any, Optional
+import json
+from typing import Any, Optional, List
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
 from config import config
 
 logger = logging.getLogger("void-system-llm-factory")
@@ -42,8 +45,9 @@ def get_chat_llm(
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
+        model_name = _resolve_ollama_chat_model(config.CHAT_MODEL)
         kwargs = {
-            "model": config.CHAT_MODEL,
+            "model": model_name,
             "base_url": config.OLLAMA_BASE_URL,
             "temperature": temperature,
         }
@@ -95,7 +99,7 @@ def get_chat_llm(
         logger.warning(f"⚠️ 未知的 LLM_PROVIDER: '{provider}'，回退到 Ollama")
         from langchain_ollama import ChatOllama
         return ChatOllama(
-            model=config.CHAT_MODEL,
+            model=_resolve_ollama_chat_model(config.CHAT_MODEL),
             base_url=config.OLLAMA_BASE_URL,
             temperature=temperature,
         )
@@ -151,3 +155,37 @@ def _require_key(key_name: str, hint: str = "") -> None:
             msg += f" ({hint})"
         msg += f"。请在 .env 文件中设置 {key_name}=your_key"
         raise EnvironmentError(msg)
+
+
+def _resolve_ollama_chat_model(configured: str) -> str:
+    preferred = str(configured or "").strip()
+    if not preferred:
+        available = _list_ollama_models()
+        if available:
+            logger.warning("⚠️ CHAT_MODEL 为空，自动使用可用模型: %s", available[0])
+            return available[0]
+        return preferred
+    available = _list_ollama_models()
+    if not available:
+        return preferred
+    if preferred in available:
+        return preferred
+    logger.warning("⚠️ 配置模型 '%s' 不在 Ollama 本地列表中，自动回退到: %s", preferred, available[0])
+    return available[0]
+
+
+def _list_ollama_models() -> List[str]:
+    base = str(config.OLLAMA_BASE_URL or "http://127.0.0.1:11434").rstrip("/")
+    try:
+        with urlopen(f"{base}/api/tags", timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, ValueError):
+        return []
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return []
+    result: List[str] = []
+    for row in models:
+        if isinstance(row, dict) and row.get("name"):
+            result.append(str(row["name"]))
+    return result

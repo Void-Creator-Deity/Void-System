@@ -7,12 +7,23 @@
 import { reactive } from 'vue'
 import api from './index.js'
 
+const safeParseUserInfo = () => {
+  const raw = localStorage.getItem('user_info')
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    localStorage.removeItem('user_info')
+    return null
+  }
+}
+
 /**
  * 全局认证状态管理（响应式）
  */
 export const authState = reactive({
   isLoggedIn: !!localStorage.getItem('access_token'),
-  userInfo: localStorage.getItem('user_info') ? JSON.parse(localStorage.getItem('user_info')) : null
+  userInfo: safeParseUserInfo()
 })
 
 /**
@@ -144,7 +155,13 @@ export const isLoggedIn = () => {
  */
 export const getUserInfo = () => {
   const userInfo = localStorage.getItem('user_info')
-  return userInfo ? JSON.parse(userInfo) : null
+  if (!userInfo) return null
+  try {
+    return JSON.parse(userInfo)
+  } catch {
+    localStorage.removeItem('user_info')
+    return null
+  }
 }
 
 /**
@@ -179,7 +196,7 @@ export const updateUserProfile = async (profileData) => {
   if (response.data.success) {
     // 同步更新全局状态和本地存储，保持顶栏显示同步
     const updatedData = await getCurrentUser()
-    const storedInfo = JSON.parse(localStorage.getItem('user_info') || '{}')
+    const storedInfo = safeParseUserInfo() || {}
 
     // 合并新数据
     const newInfo = { ...storedInfo, ...updatedData }

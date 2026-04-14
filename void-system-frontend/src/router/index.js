@@ -22,7 +22,13 @@ const RAGManagement = () => import('@/pages/RAGManagement.vue')
 // 获取存储的用户信息
 const getUserInfo = () => {
   const userInfo = localStorage.getItem('user_info')
-  return userInfo ? JSON.parse(userInfo) : null
+  if (!userInfo) return null
+  try {
+    return JSON.parse(userInfo)
+  } catch {
+    localStorage.removeItem('user_info')
+    return null
+  }
 }
 
 // 检查用户是否是管理员

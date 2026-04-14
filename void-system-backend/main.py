@@ -24,9 +24,13 @@ import uuid
 import secrets
 import json
 import asyncio
+import re
+import shlex
+from urllib.request import urlopen, Request as UrlRequest
+from urllib.error import URLError, HTTPError
 from io import StringIO
 from contextlib import asynccontextmanager
-from typing import Any, Optional, List, Dict, Literal, Union, AsyncGenerator, Callable, Awaitable
+from typing import Any, Optional, List, Dict, Literal, Union, AsyncGenerator, Callable, Awaitable, Tuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -50,15 +54,128 @@ _BACKEND_ROOT = Path(__file__).resolve().parent
 _ENV_FILE = _BACKEND_ROOT / ".env"
 load_dotenv(_ENV_FILE)
 
+
+def _warn_malformed_env_lines(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    bad_lines: List[int] = []
+    for idx, raw in enumerate(env_path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            bad_lines.append(idx)
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            bad_lines.append(idx)
+            continue
+        value = value.strip()
+        if value and (value[0] == value[-1]) and value[0] in {"'", '"'}:
+            continue
+        if value.count('"') % 2 != 0 or value.count("'") % 2 != 0:
+            bad_lines.append(idx)
+            continue
+        try:
+            shlex.split(value)
+        except Exception:
+            bad_lines.append(idx)
+    if bad_lines:
+        logger.warning("⚠️ .env 可能存在格式异常行: %s（请检查是否有未闭合引号或非法字符）", bad_lines)
+
+
+def _serialize_env_value(value: str) -> str:
+    text = str(value)
+    if text == "":
+        return ""
+    needs_quote = any(ch.isspace() for ch in text) or "#" in text or '"' in text
+    if not needs_quote:
+        return text
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _upsert_env_values(env_path: Path, updates: Dict[str, str]) -> None:
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    else:
+        lines = []
+    pending = dict(updates)
+    output: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in pending:
+            output.append(f"{key}={_serialize_env_value(pending.pop(key))}")
+        else:
+            output.append(line)
+    for key, value in pending.items():
+        output.append(f"{key}={_serialize_env_value(value)}")
+    env_path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def _apply_runtime_ai_config(updates: Dict[str, str]) -> None:
+    for key, value in updates.items():
+        setattr(Config, key, value)
+        setattr(runtime_config, key, value)
+        os.environ[key] = value
+
+
+def _read_env_pairs(env_path: Path) -> List[Tuple[str, str]]:
+    if not env_path.exists():
+        return []
+    pairs: List[Tuple[str, str]] = []
+    for raw in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            pairs.append((key, value))
+    return pairs
+
+
+def _mask_secret_value(key: str, value: str) -> str:
+    if "KEY" in key.upper() or "TOKEN" in key.upper() or "SECRET" in key.upper():
+        if not value:
+            return ""
+        if len(value) <= 6:
+            return "***"
+        return f"{value[:3]}***{value[-2:]}"
+    return value
+
+
+def _list_ollama_models(base_url: str) -> List[str]:
+    base = (base_url or "http://localhost:11434").rstrip("/")
+    req = UrlRequest(f"{base}/api/tags", method="GET")
+    with urlopen(req, timeout=3) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    rows = data.get("models") if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        return []
+    out: List[str] = []
+    for row in rows:
+        if isinstance(row, dict) and row.get("name"):
+            out.append(str(row.get("name")))
+    return out
+
+
 # 配置日志
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger: logging.Logger = logging.getLogger("void-system")
+_warn_malformed_env_lines(_ENV_FILE)
 
 # 项目模块导入
-from config import Config
+from config import Config, config as runtime_config
 from database import Database
 from errors import ErrorCode, VoidSystemException, create_auth_error, create_file_error
 from services.ai_services.advisor_chain import load_task_chain, safe_invoke_chain, evaluate_submission
@@ -247,6 +364,11 @@ class TaskStepCreate(BaseModel):
     """任务步骤创建模型"""
     title: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    related_attrs: Optional[Dict[str, Any]] = None
+    estimated_time: Optional[int] = Field(30, ge=1, le=480)
+    reward_coins: Optional[int] = Field(20, ge=0, le=1000)
+    priority: Optional[str] = Field("medium", pattern="^(easy|medium|hard)$")
+    attribute_points: Optional[int] = Field(5, ge=0, le=100)
     completion_type: Optional[str] = "ai_eval"  # 默认使用 AI 评判
     completion_criteria: Optional[Dict[str, Any]] = None
     task_type: Optional[str] = "main"
@@ -342,6 +464,30 @@ class ImageCaptionRequest(BaseModel):
     """会话临时图片的无状态看图摘要（不写入 persona 历史）。"""
     file_id: str = Field(..., min_length=1, max_length=80)
     session_id: str = Field(..., min_length=1, max_length=80)
+
+
+class AIConfigUpdateRequest(BaseModel):
+    """运行时 AI 配置更新模型（管理员）。"""
+    llm_provider: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    ollama_base_url: Optional[str] = None
+    chat_model: Optional[str] = None
+    embedding_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+    extra_env: Optional[Dict[str, str]] = None
+    persist_to_env: bool = True
+    apply_runtime: bool = True
+
+
+class AIConfigTestRequest(BaseModel):
+    llm_provider: Optional[str] = None
+    ollama_base_url: Optional[str] = None
+    chat_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
 
 
 # ==================== 自定义异常 ====================
@@ -916,18 +1062,26 @@ except Exception as e:
 @app.post("/api/ai/advisor", summary="获取AI任务建议（正式接口）", tags=["AI服务"], response_model=APIResponse)
 async def get_ai_advisor(
     request: Request,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db)
 ) -> APIResponse:
     """
     正式的AI任务建议接口
     根据用户指定的主题，生成结构化的任务建议列表
     """
     try:
-        from services.ai_services.advisor_chain import safe_invoke_chain, load_task_chain
+        from services.ai_services.advisor_chain import (
+            generate_single_task,
+            generate_workflow_chain,
+        )
         
         # 解析请求体
         request_data = await request.json()
         topic = request_data.get("topic", "").strip()
+        force_mode = str(request_data.get("force_mode", "auto") or "auto").strip().lower()
+        advisor_prefs = request_data.get("advisor_prefs")
+        if not isinstance(advisor_prefs, dict):
+            advisor_prefs = {}
         
         if not topic:
             raise VoidSystemException(
@@ -938,8 +1092,46 @@ async def get_ai_advisor(
         
         logger.info(f"用户 {current_user['username']} 请求任务建议: {topic}")
         
-        chain = load_task_chain()
-        result = safe_invoke_chain(chain, topic)
+        user_attrs = db.get_user_attributes(current_user["user_id"])
+        ai_context = _build_ai_generation_context(current_user, user_attrs, advisor_prefs=advisor_prefs)
+        mode, mode_reason = _select_generation_mode_with_reason(topic)
+        if force_mode in {"single_task", "workflow_chain"}:
+            mode = force_mode
+            mode_reason = f"forced_by_user:{force_mode}"
+        elif force_mode == "auto":
+            # 自动模式默认走 workflow；只有显式“单任务”语义才走 single_task
+            if mode_reason != "explicit_single_keyword":
+                mode = "workflow_chain"
+                mode_reason = f"auto_default_workflow:{mode_reason}"
+
+        if mode == "single_task":
+            task = generate_single_task(topic, profile_context=ai_context, user_attrs=user_attrs)
+            result = {
+                "mode": "single_task",
+                "task": task,
+                "meta": {
+                    "fallback": False,
+                    "debug": {
+                        "mode_reason": mode_reason,
+                        "mode": mode,
+                        "attribute_detail_count": len(task.get("related_attrs_detail") or []),
+                    },
+                },
+            }
+        else:
+            result = generate_workflow_chain(
+                topic,
+                profile_context=ai_context,
+                user_attrs=user_attrs,
+                allow_fallback=True,
+            )
+            meta = result.get("meta") if isinstance(result, dict) else None
+            if isinstance(meta, dict):
+                debug = meta.get("debug") if isinstance(meta.get("debug"), dict) else {}
+                debug["mode_reason"] = mode_reason
+                debug["mode"] = mode
+                meta["debug"] = debug
+                result["meta"] = meta
         
         return create_success_response("任务建议生成成功", data=result)
     except VoidSystemException:
@@ -1038,6 +1230,131 @@ async def list_routes() -> APIResponse:
             })
     
     return create_success_response("可用路由列表", data={"routes": routes})
+
+
+@app.get("/api/admin/system/ai-config", summary="获取AI运行配置", tags=["系统配置"], response_model=APIResponse)
+async def get_ai_runtime_config(
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+) -> APIResponse:
+    del current_admin
+    env_pairs = _read_env_pairs(_ENV_FILE)
+    env_entries = [
+        {"key": k, "value": _mask_secret_value(k, v)}
+        for k, v in env_pairs
+    ]
+    model_options: List[str] = []
+    model_error = ""
+    try:
+        model_options = _list_ollama_models(Config.OLLAMA_BASE_URL)
+    except Exception as e:
+        model_error = str(e)
+    data = {
+        "llm_provider": Config.LLM_PROVIDER,
+        "embedding_provider": Config.EMBEDDING_PROVIDER,
+        "ollama_base_url": Config.OLLAMA_BASE_URL,
+        "chat_model": Config.CHAT_MODEL,
+        "embedding_model": Config.EMBEDDING_MODEL,
+        "openai_base_url": Config.OPENAI_BASE_URL or "",
+        "openai_api_key_set": bool(Config.OPENAI_API_KEY),
+        "google_api_key_set": bool(Config.GOOGLE_API_KEY),
+        "env_entries": env_entries,
+        "model_options": model_options,
+        "model_options_error": model_error,
+    }
+    return create_success_response("AI配置获取成功", data=data)
+
+
+@app.put("/api/admin/system/ai-config", summary="更新AI运行配置", tags=["系统配置"], response_model=APIResponse)
+async def update_ai_runtime_config(
+    payload: AIConfigUpdateRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+) -> APIResponse:
+    del current_admin
+    update_map: Dict[str, str] = {}
+    field_map = {
+        "llm_provider": "LLM_PROVIDER",
+        "embedding_provider": "EMBEDDING_PROVIDER",
+        "ollama_base_url": "OLLAMA_BASE_URL",
+        "chat_model": "CHAT_MODEL",
+        "embedding_model": "EMBEDDING_MODEL",
+        "openai_base_url": "OPENAI_BASE_URL",
+        "openai_api_key": "OPENAI_API_KEY",
+        "google_api_key": "GOOGLE_API_KEY",
+    }
+    raw = payload.model_dump()
+    for src_key, env_key in field_map.items():
+        if raw.get(src_key) is None:
+            continue
+        value = str(raw.get(src_key) or "").strip()
+        update_map[env_key] = value
+    extra_env = raw.get("extra_env")
+    if isinstance(extra_env, dict):
+        for key, val in extra_env.items():
+            k = str(key or "").strip()
+            if not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
+                continue
+            update_map[k] = str(val or "").strip()
+    if not update_map:
+        return create_success_response("未检测到配置变更", data={"updated_keys": []})
+    if payload.persist_to_env:
+        _upsert_env_values(_ENV_FILE, update_map)
+    if payload.apply_runtime:
+        _apply_runtime_ai_config(update_map)
+    logger.info("管理员更新 AI 配置: %s", list(update_map.keys()))
+    return create_success_response(
+        "AI配置更新成功",
+        data={
+            "updated_keys": list(update_map.keys()),
+            "persist_to_env": payload.persist_to_env,
+            "apply_runtime": payload.apply_runtime,
+        },
+    )
+
+
+@app.post("/api/admin/system/ai-config/test", summary="测试AI连接配置", tags=["系统配置"], response_model=APIResponse)
+async def test_ai_runtime_config(
+    payload: AIConfigTestRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+) -> APIResponse:
+    del current_admin
+    provider = (payload.llm_provider or Config.LLM_PROVIDER or "").strip().lower()
+    if provider == "ollama":
+        base = (payload.ollama_base_url or Config.OLLAMA_BASE_URL or "http://localhost:11434").strip()
+        model = (payload.chat_model or Config.CHAT_MODEL or "").strip()
+        try:
+            models = _list_ollama_models(base)
+        except (URLError, HTTPError, TimeoutError, ValueError) as e:
+            raise VoidSystemException(
+                message=f"Ollama 连接失败：{str(e)}",
+                error_code="AI_CONNECT_TEST_FAILED",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if model and model not in models:
+            raise VoidSystemException(
+                message=f"模型未安装：{model}。请先 pull 或改为已有模型。",
+                error_code="AI_MODEL_NOT_FOUND",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        return create_success_response("Ollama 连接正常", data={"provider": provider, "model_count": len(models)})
+    if provider in {"openai", "openai_compat", "deepseek"}:
+        api_key = (payload.openai_api_key or Config.OPENAI_API_KEY or "").strip()
+        if not api_key:
+            raise VoidSystemException(
+                message="缺少 OPENAI_API_KEY，请先填写。",
+                error_code="AI_CONNECT_TEST_FAILED",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        return create_success_response("API Key 已填写，连接参数看起来可用", data={"provider": provider})
+    if provider == "gemini":
+        api_key = (payload.google_api_key or Config.GOOGLE_API_KEY or "").strip()
+        if not api_key:
+            raise VoidSystemException(
+                message="缺少 GOOGLE_API_KEY，请先填写。",
+                error_code="AI_CONNECT_TEST_FAILED",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        return create_success_response("Gemini 参数看起来可用", data={"provider": provider})
+    return create_success_response("自定义 provider 已记录（请确保你的后端实现支持）", data={"provider": provider})
 
 # ==================== 用户认证相关路由 ====================
 @app.post("/api/token", summary="用户登录", tags=["认证"], response_model=APIResponse)
@@ -1739,24 +2056,13 @@ async def update_task_status(
                 source=f"task_{task_id}_complete"
             )
             
-            # 如果有关联属性，根据任务完成情况更新属性值
-            if task['related_attrs']:
-                for attr_id, weight in task['related_attrs'].items():
-                    # 计算属性增加值
-                    attr_increase = max(1, int(weight * task['estimated_time'] / 60))
-                    
-                    # 获取当前属性值
-                    attributes = db.get_user_attributes(current_user["user_id"])
-                    attr = next(
-                        (a for a in attributes if a["attr_id"] == attr_id),
-                        None
-                    )
-                    if attr:
-                        new_value = min(
-                            attr['attr_value'] + attr_increase,
-                            attr['max_value']
-                        )
-                        db.update_attribute_value(attr_id, new_value)
+            # 属性点按关联属性权重分配（与任务定义中的 attribute_points 保持一致）
+            attributes = db.get_user_attributes(current_user["user_id"])
+            attr_distribution = _calc_attr_reward_distribution(task, attributes, score_factor=1.0)
+            for attr_id, increase in attr_distribution.items():
+                attr = next((a for a in attributes if a["attr_id"] == attr_id), None)
+                if attr:
+                    db.update_attribute_value(attr_id, min(attr['attr_value'] + increase, attr['max_value']))
         except Exception as e:
             logger.error(f"发放任务奖励失败: {e}")
     
@@ -1927,7 +2233,23 @@ async def ai_evaluate_task(
         "media_urls": req.media_urls or []
     }
     
-    result = evaluate_submission(task, submission_info, user_stats)
+    try:
+        result = evaluate_submission(task, submission_info, user_stats)
+    except Exception as e:
+        logger.error(f"AI 评判服务调用失败: {e}", exc_info=True)
+        result = {
+            "status": "fail",
+            "feedback": "评判引擎暂时不可用，请稍后重试。",
+            "score": 0,
+            "suggested_rewards": {"coins": 0}
+        }
+
+    if result.get("status") not in {"pass", "fail"}:
+        result["status"] = "fail"
+    if "feedback" not in result or not str(result.get("feedback", "")).strip():
+        result["feedback"] = "评判结果异常，系统已降级处理。"
+    if "score" not in result:
+        result["score"] = 0
     
     # 4. 如果评判通过，自动更新状态并发放奖励
     if result.get("status") == "pass":
@@ -1953,10 +2275,11 @@ async def ai_evaluate_task(
                         attr = next((a for a in user_stats["attributes"] if a["attr_id"] == attr_id), None)
                         if attr:
                             db.update_attribute_value(attr_id, min(attr['attr_value'] + val, attr['max_value']))
-                elif task.get('related_attrs'):
-                    # 降级：使用任务原本的权重计算
-                    for attr_id, weight in task['related_attrs'].items():
-                        increase = max(1, int(weight * (result.get('score', 80) / 100) * task.get('estimated_time', 30) / 60))
+                else:
+                    # 降级：按任务 attribute_points + 关联权重分配，并按评分轻微缩放
+                    score_factor = max(0.1, float(result.get('score', 80)) / 100.0)
+                    fallback_distribution = _calc_attr_reward_distribution(task, user_stats["attributes"], score_factor=score_factor)
+                    for attr_id, increase in fallback_distribution.items():
                         attr = next((a for a in user_stats["attributes"] if a["attr_id"] == attr_id), None)
                         if attr:
                             db.update_attribute_value(attr_id, min(attr['attr_value'] + increase, attr['max_value']))
@@ -1978,14 +2301,17 @@ async def ai_evaluate_task(
                 logger.error(f"AI 评判奖励发放失败: {e}")
     else:
         # 如果没通过，标记为失败或保持原状并提供反馈
-        db.update_task_evaluation(
-            task_id, current_user["user_id"],
-            ai_suggestion={
-                "status": "fail",
-                "feedback": result.get("feedback"),
-                "score": result.get("score")
-            }
-        )
+        try:
+            db.update_task_evaluation(
+                task_id, current_user["user_id"],
+                ai_suggestion={
+                    "status": "fail",
+                    "feedback": result.get("feedback"),
+                    "score": result.get("score")
+                }
+            )
+        except Exception as e:
+            logger.error(f"写入 AI 评判失败结果异常: {e}", exc_info=True)
     
     return APIResponse(
         success=True,
@@ -2041,6 +2367,254 @@ async def get_task_chains(
     chains = db.get_user_task_chains(current_user["user_id"])
     return create_success_response("任务链获取成功", {"chains": chains})
 
+def _build_default_completion_criteria(title: str, description: str) -> Dict[str, Any]:
+    return {
+        "criteria": f"任务《{title}》需按要求完成并提供可核验证据。",
+        "deliverables": ["执行过程说明", "最终结果总结"],
+        "checks": [f"与任务描述一致：{description}", "说明关键步骤与结果"],
+        "pass_threshold": "由评分AI按任务复杂度、证据完整度与结果质量综合判定",
+        "evidence": ["截图", "代码片段", "日志记录", "总结复盘"]
+    }
+
+def _build_ai_generation_context(
+    current_user: Dict[str, Any],
+    user_attrs: List[Dict[str, Any]],
+    advisor_prefs: Optional[Dict[str, Any]] = None,
+) -> str:
+    attr_lines: List[str] = []
+    for attr in user_attrs:
+        attr_id = str(attr.get("attr_id", "")).strip()
+        attr_name = str(attr.get("attr_name", "")).strip() or "未命名属性"
+        desc = str(attr.get("description", "")).strip()
+        cur = float(attr.get("attr_value", 0) or 0)
+        max_v = float(attr.get("max_value", 100) or 100)
+        max_v = max(max_v, 1.0)
+        ratio = max(0.0, min(1.0, cur / max_v))
+        weakness = round(1.0 - ratio, 3)
+        attr_lines.append(
+            f"- {attr_name} (id={attr_id}, value={int(cur)}/{int(max_v)}, weakness={weakness}, desc={desc or '无'})"
+        )
+    attrs_block = "\n".join(attr_lines) if attr_lines else "- 无可用属性"
+
+    specialization = str(current_user.get("specialization") or "").strip() or "未填写"
+    learning_goal = str(current_user.get("learning_goal") or "").strip() or "未填写"
+    prefs = advisor_prefs or {}
+    response_style = str(prefs.get("response_style") or "").strip() or "专业"
+    try:
+        response_temperature = int(float(prefs.get("response_temperature", 35) or 35))
+    except Exception:
+        response_temperature = 35
+    response_temperature = max(0, min(100, response_temperature))
+
+    return (
+        "【用户画像（参考信号，非强制）】\n"
+        f"- 专业方向: {specialization}\n"
+        f"- 学习目标: {learning_goal}\n\n"
+        "【用户偏好（可参考）】\n"
+        f"- 回复风格: {response_style}\n"
+        f"- 生成温度偏好(0~100): {response_temperature}\n\n"
+        "【可用属性（含归一化弱项指标，仅供参考）】\n"
+        f"{attrs_block}\n\n"
+        "【策略约束】\n"
+        "- 任务主线必须优先贴合用户输入，不要被画像信息绑架。\n"
+        "- 可适度照顾弱项（weakness 高），但仅在与任务语义相关时采用。\n"
+        "- 若属性与任务明显无关，可输出空 related_attrs（{}），禁止强行挂靠。"
+    )
+
+def _normalize_related_attrs(raw_related: Any, user_attrs: List[Dict[str, Any]]) -> Dict[str, float]:
+    if not isinstance(raw_related, dict) or not raw_related:
+        return {}
+    attr_ids = {a.get("attr_id") for a in user_attrs if a.get("attr_id")}
+    attr_name_to_id = {str(a.get("attr_name", "")).strip().lower(): a.get("attr_id") for a in user_attrs if a.get("attr_id")}
+    normalized: Dict[str, float] = {}
+    for key, value in raw_related.items():
+        if not isinstance(value, (int, float)):
+            continue
+        raw_key = str(key).strip()
+        matched_id = raw_key if raw_key in attr_ids else attr_name_to_id.get(raw_key.lower())
+        if matched_id:
+            normalized[matched_id] = float(max(0.1, min(1.0, value)))
+    return normalized
+
+def _infer_related_attrs_from_task_text(step: Dict[str, Any], user_attrs: List[Dict[str, Any]]) -> Dict[str, float]:
+    title = str(step.get("title", "")).strip().lower()
+    description = str(step.get("description", "")).strip().lower()
+    text = f"{title} {description}"
+    if not text.strip():
+        return {}
+
+    scored: List[Tuple[str, float]] = []
+    for attr in user_attrs:
+        attr_id = str(attr.get("attr_id", "")).strip()
+        if not attr_id:
+            continue
+        name = str(attr.get("attr_name", "")).strip().lower()
+        desc = str(attr.get("description", "")).strip().lower()
+        tokens = [t for t in [name, desc] if t]
+        if not tokens:
+            continue
+        score = 0.0
+        for tok in tokens:
+            if len(tok) < 2:
+                continue
+            if tok in text:
+                score += 1.0
+            else:
+                # 简单词片段匹配，避免描述稍有变化时完全失配
+                parts = [p for p in tok.replace("，", " ").replace("、", " ").replace(",", " ").split() if len(p) >= 2]
+                for p in parts:
+                    if p in text:
+                        score += 0.35
+        if score > 0:
+            scored.append((attr_id, score))
+
+    if not scored:
+        return {}
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = scored[:2]
+    total = sum(s for _, s in top) or 1.0
+    return {attr_id: round(score / total, 3) for attr_id, score in top}
+
+def _normalize_ai_step(step: Dict[str, Any], user_attrs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _to_int(value: Any, default: int) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    title = str(step.get("title", "")).strip() or "AI 生成任务"
+    description = str(step.get("description", "")).strip() or "请根据任务目标完成执行并提交证明。"
+    reward_coins = int(max(0, min(1000, _to_int(step.get("reward_coins", 20), 20))))
+    attribute_points = int(max(0, min(100, _to_int(step.get("attribute_points", 5), 5))))
+    estimated_time = int(max(1, min(480, _to_int(step.get("estimated_time", 30), 30))))
+    task_type = str(step.get("task_type", "main") or "main")
+    if task_type not in {"main", "side", "daily"}:
+        task_type = "main"
+    priority = str(step.get("priority", "medium") or "medium")
+    if priority not in {"easy", "medium", "hard"}:
+        priority = "medium"
+    completion_type = str(step.get("completion_type", "ai_eval") or "ai_eval")
+    related_attrs = _normalize_related_attrs(step.get("related_attrs"), user_attrs)
+    # 若AI未给出关联属性但任务有属性奖励，尝试按任务文本自动归因到最相关属性
+    if not related_attrs and attribute_points > 0:
+        related_attrs = _infer_related_attrs_from_task_text(step, user_attrs)
+    completion_criteria = step.get("completion_criteria")
+    if not isinstance(completion_criteria, dict) or not completion_criteria:
+        completion_criteria = _build_default_completion_criteria(title, description)
+    else:
+        completion_criteria = {
+            "criteria": completion_criteria.get("criteria") or f"任务《{title}》需按要求完成并提供可核验证据。",
+            "deliverables": completion_criteria.get("deliverables") or ["执行过程说明", "最终结果总结"],
+            "checks": completion_criteria.get("checks") or [f"与任务描述一致：{description}"],
+            "pass_threshold": completion_criteria.get("pass_threshold") or "由评分AI按任务复杂度与证据质量综合判定",
+            "evidence": completion_criteria.get("evidence") or ["截图", "代码片段", "日志记录", "总结复盘"]
+        }
+    preview_distribution = _calc_attr_reward_distribution(
+        {"related_attrs": related_attrs, "attribute_points": attribute_points},
+        user_attrs,
+        score_factor=1.0
+    )
+    completion_criteria["attribute_plan"] = _build_attribute_plan_from_distribution(preview_distribution, user_attrs)
+    return {
+        "title": title,
+        "description": description,
+        "related_attrs": related_attrs,
+        "estimated_time": estimated_time,
+        "reward_coins": reward_coins,
+        "priority": priority,
+        "attribute_points": attribute_points,
+        "completion_type": completion_type,
+        "completion_criteria": completion_criteria,
+        "task_type": task_type
+    }
+
+def _calc_attr_reward_distribution(task: Dict[str, Any], user_attrs: List[Dict[str, Any]], score_factor: float = 1.0) -> Dict[str, int]:
+    related = task.get("related_attrs") or {}
+    if not isinstance(related, dict) or not related:
+        return {}
+    attr_ids = {a.get("attr_id") for a in user_attrs if a.get("attr_id")}
+    valid_items: List[Tuple[str, float]] = []
+    for attr_id, weight in related.items():
+        if attr_id in attr_ids and isinstance(weight, (int, float)) and weight > 0:
+            valid_items.append((attr_id, float(weight)))
+    if not valid_items:
+        return {}
+
+    base_points = int(task.get("attribute_points") or 0)
+    total_points = int(max(0, round(base_points * max(0.1, score_factor))))
+    if total_points <= 0:
+        return {}
+
+    weight_sum = sum(w for _, w in valid_items) or 1.0
+    raw_alloc = [(attr_id, total_points * w / weight_sum) for attr_id, w in valid_items]
+    floor_sum = 0
+    distribution: Dict[str, int] = {}
+    remainders: List[Tuple[float, str]] = []
+    for attr_id, raw in raw_alloc:
+        floor_val = int(raw)
+        floor_sum += floor_val
+        distribution[attr_id] = floor_val
+        remainders.append((raw - floor_val, attr_id))
+    remaining = total_points - floor_sum
+    if remaining > 0:
+        remainders.sort(reverse=True)
+        for _, attr_id in remainders[:remaining]:
+            distribution[attr_id] += 1
+    return {k: v for k, v in distribution.items() if v > 0}
+
+def _build_attribute_plan_from_distribution(distribution: Dict[str, int], user_attrs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not distribution:
+        return []
+    name_map = {a.get("attr_id"): a.get("attr_name") for a in user_attrs if a.get("attr_id")}
+    plan = []
+    for attr_id, points in distribution.items():
+        if points <= 0:
+            continue
+        plan.append({
+            "attr_id": attr_id,
+            "attr_name": name_map.get(attr_id) or attr_id,
+            "points": int(points)
+        })
+    return plan
+
+def _select_generation_mode_with_reason(topic: str) -> Tuple[str, str]:
+    """
+    简单单任务：单次生成
+    复杂目标/任务链：工作流三阶段
+    """
+    t = (topic or "").strip().lower()
+    if not t:
+        return "workflow_chain", "empty_topic_default_workflow"
+    workflow_keywords = [
+        "路径", "计划", "学习路线", "任务链", "分解", "阶段", "长期", "路线", "大纲", "规划",
+        "体系", "从零", "进阶", "项目", "训练营", "安排", "周期"
+    ]
+    single_keywords = [
+        "单任务", "单个任务", "一个任务", "仅一个任务",
+        "一步完成", "一步搞定", "一次性完成", "只要一步", "不要拆分"
+    ]
+    multi_clues = ["并且", "同时", "然后", "接着", "再", "；", ";", "，", ","]
+    force_workflow_min_len = 18
+    numeric_goal = re.search(r"\d+", t) is not None
+    execution_keywords = ["背", "学习", "训练", "复习", "掌握", "提升", "完成", "刷题", "练习"]
+
+    if any(k in t for k in single_keywords):
+        return "single_task", "explicit_single_keyword"
+    if any(k in t for k in workflow_keywords):
+        return "workflow_chain", "workflow_keyword"
+    if numeric_goal and any(k in t for k in execution_keywords):
+        return "workflow_chain", "numeric_execution_goal"
+    if len(t) >= force_workflow_min_len:
+        return "workflow_chain", "length_threshold"
+    if sum(1 for c in multi_clues if c in t) >= 2:
+        return "workflow_chain", "multi_clue_count"
+    # 默认策略：优先任务链，避免复杂目标被压成单任务
+    return "workflow_chain", "default_workflow"
+
+
+def _select_generation_mode(topic: str) -> str:
+    return _select_generation_mode_with_reason(topic)[0]
+
 @app.post("/api/task-chains", summary="创建任务链及子任务", tags=["任务链"], response_model=APIResponse)
 async def create_task_chain(
     chain_data: TaskChainCreate,
@@ -2048,6 +2622,7 @@ async def create_task_chain(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> APIResponse:
+    user_attrs = db.get_user_attributes(current_user["user_id"])
     # 1. 创建链
     chain_id = db.create_task_chain(
         current_user["user_id"],
@@ -2063,21 +2638,37 @@ async def create_task_chain(
             if i > 0 and len(created_task_ids) > 0:
                 step_prerequisites = [created_task_ids[-1]]
                 
-            # 设置 AI 评判标准
-            criteria = step.completion_criteria or {
-                "criteria": f"用户需要完成任务：{step.title}。要求：{step.description}。请根据用户的提交内容评判是否达成目标。"
-            }
+            normalized_step = _normalize_ai_step(
+                {
+                    "title": step.title,
+                    "description": step.description,
+                    "related_attrs": step.related_attrs,
+                    "estimated_time": step.estimated_time,
+                    "reward_coins": step.reward_coins,
+                    "priority": step.priority,
+                    "attribute_points": step.attribute_points,
+                    "completion_type": step.completion_type,
+                    "completion_criteria": step.completion_criteria,
+                    "task_type": step.task_type
+                },
+                user_attrs
+            )
             
             t_id = db.add_task(
                 user_id=current_user["user_id"],
-                task_name=step.title,
-                description=step.description,
+                task_name=normalized_step["title"],
+                description=normalized_step["description"],
+                related_attrs=normalized_step["related_attrs"],
+                estimated_time=normalized_step["estimated_time"],
+                reward_coins=normalized_step["reward_coins"],
+                priority=normalized_step["priority"],
+                attribute_points=normalized_step["attribute_points"],
                 chain_id=chain_id,
                 chain_order=i + 1,
                 prerequisites=step_prerequisites,
-                completion_type=step.completion_type or "ai_eval",
-                completion_criteria=criteria,
-                task_type=step.task_type or "main",
+                completion_type=normalized_step["completion_type"],
+                completion_criteria=normalized_step["completion_criteria"],
+                task_type=normalized_step["task_type"],
                 is_optional=1 if step.is_optional else 0
             )
             created_task_ids.append(t_id)
@@ -2087,32 +2678,42 @@ async def create_task_chain(
     if chain_data.target_goal:
         def generate_tasks():
             try:
-                chain = load_task_chain(use_structured=True)
-                result = safe_invoke_chain(chain, chain_data.target_goal)
+                from services.ai_services.advisor_chain import generate_workflow_chain
+                ai_context = _build_ai_generation_context(current_user, user_attrs)
+                result = generate_workflow_chain(
+                    chain_data.target_goal,
+                    profile_context=ai_context,
+                    user_attrs=user_attrs,
+                    allow_fallback=False,  # 入库必须严格成功
+                )
                 
                 # 为每个生成的步骤创建任务
-                if "steps" in result:
+                steps = result.get("steps") if isinstance(result, dict) else None
+                if steps:
                     created_task_ids = []
-                    for i, step in enumerate(result["steps"]):
+                    for i, step in enumerate(steps):
                         # 设置前置任务：除了第一个步骤，后面的步骤都以前一个为前置
                         step_prerequisites = []
                         if i > 0 and len(created_task_ids) > 0:
                             step_prerequisites = [created_task_ids[-1]]
                         
-                        # 设置默认 AI 评判标准
-                        ai_criteria = {
-                            "criteria": f"用户需要完成任务：{step['title']}。要求：{step['description']}。请根据用户的提交内容评判是否达成目标并给出分数。"
-                        }
+                        normalized_step = _normalize_ai_step(step, user_attrs)
                             
                         t_id = db.add_task(
                             user_id=current_user["user_id"],
-                            task_name=step["title"],
-                            description=step["description"],
+                            task_name=normalized_step["title"],
+                            description=normalized_step["description"],
+                            related_attrs=normalized_step["related_attrs"],
+                            estimated_time=normalized_step["estimated_time"],
+                            reward_coins=normalized_step["reward_coins"],
+                            priority=normalized_step["priority"],
+                            attribute_points=normalized_step["attribute_points"],
                             chain_id=chain_id,
                             chain_order=i + 1,
                             prerequisites=step_prerequisites,
-                            completion_type="ai_eval",
-                            completion_criteria=ai_criteria
+                            completion_type=normalized_step["completion_type"],
+                            completion_criteria=normalized_step["completion_criteria"],
+                            task_type=normalized_step["task_type"]
                         )
                         created_task_ids.append(t_id)
             except Exception as e:

@@ -63,7 +63,11 @@ const handleClick = (navigate, event) => {
 <style scoped>
 .nav-item {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  /* 扩大 hover 命中缓冲区，避免边缘抖动触发 */
+  padding: 2px 0;
+  margin: -2px 0;
 }
 
 .nav-link {
@@ -74,43 +78,50 @@ const handleClick = (navigate, event) => {
   color: var(--color-text-secondary, #cbd5e1);
   text-decoration: none;
   border-radius: var(--radius-lg, 12px);
-  transition: all var(--transition-normal, 0.3s ease);
+  transition:
+    transform var(--transition-normal, 0.3s ease),
+    color var(--transition-normal, 0.3s ease),
+    background var(--transition-normal, 0.3s ease),
+    box-shadow var(--transition-normal, 0.3s ease),
+    border-color var(--transition-normal, 0.3s ease);
   cursor: pointer;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
   font-weight: 500;
   font-size: 0.875rem;
   line-height: 1.25;
   border: 1px solid transparent;
-  background: rgba(30, 41, 59, 0.3);
-  backdrop-filter: blur(8px);
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.34), rgba(30, 41, 59, 0.22));
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   flex-shrink: 0;
   max-width: 11rem;
+  transform-origin: center center;
 }
 
 .nav-link::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
-  transition: left var(--transition-slow, 0.5s ease);
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(99, 102, 241, 0.12) 50%, transparent 75%);
+  opacity: 0;
+  transition: opacity var(--transition-normal, 0.3s ease);
   z-index: 0;
+  pointer-events: none;
 }
 
 .nav-link:hover {
-  background: rgba(51, 65, 85, 0.6);
+  background: linear-gradient(135deg, rgba(51, 65, 85, 0.62), rgba(51, 65, 85, 0.5));
   color: var(--color-text-primary, #f8fafc);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25),
               0 0 0 1px rgba(99, 102, 241, 0.15);
   border-color: rgba(99, 102, 241, 0.3);
 }
 
-.nav-link:hover::before {
-  left: 100%;
+.nav-link:hover::before,
+.nav-link.active::before {
+  opacity: 1;
 }
 
 .nav-link.active {
@@ -124,11 +135,6 @@ const handleClick = (navigate, event) => {
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
   text-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
   border: 1px solid rgba(99, 102, 241, 0.4);
-  transform: translateY(-1px);
-}
-
-.nav-link.active::before {
-  left: 100%;
 }
 
 .nav-indicator {
@@ -163,29 +169,18 @@ const handleClick = (navigate, event) => {
 
 .nav-icon {
   font-size: 1.35rem;
-  transition: all var(--transition-normal, 0.3s ease);
-  filter: drop-shadow(0 0 5px rgba(99, 102, 241, 0.3));
+  transition: color var(--transition-normal, 0.3s ease);
+  filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.28));
   position: relative;
   z-index: 1;
 }
 
 .nav-link:hover .nav-icon {
-  transform: scale(1.15);
-  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5));
+  color: var(--color-text-primary, #f8fafc);
 }
 
 .nav-link.active .nav-icon {
-  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.8));
-  animation: iconPulse 2s ease-in-out infinite;
-}
-
-@keyframes iconPulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.2);
-  }
+  color: var(--color-primary-light, #93c5fd);
 }
 
 .nav-text {
@@ -195,7 +190,7 @@ const handleClick = (navigate, event) => {
   z-index: 1;
   transition: color var(--transition-normal, 0.3s ease);
   word-break: keep-all;
-  white-space: normal;
+  white-space: nowrap;
   text-align: left;
 }
 

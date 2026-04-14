@@ -21,6 +21,7 @@
               </div>
               
               <div class="config-details" v-if="systemConfig.aiAssistantEnabled">
+                <p class="settings-tip">这些参数会影响 AI 任务建议生成（提示词上下文）。</p>
                 <div class="detail-group">
                   <label>回复风格</label>
                   <el-radio-group v-model="systemConfig.responseStyle">
@@ -31,12 +32,12 @@
                 </div>
                 
                 <div class="detail-group">
-                  <label>响应速度</label>
+                  <label>温度系数（任务建议）</label>
                   <el-slider
-                    v-model="systemConfig.responseSpeed"
-                    :min="1"
-                    :max="3"
-                    :marks="{ 1: '快', 2: '中', 3: '详细' }"
+                    v-model="systemConfig.aiTemperature"
+                    :min="0"
+                    :max="100"
+                    :marks="{ 0: '稳定', 35: '均衡', 70: '发散', 100: '创意' }"
                   />
                 </div>
               </div>
@@ -77,67 +78,109 @@
                   </div>
                 </div>
                 
-                <div class="detail-group">
-                  <label>系统特效</label>
-                  <el-checkbox-group v-model="systemConfig.animations">
-                    <el-checkbox label="glow">发光文字</el-checkbox>
-                    <el-checkbox label="float">悬浮动效</el-checkbox>
-                  </el-checkbox-group>
+              </div>
+            </div>
+
+            <div class="config-group">
+              <div class="config-header">
+                <h4>AI 连接配置（管理员）</h4>
+              </div>
+              <div class="config-details">
+                <p class="settings-tip">保存后将通过 API 写入后端运行配置，并可同步到 .env。</p>
+                <div class="detail-group detail-group--section">
+                  <label>LLM 模型配置</label>
                 </div>
+                <div class="detail-group">
+                  <label>LLM 提供商</label>
+                  <el-select v-model="aiRuntimeConfig.llm_provider" placeholder="选择或输入提供商" filterable allow-create default-first-option>
+                    <el-option v-for="p in providerOptions" :key="p" :label="p" :value="p" />
+                  </el-select>
+                </div>
+                <div class="detail-group">
+                  <label>聊天模型</label>
+                  <el-select v-model="aiRuntimeConfig.chat_model" placeholder="选择或输入模型名" filterable allow-create default-first-option>
+                    <el-option v-for="m in chatModelOptions" :key="m" :label="m" :value="m" />
+                  </el-select>
+                </div>
+                <div class="detail-group">
+                  <label>Ollama Base URL</label>
+                  <el-input v-model="aiRuntimeConfig.ollama_base_url" placeholder="http://localhost:11434" />
+                </div>
+                <div class="detail-group detail-group--section">
+                  <label>Embedding 模型配置</label>
+                </div>
+                <div class="detail-group">
+                  <label>Embedding 提供商</label>
+                  <el-select v-model="aiRuntimeConfig.embedding_provider" placeholder="选择或输入嵌入提供商" filterable allow-create default-first-option>
+                    <el-option v-for="p in providerOptions" :key="`emb-${p}`" :label="p" :value="p" />
+                  </el-select>
+                </div>
+                <div class="detail-group">
+                  <label>Embedding 模型</label>
+                  <el-select v-model="aiRuntimeConfig.embedding_model" placeholder="选择或输入 Embedding 模型名" filterable allow-create default-first-option>
+                    <el-option v-for="m in embeddingModelOptions" :key="`emb-${m}`" :label="m" :value="m" />
+                  </el-select>
+                </div>
+                <div v-if="showEmbeddingOpenAICompatFields" class="detail-group">
+                  <label>Embedding OpenAI Base URL（必填）</label>
+                  <el-input v-model="aiRuntimeConfig.openai_base_url" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div v-if="showEmbeddingOpenAICompatFields" class="detail-group">
+                  <label>Embedding API Key（必填）</label>
+                  <el-input v-model="aiRuntimeConfig.openai_api_key" type="password" show-password placeholder="请输入 API Key（与上方可共用）" />
+                </div>
+                <div v-if="showOpenAICompatFields" class="detail-group">
+                  <label>OpenAI Base URL（必填）</label>
+                  <el-input v-model="aiRuntimeConfig.openai_base_url" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div v-if="showOpenAICompatFields" class="detail-group">
+                  <label>OpenAI / DeepSeek API Key（必填）</label>
+                  <el-input v-model="aiRuntimeConfig.openai_api_key" type="password" show-password placeholder="请输入 API Key（或先在后端已配置）" />
+                </div>
+                <div v-if="showGeminiFields" class="detail-group">
+                  <label>Gemini API Key（必填）</label>
+                  <el-input v-model="aiRuntimeConfig.google_api_key" type="password" show-password placeholder="请输入 Gemini API Key（或先在后端已配置）" />
+                </div>
+                <div class="detail-group">
+                  <el-checkbox v-model="aiRuntimeConfig.persist_to_env">写入 .env（重启后仍生效）</el-checkbox>
+                  <el-checkbox v-model="aiRuntimeConfig.apply_runtime">立即应用到当前进程</el-checkbox>
+                </div>
+                <div class="detail-group">
+                  <label>额外环境变量（可扩展新厂商）</label>
+                  <div class="extra-env-list">
+                    <div v-for="(row, idx) in extraEnvRows" :key="`extra-${idx}`" class="extra-env-row">
+                      <el-input v-model="row.key" placeholder="KEY（大写下划线）" />
+                      <el-input v-model="row.value" placeholder="VALUE" />
+                      <el-button @click="removeExtraEnvRow(idx)">删除</el-button>
+                    </div>
+                    <el-button @click="addExtraEnvRow">新增变量</el-button>
+                  </div>
+                </div>
+                <div class="detail-group">
+                  <label>当前 .env（已存在项）</label>
+                  <div class="env-table">
+                    <div class="env-row env-row--head"><span>键</span><span>值</span></div>
+                    <div v-for="row in aiEnvEntries" :key="row.key" class="env-row">
+                      <span>{{ row.key }}</span>
+                      <span>{{ row.value }}</span>
+                    </div>
+                    <div v-if="!aiEnvEntries.length" class="env-row">
+                      <span>暂无配置</span>
+                      <span>-</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="card-actions">
+                <el-button @click="loadAiRuntimeConfig" :loading="loading.aiConfig">刷新配置</el-button>
+                <el-button @click="testAiRuntimeConfig" :loading="loading.aiConfig">测试连接</el-button>
+                <el-button type="primary" @click="saveAiRuntimeConfig" :loading="loading.aiConfig">保存AI配置</el-button>
               </div>
             </div>
           </div>
           
           <div class="card-actions">
             <el-button type="primary" @click="saveSystemConfig" :loading="loading.config">应用设置</el-button>
-          </div>
-        </div>
-      </el-tab-pane>
-      
-      <el-tab-pane label="学习偏好" name="preferences">
-        <!-- 学习偏好卡片 -->
-        <div class="settings-card learning-prefs">
-          <div class="preferences-content">
-            <div class="detail-group">
-              <label>学习时间偏好</label>
-              <div class="time-pref">
-                <el-time-select
-                  v-model="learningPrefs.preferredTime"
-                  :picker-options="{ start: '09:00', step: '00:30', end: '21:00' }"
-                  placeholder="选择学习时间"
-                />
-              </div>
-            </div>
-            
-            <div class="detail-group">
-              <label>学习资源类型</label>
-              <el-checkbox-group v-model="learningPrefs.resourceTypes">
-                <el-checkbox label="视频">视频</el-checkbox>
-                <el-checkbox label="文档">文档</el-checkbox>
-                <el-checkbox label="互动练习">互动练习</el-checkbox>
-                <el-checkbox label="音频">音频</el-checkbox>
-              </el-checkbox-group>
-            </div>
-            
-            <div class="detail-group">
-              <label>学习难度</label>
-              <el-rate v-model="learningPrefs.difficultyLevel" show-score />
-            </div>
-            
-            <div class="detail-group">
-              <label>学习频率</label>
-              <el-slider
-                v-model="learningPrefs.studyFrequency"
-                :min="1"
-                :max="7"
-                :marks="{ 1: '每周1次', 4: '每周4次', 7: '每天' }"
-                show-input
-              />
-            </div>
-          </div>
-          
-          <div class="card-actions">
-            <el-button type="primary" @click="saveLearningPrefs" :loading="loading.preferences">保存偏好</el-button>
           </div>
         </div>
       </el-tab-pane>
@@ -193,10 +236,11 @@
  * 系统设置页面，包含用户信息、系统配置、学习偏好等设置选项
  */
 
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from "vue"
+import { ref, reactive, onMounted, onBeforeUnmount, watch, computed } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logout as logoutApi } from '../api/user.js'
+import api from '../api/index'
 
 const router = useRouter()
 const route = useRoute()
@@ -213,7 +257,7 @@ watch(() => route.query.tab, (newTab) => {
 const loading = reactive({
   profile: false,
   config: false,
-  preferences: false,
+  aiConfig: false,
   update: false,
   clearCache: false
 })
@@ -223,18 +267,30 @@ const loading = reactive({
 const systemConfig = reactive({
   aiAssistantEnabled: true,
   responseStyle: "专业",
-  responseSpeed: 2,
-  themeMode: "dark",
-  animations: ["glow"]
+  aiTemperature: 35,
+  themeMode: "dark"
 })
 
-// 学习偏好
-const learningPrefs = reactive({
-  preferredTime: "14:00",
-  resourceTypes: ["视频", "文档"],
-  difficultyLevel: 3,
-  studyFrequency: 5
+const aiRuntimeConfig = reactive({
+  llm_provider: "ollama",
+  embedding_provider: "ollama",
+  ollama_base_url: "http://localhost:11434",
+  chat_model: "",
+  embedding_model: "",
+  openai_base_url: "",
+  openai_api_key: "",
+  google_api_key: "",
+  persist_to_env: true,
+  apply_runtime: true
 })
+const providerOptions = ref(['ollama', 'openai', 'deepseek', 'gemini', 'openai_compat'])
+const chatModelOptions = ref([])
+const embeddingModelOptions = ref([])
+const aiEnvEntries = ref([])
+const extraEnvRows = ref([])
+const showOpenAICompatFields = computed(() => ['openai', 'openai_compat', 'deepseek'].includes(String(aiRuntimeConfig.llm_provider || '').toLowerCase()))
+const showGeminiFields = computed(() => String(aiRuntimeConfig.llm_provider || '').toLowerCase() === 'gemini')
+const showEmbeddingOpenAICompatFields = computed(() => ['openai', 'openai_compat', 'deepseek'].includes(String(aiRuntimeConfig.embedding_provider || '').toLowerCase()))
 
 // 系统信息
 const systemInfo = reactive({
@@ -289,8 +345,7 @@ const saveSystemConfig = async () => {
     
     // 保存到本地存储
     localStorage.setItem('settings_cache', JSON.stringify({
-      systemConfig,
-      learningPrefs
+      systemConfig
     }))
     
     ElMessage.success('系统配置应用成功')
@@ -302,30 +357,139 @@ const saveSystemConfig = async () => {
   }
 }
 
-/**
- * 保存学习偏好
- */
-const saveLearningPrefs = async () => {
-  loading.preferences = true
+const loadAiRuntimeConfig = async () => {
+  loading.aiConfig = true
   try {
-    // TODO: 调用实际的 API
-    // await api.updateLearningPreferences(learningPrefs)
-    
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // 保存到本地存储
-    localStorage.setItem('settings_cache', JSON.stringify({
-      systemConfig,
-      learningPrefs
-    }))
-    
-    ElMessage.success('学习偏好保存成功')
+    const res = await api.get('/api/admin/system/ai-config')
+    const data = res?.data?.data || {}
+    aiRuntimeConfig.llm_provider = data.llm_provider || aiRuntimeConfig.llm_provider
+    aiRuntimeConfig.embedding_provider = data.embedding_provider || aiRuntimeConfig.embedding_provider
+    aiRuntimeConfig.ollama_base_url = data.ollama_base_url || aiRuntimeConfig.ollama_base_url
+    aiRuntimeConfig.chat_model = data.chat_model || ''
+    aiRuntimeConfig.embedding_model = data.embedding_model || ''
+    aiRuntimeConfig.openai_base_url = data.openai_base_url || ''
+    aiRuntimeConfig.openai_api_key = ''
+    aiRuntimeConfig.google_api_key = ''
+    aiEnvEntries.value = Array.isArray(data.env_entries) ? data.env_entries : []
+    const modelOptions = Array.isArray(data.model_options) ? data.model_options : []
+    chatModelOptions.value = Array.from(new Set([...(aiRuntimeConfig.chat_model ? [aiRuntimeConfig.chat_model] : []), ...modelOptions]))
+    embeddingModelOptions.value = Array.from(new Set([...(aiRuntimeConfig.embedding_model ? [aiRuntimeConfig.embedding_model] : []), ...modelOptions]))
+    if (aiRuntimeConfig.llm_provider && !providerOptions.value.includes(aiRuntimeConfig.llm_provider)) {
+      providerOptions.value.push(aiRuntimeConfig.llm_provider)
+    }
+    if (aiRuntimeConfig.embedding_provider && !providerOptions.value.includes(aiRuntimeConfig.embedding_provider)) {
+      providerOptions.value.push(aiRuntimeConfig.embedding_provider)
+    }
+    if (data.model_options_error) {
+      ElMessage.warning(`模型列表读取失败：${data.model_options_error}`)
+    }
   } catch (error) {
-    console.error('保存学习偏好失败:', error)
-    ElMessage.error('保存失败，请稍后重试')
+    if (error?.response?.status === 403) {
+      ElMessage.warning('需要管理员权限才能读取 AI 连接配置')
+    } else {
+      ElMessage.error('读取 AI 配置失败')
+    }
   } finally {
-    loading.preferences = false
+    loading.aiConfig = false
+  }
+}
+
+const normalizeExtraEnv = () => {
+  const out = {}
+  for (const row of extraEnvRows.value) {
+    const key = String(row?.key || '').trim().toUpperCase()
+    const value = String(row?.value || '').trim()
+    if (!key) continue
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) continue
+    out[key] = value
+  }
+  return out
+}
+
+const addExtraEnvRow = () => {
+  extraEnvRows.value.push({ key: '', value: '' })
+}
+
+const removeExtraEnvRow = (idx) => {
+  extraEnvRows.value.splice(idx, 1)
+}
+
+const saveAiRuntimeConfig = async () => {
+  loading.aiConfig = true
+  try {
+    const provider = String(aiRuntimeConfig.llm_provider || '').toLowerCase()
+    if (showOpenAICompatFields.value) {
+      if (!String(aiRuntimeConfig.openai_base_url || '').trim()) {
+        ElMessage.warning('当前厂商需要填写 OpenAI Base URL')
+        return
+      }
+      if (!String(aiRuntimeConfig.openai_api_key || '').trim()) {
+        ElMessage.warning('当前厂商需要填写 OpenAI / DeepSeek API Key')
+        return
+      }
+    }
+    if (showGeminiFields.value && !String(aiRuntimeConfig.google_api_key || '').trim()) {
+      ElMessage.warning('当前厂商需要填写 Gemini API Key')
+      return
+    }
+    if (showEmbeddingOpenAICompatFields.value) {
+      if (!String(aiRuntimeConfig.openai_base_url || '').trim()) {
+        ElMessage.warning('Embedding 提供商需要填写 OpenAI Base URL')
+        return
+      }
+      if (!String(aiRuntimeConfig.openai_api_key || '').trim()) {
+        ElMessage.warning('Embedding 提供商需要填写 API Key')
+        return
+      }
+    }
+
+    const payload = {
+      llm_provider: provider || aiRuntimeConfig.llm_provider,
+      embedding_provider: aiRuntimeConfig.embedding_provider,
+      ollama_base_url: aiRuntimeConfig.ollama_base_url,
+      chat_model: aiRuntimeConfig.chat_model,
+      embedding_model: aiRuntimeConfig.embedding_model,
+      openai_base_url: aiRuntimeConfig.openai_base_url,
+      extra_env: normalizeExtraEnv(),
+      persist_to_env: Boolean(aiRuntimeConfig.persist_to_env),
+      apply_runtime: Boolean(aiRuntimeConfig.apply_runtime)
+    }
+    if (aiRuntimeConfig.openai_api_key?.trim()) payload.openai_api_key = aiRuntimeConfig.openai_api_key.trim()
+    if (aiRuntimeConfig.google_api_key?.trim()) payload.google_api_key = aiRuntimeConfig.google_api_key.trim()
+    await api.put('/api/admin/system/ai-config', payload)
+    aiRuntimeConfig.openai_api_key = ''
+    aiRuntimeConfig.google_api_key = ''
+    ElMessage.success('AI 连接配置已更新')
+    await loadAiRuntimeConfig()
+  } catch (error) {
+    if (error?.response?.status === 403) {
+      ElMessage.warning('需要管理员权限才能修改 AI 连接配置')
+    } else {
+      ElMessage.error('保存 AI 配置失败')
+    }
+  } finally {
+    loading.aiConfig = false
+  }
+}
+
+const testAiRuntimeConfig = async () => {
+  loading.aiConfig = true
+  try {
+    const payload = {
+      llm_provider: aiRuntimeConfig.llm_provider,
+      ollama_base_url: aiRuntimeConfig.ollama_base_url,
+      chat_model: aiRuntimeConfig.chat_model,
+      openai_base_url: aiRuntimeConfig.openai_base_url
+    }
+    if (aiRuntimeConfig.openai_api_key?.trim()) payload.openai_api_key = aiRuntimeConfig.openai_api_key.trim()
+    if (aiRuntimeConfig.google_api_key?.trim()) payload.google_api_key = aiRuntimeConfig.google_api_key.trim()
+    const res = await api.post('/api/admin/system/ai-config/test', payload)
+    ElMessage.success(res?.data?.message || '连接测试通过')
+  } catch (error) {
+    const msg = error?.response?.data?.message || error?.response?.data?.detail || error?.message || '连接测试失败'
+    ElMessage.error(msg)
+  } finally {
+    loading.aiConfig = false
   }
 }
 
@@ -430,9 +594,7 @@ const loadSettings = () => {
       if (parsedSettings.systemConfig) {
         Object.assign(systemConfig, parsedSettings.systemConfig)
       }
-      if (parsedSettings.learningPrefs) {
-        Object.assign(learningPrefs, parsedSettings.learningPrefs)
-      }
+      systemConfig.aiTemperature = Number.isFinite(Number(systemConfig.aiTemperature)) ? Math.min(100, Math.max(0, Number(systemConfig.aiTemperature))) : 35
     } catch (e) {
       console.error('解析保存的设置失败:', e)
     }
@@ -455,6 +617,7 @@ const cleanup = () => {
 onMounted(() => {
   // 加载系统设置
   loadSettings()
+  loadAiRuntimeConfig()
   
   // 启动运行时间更新定时器
   updateUptime()
@@ -472,180 +635,269 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .settings-container {
-  max-width: 1000px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: var(--spacing-xl);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xl);
+  padding: 24px;
+  color: var(--text-primary);
 }
 
 .settings-header {
-  text-align: center;
-  margin-bottom: var(--spacing-xl);
+  margin-bottom: 20px;
+  padding: 20px 24px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-glass);
+  box-shadow: var(--shadow-sm);
 }
 
 .settings-header h2 {
-  font-size: 2.5rem;
-  margin-bottom: var(--spacing-sm);
+  margin: 0 0 8px;
+  font-size: 30px;
+  line-height: 1.2;
 }
 
 .glitch {
   color: var(--color-primary);
-  text-shadow: 0 0 10px var(--color-primary);
+}
+
+.system-text {
+  color: var(--text-primary);
 }
 
 .subtitle {
+  margin: 0;
   color: var(--text-secondary);
-  font-size: 1.1rem;
 }
 
-/* Tabs Styling override */
-:deep(.el-tabs__header) {
-  margin-bottom: var(--spacing-xl);
+.settings-tabs {
+  border-radius: 16px;
 }
 
-:deep(.el-tabs__item) {
-  font-size: 1.1rem;
-  font-weight: 500;
+.settings-tabs :deep(.el-tabs__header) {
+  margin: 0 0 16px;
+}
+
+.settings-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+.settings-tabs :deep(.el-tabs__nav) {
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.settings-tabs :deep(.el-tabs__item) {
+  height: 38px;
   color: var(--text-secondary);
-  padding: 0 24px;
+  font-weight: 600;
 }
 
-:deep(.el-tabs__item.is-active) {
+.settings-tabs :deep(.el-tabs__item.is-active) {
   color: var(--color-primary);
 }
 
-/* Settings Card and Groups */
+.settings-tabs :deep(.el-tabs__active-bar) {
+  background: var(--color-primary);
+  height: 2px;
+}
+
 .settings-card {
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
   background: var(--bg-glass);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .config-group {
-  margin-bottom: var(--spacing-xl);
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-color-light);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.config-group:last-child {
+  margin-bottom: 0;
 }
 
 .config-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--spacing-lg);
-  color: var(--text-primary);
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .config-header h4 {
+  margin: 0;
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 1.2rem;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .config-details {
-  padding-left: var(--spacing-md);
+  padding-left: 12px;
   border-left: 2px solid var(--border-color-light);
 }
 
 .detail-group {
-  margin-bottom: var(--spacing-lg);
+  margin-bottom: 14px;
+}
+
+.detail-group:last-child {
+  margin-bottom: 0;
 }
 
 .detail-group label {
   display: block;
-  margin-bottom: var(--spacing-sm);
-  font-weight: 600;
-  font-size: 0.9rem;
+  margin-bottom: 8px;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
 }
 
-/* Theme Choices UI */
-.theme-choices {
-  display: flex;
-  gap: var(--spacing-lg);
-  margin-top: var(--spacing-md);
+.settings-tip {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
-.theme-card {
-  flex: 1;
-  padding: var(--spacing-md);
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all var(--transition-normal);
+.detail-group--section {
+  margin-top: 8px;
+}
+
+.detail-group--section label {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.extra-env-list {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-sm);
+  gap: 8px;
+}
+
+.extra-env-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+
+.env-table {
+  border: 1px solid var(--border-color-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-color-light);
+  font-size: 12px;
+}
+
+.env-row:first-child {
+  border-top: none;
+}
+
+.env-row--head {
+  font-weight: 700;
   background: var(--bg-secondary);
 }
 
+.theme-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.theme-card {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
 .theme-card:hover {
-  border-color: var(--color-primary-light);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
 }
 
 .theme-card.active {
   border-color: var(--color-primary);
-  background: var(--bg-tertiary);
-  box-shadow: 0 0 15px var(--shadow-glow);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
 .theme-card .preview-box {
   width: 100%;
-  height: 60px;
-  border-radius: var(--radius-sm);
-  padding: var(--spacing-sm);
+  height: 56px;
+  border-radius: 8px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .theme-card.dark .preview-box {
-  background: #1e1e1e;
+  background: #1f2430;
 }
+
 .theme-card.light .preview-box {
   background: #ffffff;
-  border: 1px solid #ddd;
+  border: 1px solid #d9dde8;
 }
 
 .preview-box .line {
   height: 6px;
-  background: rgba(128, 128, 128, 0.3);
-  border-radius: 3px;
+  border-radius: 6px;
+  background: rgba(120, 126, 140, 0.35);
 }
-.preview-box .line.short { width: 60%; }
+
+.preview-box .line.short {
+  width: 62%;
+}
 
 .theme-card span {
-  font-weight: 600;
-  font-size: 0.9rem;
   color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-/* Info Items */
 .info-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
+  display: grid;
+  gap: 10px;
 }
 
 .info-item {
   display: flex;
   justify-content: space-between;
-  padding: var(--spacing-md);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--border-color-light);
+  border-radius: 10px;
+  background: var(--bg-secondary);
 }
 
 .info-label {
   color: var(--text-secondary);
-  font-weight: 500;
+  font-size: 14px;
 }
 
 .info-value {
@@ -653,1512 +905,99 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.status-online { color: var(--color-success); }
-.status-offline { color: var(--color-error); }
-
-/* Card Actions */
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-md);
-  margin-top: var(--spacing-xl);
-  padding-top: var(--spacing-lg);
-  border-top: 1px solid var(--border-color-light);
-}
-
-/* Animations */
-@keyframes glitchEffect {
-  0%, 100% { transform: none; }
-  50% { transform: skewX(2deg); }
-}
-
-@media (max-width: 768px) {
-  .theme-choices {
-    flex-direction: column;
-  }
-}
-
-/* 背景装饰元素 */
-.settings-container::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -10%;
-  width: 120%;
-  height: 300px;
-  background: radial-gradient(circle at center, var(--accent-glow) 0%, transparent 60%);
-  filter: blur(80px);
-  z-index: -1;
-  opacity: 0.3;
-  animation: backgroundGlow 8s ease-in-out infinite;
-}
-
-@keyframes backgroundGlow {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.3;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.4;
-  }
-}
-
-/* 页面标题 - 科技感标题 */
-.settings-header {
-  text-align: center;
-  margin-bottom: 2rem;
-  position: relative;
-  animation: fadeIn 0.8s ease-out;
-  background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  border-radius: 16px;
-  border: 1px solid var(--glass-border);
-  padding: 2rem;
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-
-.settings-header::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  animation: headerGlow 4s ease-in-out infinite;
-}
-
-@keyframes headerGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
-}
-
-.settings-header h2 {
-  font-size: 3rem;
-  margin-bottom: 0.8rem;
-  letter-spacing: 1px;
-  font-weight: 800;
-  line-height: 1.2;
-  position: relative;
-  display: inline-block;
-  text-shadow: 0 0 20px var(--accent-glow);
-}
-
-.glitch {
-  color: var(--accent-primary);
-  text-shadow: 
-    0 0 10px var(--accent-primary),
-    0 0 20px var(--accent-primary),
-    0 0 40px var(--accent-glow);
-  animation: glitchEffect 5s infinite;
-}
-
-.system-text {
-  color: var(--text-primary);
-  font-weight: 700;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-}
-
-.subtitle {
-  color: rgba(220, 220, 240, 0.8);
-  font-size: 1.2rem;
-  font-weight: 400;
-  max-width: 700px;
-  margin: 0 auto;
-  opacity: 0.9;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-/* 标签页样式 - 现代化导航 */
-.settings-tabs {
-  background: transparent;
-  margin-bottom: 2rem;
-  position: relative;
-}
-
-.settings-tabs :deep(.el-tabs__header) {
-  margin-bottom: 2rem;
-  display: flex;
-  justify-content: center;
-}
-
-.settings-tabs :deep(.el-tabs__nav) {
-  background: rgba(16, 25, 54, 0.75);
-  padding: 0.5rem;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(15px);
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.2),
-    0 0 15px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  position: relative;
-  overflow: hidden;
-  animation: navGlow 3s ease-in-out infinite alternate;
-}
-
-@keyframes navGlow {
-  0% {
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.2),
-      0 0 15px var(--accent-glow),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  }
-  100% {
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.25),
-      0 0 20px var(--accent-primary),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  }
-}
-
-.settings-tabs :deep(.el-tabs__nav)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.7;
-  animation: tabHeaderGlow 3s ease-in-out infinite;
-}
-
-@keyframes tabHeaderGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
-}
-
-.settings-tabs {
-  background: transparent;
-  margin-bottom: 2.5rem;
-  position: relative;
-  display: flex;
-  justify-content: center;
-}
-
-.settings-tabs :deep(.el-tabs__header) {
-  margin: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* clean slim bottom line */
-}
-
-.settings-tabs :deep(.el-tabs__nav-wrap::after) {
-  display: none; /* remove default element-plus border */
-}
-
-.settings-tabs :deep(.el-tabs__nav) {
-  display: flex;
-  gap: 2.5rem;
-  border: none;
-}
-
-.settings-tabs :deep(.el-tabs__item) {
-  color: rgba(255, 255, 255, 0.5);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  padding: 1rem 0.5rem;
-  margin: 0;
-  font-weight: 600;
-  font-size: 1.15rem;
-  letter-spacing: 1px;
-  position: relative;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-.settings-tabs :deep(.el-tabs__item:hover) {
-  color: var(--color-primary);
-  text-shadow: 0 0 10px rgba(0, 153, 255, 0.5);
-  transform: translateY(-2px);
-}
-
-.settings-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--color-primary);
-  text-shadow: 0 0 15px var(--glow-primary);
-  transform: translateY(-2px);
-}
-
-.settings-tabs :deep(.el-tabs__active-bar) {
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
-  box-shadow: 0 -2px 10px var(--glow-primary);
-}
-
-/* 设置卡片 - 玻璃态设计 */
-.settings-card {
-  background: rgba(16, 25, 54, 0.75);
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-  padding: 2.5rem;
-  margin-bottom: 2rem;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(20px);
-  box-shadow: 
-    0 12px 40px rgba(0, 0, 0, 0.25),
-    0 0 20px rgba(0, 153, 255, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.settings-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  animation: cardHeaderGlow 4s ease-in-out infinite;
-  opacity: 0.8;
-}
-
-@keyframes cardHeaderGlow {
-  0%, 100% {
-    background-position: -200% 0;
-  }
-  50% {
-    background-position: 200% 0;
-  }
-}
-
-.settings-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 
-    0 15px 45px rgba(0, 0, 0, 0.3),
-    0 0 30px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.settings-card::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: radial-gradient(circle at 50% -20%, rgba(0, 153, 255, 0.15), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
-}
-
-.settings-card:hover::after {
-  opacity: 1;
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  position: relative;
-}
-
-.card-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1rem;
-  left: 0;
-  width: 60px;
-  height: 2px;
-  background: var(--accent-primary);
-  opacity: 0.7;
-}
-
-.settings-card:hover::before {
-  opacity: 0.2;
-}
-
-.settings-card:hover {
-  border-color: var(--accent-primary);
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    0 0 20px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  transform: translateY(-4px);
-}
-
-/* 卡片头部 - 增强视觉层次 */
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--border-color);
-  position: relative;
-}
-
-.card-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 60px;
-  height: 3px;
-  background: var(--accent-primary);
-  border-radius: 3px;
-}
-
-.header-icon {
-  font-size: 1.8rem;
-  color: var(--accent-primary);
-  filter: drop-shadow(0 0 8px var(--accent-glow));
-  animation: float 4s ease-in-out infinite;
-}
-
-.card-header h3 {
-  font-family: var(--main-font);
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.98);
-  margin: 0;
-  text-shadow: 
-    0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 10px var(--accent-glow);
-  font-size: 1.5rem;
-  letter-spacing: 0.5px;
-}
-
-/* 表单样式 - 玻璃态输入控件 */
-.form-input :deep(.el-input__wrapper) {
-  background: rgba(10, 13, 32, 0.75);
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(10px);
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  position: relative;
-  overflow: hidden;
-}
-
-.form-input :deep(.el-input__wrapper)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  opacity: 0.5;
-}
-
-.form-input :deep(.el-input__wrapper:hover) {
-  border-color: var(--accent-primary);
-  background: rgba(10, 13, 32, 0.85);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  transform: translateY(-1px);
-}
-
-.form-input :deep(.el-input__wrapper.is-focus) {
-  border-color: var(--accent-primary);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 25px var(--accent-primary),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  background: rgba(10, 13, 32, 0.95);
-  transform: translateY(-2px);
-  animation: inputGlow 2s ease-in-out infinite alternate;
-}
-
-@keyframes inputGlow {
-  0% {
-    box-shadow: 
-      inset 0 1px 3px rgba(0, 0, 0, 0.3),
-      0 0 25px var(--accent-primary),
-      0 0 15px var(--accent-glow),
-      0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-  100% {
-    box-shadow: 
-      inset 0 1px 3px rgba(0, 0, 0, 0.3),
-      0 0 30px var(--accent-primary),
-      0 0 20px var(--accent-glow),
-      0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-}
-
-.form-input :deep(.el-input__inner) {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.98);
-  font-weight: 500;
-  font-size: 1rem;
-  letter-spacing: 0.5px;
-  padding: 12px 16px;
-  transition: all 0.3s ease;
-}
-
-.form-input :deep(.el-input__inner:focus) {
-  color: var(--accent-primary);
-  text-shadow: 0 0 5px var(--accent-glow);
-}
-
-/* 占位符文本颜色 */
-.form-input :deep(.el-input__placeholder) {
-  color: rgba(150, 150, 170, 0.5) !important;
-  font-style: italic;
-  letter-spacing: 0.5px;
-  transition: color 0.3s ease;
-}
-
-.form-input :deep(.el-input__wrapper:hover .el-input__placeholder) {
-  color: rgba(180, 180, 200, 0.7) !important;
-}
-
-/* 选择器样式 */
-.form-select :deep(.el-input__wrapper) {
-  background: rgba(10, 13, 32, 0.75);
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(10px);
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  position: relative;
-}
-
-.form-select :deep(.el-input__wrapper)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  opacity: 0.5;
-}
-
-.form-select :deep(.el-input__wrapper:hover) {
-  border-color: var(--accent-primary);
-  background: rgba(10, 13, 32, 0.85);
-  box-shadow: 
-    inset 0 1px 3px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow),
-    0 1px 0 rgba(255, 255, 255, 0.05);
-  transform: translateY(-1px);
-}
-
-.form-select :deep(.el-input__inner) {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.98);
-  font-weight: 500;
-  font-size: 1rem;
-  letter-spacing: 0.5px;
-  padding: 12px 16px;
-  transition: all 0.3s ease;
-}
-
-.form-select :deep(.el-input__inner:focus) {
-  color: var(--accent-primary);
-  text-shadow: 0 0 5px var(--accent-glow);
-}
-
-.form-select :deep(.el-scrollbar__view) {
-  background: rgba(10, 13, 32, 1);
-  color: rgba(255, 255, 255, 0.9);
-  padding: 0 8px;
-}
-
-.form-select :deep(.el-select-dropdown) {
-  background: rgba(10, 13, 32, 0.9);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  box-shadow: 
-    0 15px 40px rgba(0, 0, 0, 0.4),
-    0 0 20px rgba(0, 153, 255, 0.1);
-  margin-top: 8px;
-  backdrop-filter: blur(15px);
-  animation: dropdownAppear 0.3s ease-out;
-  position: relative;
-  overflow: hidden;
-}
-
-@keyframes dropdownAppear {
-  from {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.form-select :deep(.el-select-dropdown)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.7;
-}
-
-.form-select :deep(.el-select-dropdown__item) {
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-  padding: 12px 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 8px;
-  margin: 6px 8px;
-  position: relative;
-  overflow: hidden;
-}
-
-.form-select :deep(.el-select-dropdown__item)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  background: var(--accent-primary);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.form-select :deep(.el-select-dropdown__item:hover) {
-  background: rgba(0, 153, 255, 0.2);
-  color: var(--accent-primary);
-  box-shadow: 0 4px 15px rgba(0, 153, 255, 0.3);
-  transform: translateX(5px);
-}
-
-.form-select :deep(.el-select-dropdown__item:hover)::before {
-  opacity: 1;
-}
-
-.form-select :deep(.el-select-dropdown__item.selected) {
-  background: rgba(0, 153, 255, 0.3);
-  color: var(--accent-primary);
-  font-weight: 600;
-  box-shadow: 0 0 15px rgba(0, 153, 255, 0.4);
-}
-
-.form-select :deep(.el-select-dropdown__item.selected)::before {
-  opacity: 1;
-}
-
-/* 用户资料区域 */
-.profile-content {
-  display: flex;
-  gap: 2rem;
-  margin-bottom: 2rem;
-  align-items: center;
-}
-
-.avatar-container {
-  position: relative;
-  transition: transform 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-}
-
-.avatar-container:hover {
-  transform: scale(1.05);
-}
-
-.avatar {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: var(--bg-primary);
-  box-shadow: 
-    0 0 30px var(--accent-glow),
-    inset 0 2px 10px rgba(255, 255, 255, 0.3),
-    0 5px 15px rgba(0, 0, 0, 0.2);
-  animation: avatarGlow 4s ease-in-out infinite;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-@keyframes avatarGlow {
-  0%, 100% {
-    box-shadow: 
-      0 0 30px var(--accent-glow),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3),
-      0 5px 15px rgba(0, 0, 0, 0.2);
-  }
-  50% {
-    box-shadow: 
-      0 0 40px var(--accent-primary),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3),
-      0 5px 15px rgba(0, 0, 0, 0.2);
-  }
-}
-
-.avatar::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
-  animation: avatarShimmer 3s ease-in-out infinite;
-}
-
-@keyframes avatarShimmer {
-  0%, 100% {
-    transform: rotate(0deg) scale(1);
-    opacity: 0.3;
-  }
-  50% {
-    transform: rotate(45deg) scale(1.2);
-    opacity: 0.5;
-  }
-}
-
-.avatar:hover {
-  transform: scale(1.05);
-  box-shadow: 
-    0 0 45px var(--accent-primary),
-    inset 0 2px 10px rgba(255, 255, 255, 0.3),
-    0 5px 15px rgba(0, 0, 0, 0.2);
-}
-
-.avatar-text {
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-  position: relative;
-  z-index: 1;
-}
-
-.avatar-status {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 3px solid var(--bg-primary);
-  box-shadow: 0 0 10px rgba(0, 255, 102, 0.5);
-  transition: all 0.3s ease;
-}
-
 .status-online {
-  background: #00ff66;
-  box-shadow: 
-    0 0 15px #00ff66,
-    inset 0 0 10px rgba(0, 255, 102, 0.5);
-  animation: statusPulse 2s ease-in-out infinite;
-}
-
-@keyframes statusPulse {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 
-      0 0 15px #00ff66,
-      inset 0 0 10px rgba(0, 255, 102, 0.5);
-  }
-  50% {
-    transform: scale(1.1);
-    box-shadow: 
-      0 0 20px #00ff66,
-      inset 0 0 10px rgba(0, 255, 102, 0.5);
-  }
-}
-
-.user-details {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-/* 配置组样式 */
-.config-group {
-  margin-bottom: 2.5rem;
-  padding: 2rem;
-  background: var(--bg-secondary);
-  border-radius: 16px;
-  border: 1px solid var(--border-color-light);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  backdrop-filter: blur(10px);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-.config-group::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  background: var(--accent-primary);
-  opacity: 0.6;
-  transform: translateX(-100%);
-  transition: transform 0.4s ease;
-}
-
-.config-group:hover {
-  background: rgba(10, 13, 32, 0.7);
-  border-color: var(--accent-primary);
-  transform: translateX(5px);
-  box-shadow: 
-    0 6px 25px rgba(0, 0, 0, 0.2),
-    0 0 15px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.config-group:hover::before {
-  transform: translateX(0);
-}
-
-.config-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-  position: relative;
-}
-
-.config-header h4 {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.95);
-  font-weight: 700;
-  font-size: 1.15rem;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-/* 开关样式增强 */
-.config-header :deep(.el-switch) {
-  --el-switch-on-color: var(--accent-primary);
-  --el-switch-off-color: var(--border-color);
-  transition: all 0.3s ease;
-}
-
-.config-header :deep(.el-switch:hover) {
-  transform: scale(1.05);
-}
-
-.config-header :deep(.el-switch__core) {
-  box-shadow: 0 0 10px var(--accent-glow);
-  border-radius: 20px;
-}
-
-.config-header :deep(.el-switch.is-checked .el-switch__core) {
-  box-shadow: 
-    0 0 10px var(--accent-primary),
-    inset 0 0 10px var(--accent-glow);
-}
-
-.config-details {
-  padding-left: 1rem;
-  border-left: 2px solid var(--border-color);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.config-group:hover .config-details {
-  border-left-color: var(--accent-primary);
-  padding-left: 1.5rem;
-}
-
-/* 详细组 */
-.detail-group {
-  margin-bottom: 2rem;
-  position: relative;
-  transition: all 0.3s ease;
-}
-
-.detail-group::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, rgba(0, 153, 255, 0.05), transparent);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-}
-
-.detail-group:hover::before {
-  opacity: 1;
-}
-
-.detail-group label {
-  display: block;
-  margin-bottom: 0.75rem;
-  color: rgba(220, 220, 240, 0.9);
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  opacity: 0.9;
-  transition: all 0.3s ease;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.detail-group:hover label {
-  color: var(--accent-primary);
-  opacity: 1;
-  text-shadow: 0 0 10px var(--accent-glow);
-}
-
-/* 颜色选项 - 增强交互 */
-.color-options {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 0.5rem;
-}
-
-.color-option {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
-}
-
-.color-option::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  transition: all 0.3s ease;
-}
-
-.color-option:hover {
-  transform: scale(1.15);
-  box-shadow: 
-    0 0 20px rgba(0, 0, 0, 0.3),
-    0 0 15px var(--accent-glow);
-}
-
-.color-option.active {
-  border-color: var(--text-primary);
-  box-shadow: 
-    0 0 25px var(--accent-primary),
-    0 0 15px var(--accent-glow),
-    inset 0 2px 10px rgba(0, 0, 0, 0.3);
-  transform: scale(1.05);
-}
-
-.color-option.active::before {
-  width: 12px;
-  height: 12px;
-  opacity: 1;
-}
-
-/* 信息内容区域 */
-.info-content {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  margin-bottom: 2rem;
-}
-
-.info-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.25rem 1.75rem;
-  background: var(--bg-secondary);
-  border-radius: 16px;
-  border: 1px solid var(--border-color-light);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(10px);
-  box-shadow: 
-    0 4px 20px rgba(0, 0, 0, 0.15),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-}
-
-.info-item::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: var(--accent-primary);
-  transform: translateX(-100%);
-  transition: all 0.4s ease;
-  box-shadow: 0 0 10px var(--accent-primary);
-}
-
-.info-item::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 100px;
-  background: linear-gradient(90deg, transparent, rgba(0, 153, 255, 0.05), transparent);
-  transform: translateX(100%);
-  transition: transform 0.6s ease;
-}
-
-.info-item:hover {
-  background: rgba(10, 13, 32, 0.9);
-  border-color: var(--accent-primary);
-  transform: translateX(5px);
-  box-shadow: 
-    0 6px 25px rgba(0, 0, 0, 0.2),
-    0 0 15px var(--accent-glow),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.info-item:hover::before {
-  transform: translateX(0);
-}
-
-.info-item:hover::after {
-  transform: translateX(-100%);
-}
-
-.info-label {
-  color: rgba(180, 180, 200, 0.8);
-  font-size: 0.95rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  transition: all 0.3s ease;
-  position: relative;
-  z-index: 1;
-}
-
-.info-item:hover .info-label {
-  color: var(--accent-primary);
-  text-shadow: 0 0 10px var(--accent-glow);
-}
-
-.info-value {
-  color: var(--text-primary);
-  font-weight: 700;
-  font-size: 1.05rem;
-  text-align: right;
-  min-width: 120px;
-  text-shadow: 0 0 15px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
-  position: relative;
-  z-index: 1;
-}
-
-.info-item:hover .info-value {
-  text-shadow: 
-    0 0 10px rgba(0, 153, 255, 0.3),
-    0 0 15px rgba(0, 0, 0, 0.15);
-}
-
-.status-online {
-  color: #00ff66;
-  text-shadow: 
-    0 0 15px #00ff66,
-    0 0 25px rgba(0, 255, 102, 0.6);
-  font-weight: 700;
-  animation: statusTextGlow 2s ease-in-out infinite;
-}
-
-@keyframes statusTextGlow {
-  0%, 100% {
-    text-shadow: 
-      0 0 15px #00ff66,
-      0 0 25px rgba(0, 255, 102, 0.6);
-  }
-  50% {
-    text-shadow: 
-      0 0 25px #00ff66,
-      0 0 35px rgba(0, 255, 102, 0.8);
-  }
+  color: var(--color-success);
 }
 
 .status-offline {
-  color: #ff6b6b;
-  text-shadow: 
-    0 0 15px #ff6b6b,
-    0 0 25px rgba(255, 107, 107, 0.6);
+  color: var(--color-error);
 }
 
-/* 卡片操作按钮 - 现代按钮设计 */
 .card-actions {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color-light);
   display: flex;
+  gap: 10px;
   justify-content: flex-end;
-  gap: 1.5rem;
-  padding-top: 2.5rem;
-  margin-top: 2.5rem;
-  border-top: 1px solid var(--border-color);
-  position: relative;
-}
-
-.card-actions::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: 0;
-  width: 80px;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
-  border-radius: 3px;
-  animation: buttonBorderGlow 3s ease-in-out infinite;
-}
-
-@keyframes buttonBorderGlow {
-  0%, 100% {
-    opacity: 0.7;
-    width: 80px;
-  }
-  50% {
-    opacity: 1;
-    width: 120px;
-    box-shadow: 0 0 10px var(--accent-primary);
-  }
-}
-
-.card-actions :deep(.el-button--primary) {
-  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
-  border: none;
-  color: white;
-  font-weight: 700;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-  padding: 0.85rem 2.25rem;
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    0 6px 25px rgba(0, 0, 0, 0.3),
-    0 0 20px var(--accent-glow),
-    inset 0 1px 3px rgba(255, 255, 255, 0.2);
-}
-
-.card-actions :deep(.el-button--primary:hover) {
-  box-shadow: 
-    0 8px 30px rgba(0, 0, 0, 0.4),
-    0 0 35px var(--accent-primary),
-    inset 0 1px 3px rgba(255, 255, 255, 0.2);
-  transform: translateY(-3px);
-  filter: brightness(1.1);
-}
-
-.card-actions :deep(.el-button--primary:active) {
-  transform: translateY(-1px);
-  box-shadow: 
-    0 4px 20px rgba(0, 0, 0, 0.3),
-    0 0 25px var(--accent-glow),
-    inset 0 1px 3px rgba(255, 255, 255, 0.2);
-}
-
-.card-actions :deep(.el-button--primary)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  transition: all 0.6s ease;
-}
-
-.card-actions :deep(.el-button--primary:hover)::before {
-  left: 100%;
+  flex-wrap: wrap;
 }
 
 .card-actions :deep(.el-button) {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  font-weight: 600;
-  padding: 0.85rem 2.25rem;
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(10px);
-  box-shadow: inset 0 1px 3px rgba(255, 255, 255, 0.05);
+  min-width: 108px;
 }
 
-.card-actions :deep(.el-button:hover) {
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-  box-shadow: 
-    0 6px 25px rgba(0, 0, 0, 0.2),
-    0 0 20px var(--accent-glow),
-    inset 0 1px 3px rgba(255, 255, 255, 0.05);
-  background: rgba(10, 13, 32, 0.9);
-  transform: translateY(-2px);
+:deep(.el-switch) {
+  --el-switch-on-color: var(--color-primary);
+  --el-switch-off-color: var(--border-color);
 }
 
-.card-actions :deep(.el-button:active) {
-  transform: translateY(0);
+:deep(.el-radio-button__inner) {
+  border-color: var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
 }
 
-.card-actions :deep(.el-button--danger) {
-  background: rgba(255, 51, 102, 0.15);
-  border-color: rgba(255, 51, 102, 0.3);
-  color: #ff3366;
-  box-shadow: inset 0 1px 3px rgba(255, 51, 102, 0.1);
+:deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
 }
 
-.card-actions :deep(.el-button--danger:hover) {
-  background: rgba(255, 51, 102, 0.25);
-  border-color: #ff3366;
-  box-shadow: 
-    0 0 25px rgba(255, 51, 102, 0.4),
-    inset 0 1px 3px rgba(255, 51, 102, 0.2);
-  color: white;
-  transform: translateY(-2px);
+:deep(.el-checkbox__label),
+:deep(.el-radio__label) {
+  color: var(--text-secondary);
 }
 
-.card-actions :deep(.el-button--warning) {
-  background: rgba(255, 204, 0, 0.15);
-  border-color: rgba(255, 204, 0, 0.3);
-  color: #ffcc00;
-  box-shadow: inset 0 1px 3px rgba(255, 204, 0, 0.1);
-}
-
-.card-actions :deep(.el-button--warning:hover) {
-  background: rgba(255, 204, 0, 0.25);
-  border-color: #ffcc00;
-  box-shadow: 
-    0 0 25px rgba(255, 204, 0, 0.4),
-    inset 0 1px 3px rgba(255, 204, 0, 0.2);
-  color: white;
-  transform: translateY(-2px);
-}
-
-/* 错误信息样式 */
-.error-message {
-  color: #ff6b6b;
-  font-size: 0.9rem;
-  margin-top: 0.5rem;
-  min-height: 1.5rem;
-  position: relative;
-  padding-left: 1.5rem;
-  text-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
-}
-
-.error-message::before {
-  content: '⚠';
-  position: absolute;
-  left: 0;
-  top: 0;
-  font-size: 0.9rem;
-}
-
-/* 自定义开关样式 */
-:deep(.el-switch.is-checked .el-switch__core) {
-  background-color: var(--accent-primary);
-  box-shadow: 0 0 15px var(--accent-glow);
-}
-
-:deep(.el-switch__core) {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* 自定义滑块样式 */
 :deep(.el-slider__runway) {
-  background-color: var(--border-color);
-  height: 8px;
-  border-radius: 4px;
+  background: var(--border-color-light);
 }
 
 :deep(.el-slider__bar) {
-  background-color: var(--accent-primary);
-  height: 8px;
-  border-radius: 4px;
-  box-shadow: 0 0 10px var(--accent-glow);
+  background: var(--color-primary);
 }
 
 :deep(.el-slider__button) {
-  width: 20px;
-  height: 20px;
-  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
-  border: none;
-  box-shadow: 
-    0 0 20px var(--accent-primary),
-    0 2px 10px rgba(0, 0, 0, 0.3);
-  transition: all 0.3s ease;
+  border-color: var(--color-primary);
 }
 
-:deep(.el-slider__button:hover) {
-  transform: scale(1.2);
-  box-shadow: 
-    0 0 30px var(--accent-primary),
-    0 2px 10px rgba(0, 0, 0, 0.3);
-}
-
-/* 自定义单选按钮样式 */
-:deep(.el-radio__inner) {
-  border-color: var(--border-color);
-  transition: all 0.3s ease;
-}
-
-:deep(.el-radio__input.is-checked .el-radio__inner) {
-  background-color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-:deep(.el-radio__label) {
-  color: var(--text-secondary);
-  transition: color 0.3s ease;
-}
-
-:deep(.el-radio__input.is-checked .el-radio__label) {
-  color: var(--accent-primary);
-  font-weight: 500;
-}
-
-/* 自定义复选框样式 */
-:deep(.el-checkbox__inner) {
-  border-color: var(--border-color);
-  background-color: var(--bg-input);
-  transition: all 0.3s ease;
-}
-
-:deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
-  background-color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-:deep(.el-checkbox__label) {
-  color: var(--text-secondary);
-  transition: color 0.3s ease;
-}
-
-:deep(.el-checkbox__input.is-checked .el-checkbox__label) {
-  color: var(--accent-primary);
-  font-weight: 500;
-}
-
-/* 动画效果 */
-@keyframes glitchEffect {
-  0%, 90%, 100% {
-    text-shadow: 
-      0 0 10px var(--accent-primary),
-      0 0 20px var(--accent-primary),
-      0 0 40px var(--accent-glow);
-    transform: translate(0);
-  }
-  91% {
-    text-shadow: 
-      -2px 0 5px rgba(255, 0, 0, 0.5),
-      2px 0 5px rgba(0, 255, 255, 0.5);
-    transform: translate(-2px, 2px);
-  }
-  92% {
-    text-shadow: 
-      2px 0 5px rgba(0, 255, 255, 0.5),
-      -2px 0 5px rgba(255, 0, 0, 0.5);
-    transform: translate(2px, -2px);
-  }
-  93% {
-    text-shadow: 
-      0 0 10px var(--accent-primary),
-      0 0 20px var(--accent-primary),
-      0 0 40px var(--accent-glow);
-    transform: translate(0);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%) skewX(-20deg);
-  }
-  100% {
-    transform: translateX(100%) skewX(-20deg);
-  }
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 
-      0 0 25px var(--accent-glow),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3);
-  }
-  50% {
-    box-shadow: 
-      0 0 40px var(--accent-primary),
-      inset 0 2px 10px rgba(255, 255, 255, 0.3);
-  }
-}
-
-@keyframes statusPulse {
-  0%, 100% {
-    box-shadow: 0 0 15px #00ff66;
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 25px #00ff66, 0 0 35px rgba(0, 255, 102, 0.5);
-    transform: scale(1.1);
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 响应式设计 - 全面优化移动体验 */
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .settings-container {
-    padding: 1.5rem 1rem;
+    padding: 16px;
   }
-  
+
+  .settings-header {
+    padding: 16px;
+  }
+
   .settings-header h2 {
-    font-size: 2rem;
+    font-size: 24px;
   }
-  
-  .subtitle {
-    font-size: 1rem;
-  }
-  
-  .settings-tabs :deep(.el-tabs__nav) {
-    padding: 0.25rem;
-    width: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
-  }
-  
-  .settings-tabs :deep(.el-tabs__item) {
-    padding: 0.6rem 1.2rem;
-    font-size: 0.9rem;
-  }
-  
+
   .settings-card {
-    padding: 1.5rem 1rem;
-    border-radius: 12px;
+    padding: 14px;
   }
-  
-  .profile-content {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 1.5rem;
+
+  .config-group {
+    padding: 12px;
   }
-  
-  .user-details {
-    width: 100%;
+
+  .theme-choices {
+    grid-template-columns: 1fr;
   }
-  
-  .avatar {
-    width: 80px;
-    height: 80px;
-    font-size: 2rem;
-  }
-  
+
   .card-actions {
-    flex-direction: column;
-    gap: 0.75rem;
+    justify-content: stretch;
   }
-  
+
   .card-actions :deep(.el-button) {
     width: 100%;
+    margin-left: 0;
   }
-  
-  .config-details {
-    padding-left: 0.5rem;
-  }
-  
+
   .info-item {
     flex-direction: column;
     align-items: flex-start;
-    text-align: left;
-    gap: 0.5rem;
-  }
-  
-  .info-value {
-    min-width: auto;
-    width: 100%;
-  }
-  
-  .color-options {
-    justify-content: center;
-  }
-  
-  .color-option {
-    width: 35px;
-    height: 35px;
-  }
-}
-
-/* 平板设备响应式调整 */
-@media (min-width: 769px) and (max-width: 1024px) {
-  .settings-container {
-    padding: 2rem 1.5rem;
-  }
-  
-  .settings-header h2 {
-    font-size: 2.5rem;
-  }
-  
-  .settings-tabs :deep(.el-tabs__nav) {
-    flex-wrap: wrap;
-  }
-  
-  .profile-content {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 1.5rem;
-  }
-  
-  .user-details {
-    width: 100%;
   }
 }
 </style>

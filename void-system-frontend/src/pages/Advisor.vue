@@ -30,7 +30,15 @@
         </div>
         <div class="input-hint">
           <el-icon><InfoFilled /></el-icon>
-          <span>建议：目标描述越具体，生成结果越可执行。</span>
+          <span>建议：目标描述越具体，生成结果越可执行。默认 AI 自动判断任务规模，你也可以手动强制模式。</span>
+        </div>
+        <div class="mode-switcher">
+          <span class="mode-switcher__label">生成模式：</span>
+          <el-radio-group v-model="generationMode" size="small" :disabled="isLoading">
+            <el-radio-button label="auto">自动判断</el-radio-button>
+            <el-radio-button label="workflow_chain">强制任务链</el-radio-button>
+            <el-radio-button label="single_task">强制单任务</el-radio-button>
+          </el-radio-group>
         </div>
       </section>
 
@@ -59,28 +67,20 @@
             <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
           </div>
           <p class="synthesis-status">{{ loadingDescription }}{{ loadingDots }}</p>
+          <el-button class="void-btn secondary" @click="cancelGeneration">取消生成</el-button>
         </div>
       </div>
 
       <!-- Result Section -->
       <section v-if="!isLoading && advisorResult" class="result-area animate-slide-up">
-        <!-- AI Edit Panel (Crisis Mode) -->
-        <div v-if="showAiEdit" class="void-card alert-box warning active">
-          <div class="card-header">
-            <h3><el-icon><Warning /></el-icon> 结构修正</h3>
-            <el-button type="primary" size="small" class="void-btn primary" @click="rebuildFromEdit">重构</el-button>
-          </div>
-          <div class="card-body">
-            <p class="hint-text">检测到结果结构不完整，需要人工修正后再继续。</p>
-            <el-input
-              v-model="aiEditContent"
-              type="textarea"
-              :rows="10"
-              class="void-input mono"
-            />
-            <div v-if="aiEditError" class="error-log">{{ aiEditError }}</div>
-          </div>
-        </div>
+        <el-alert
+          v-if="advisorResult?.meta?.auto_repaired"
+          type="info"
+          :closable="false"
+          show-icon
+          class="fallback-alert"
+          title="检测到返回字段不完整，系统已自动修补缺失 key。"
+        />
 
         <!-- Generated Manifest -->
         <div class="manifest-card void-card">
@@ -99,9 +99,18 @@
               :loading="isLoading" 
               :disabled="!isValidTaskStructure"
             >
-              发布到任务系统
+              {{ publishButtonText }}
             </el-button>
           </header>
+
+          <el-alert
+            v-if="advisorResult?.meta?.fallback"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="fallback-alert"
+            title="当前为兜底草案，建议先检查步骤与奖励后再发布"
+          />
 
           <div class="manifest-content">
             <div class="void-timeline">
@@ -117,6 +126,29 @@
                 <div class="content-lane">
                   <h4 class="step-title">{{ step.title }}</h4>
                   <p class="step-desc">{{ step.description }}</p>
+                  <p class="step-meta">{{ formatStepMeta(step) }}</p>
+                  <div v-if="getStepAttributePlan(step).length" class="step-attrplan">
+                    <div class="step-attrplan__title">属性成长分配</div>
+                    <ul class="step-attrplan__list">
+                      <li v-for="row in getStepAttributePlan(step)" :key="`${step.title}-${row.attr_id}`" class="step-attrplan__item">
+                        <span class="step-attrplan__name">{{ row.attr_name }}</span>
+                        <span class="step-attrplan__points">+{{ row.points }} 点</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div v-if="getStepAttrDetails(step).length" class="step-attrdetail">
+                    <div class="step-attrplan__title">属性关联依据</div>
+                    <ul class="step-attrplan__list">
+                      <li
+                        v-for="row in getStepAttrDetails(step)"
+                        :key="`${step.title}-${row.attr_id}-w`"
+                        class="step-attrplan__item"
+                      >
+                        <span class="step-attrplan__name">{{ row.attr_name }}（{{ row.attr_id }}）</span>
+                        <span class="step-attrplan__points">权重 {{ row.weight }}</span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
@@ -128,6 +160,16 @@
           <h3 class="card-title"><el-icon><Memo /></el-icon> 原始结果数据</h3>
           <div class="data-terminal">
             <pre>{{ formattedFullResponse }}</pre>
+          </div>
+        </div>
+
+        <div v-if="advisorDebugRows.length" class="raw-data-card void-card">
+          <h3 class="card-title">生成调试信息</h3>
+          <div class="debug-grid">
+            <div v-for="row in advisorDebugRows" :key="row.label" class="debug-row">
+              <span class="debug-label">{{ row.label }}</span>
+              <span class="debug-value">{{ row.value }}</span>
+            </div>
           </div>
         </div>
       </section>
@@ -172,7 +214,7 @@
           <div class="card-body">
             <p class="item-preview">{{ typeof item.response === 'string' ? item.response.substring(0, 60) : JSON.stringify(item.response).substring(0, 60) }}...</p>
             <div class="item-stats">
-              <span class="count">{{ item.steps.length }} 节点</span>
+              <span class="count">{{ Array.isArray(item.steps) ? item.steps.length : 0 }} 节点</span>
             </div>
           </div>
         </div>
@@ -187,7 +229,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   InfoFilled,
@@ -204,6 +246,19 @@ import { formatAxiosErrorMessage } from '@/utils/apiPayload'
 import api from '@/api/index'
 import { getTaskCategories } from '@/api/taskCategories'
 
+const safeParseHistory = () => {
+  try {
+    const raw = localStorage.getItem('advisor_history')
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    localStorage.removeItem('advisor_history')
+    return []
+  }
+}
+
+
 // ==================== Reactive State ====================
 const userQuery = ref('')
 const isLoading = ref(false)
@@ -214,19 +269,18 @@ const successMessage = ref('')
 const loadingDescription = ref('正在合成任务本质')
 const loadingDots = ref('')
 const showHistory = ref(false)
+const advisorAbortController = ref(null)
+const generationMode = ref('auto')
 
 // AI raw content and editing state
 const aiRawResponse = ref('')
-const showAiEdit = ref(false)
-const aiEditContent = ref('')
-const aiEditError = ref('')
 
 // Quick topics and categories
 const quickTopics = ref([])
 const isLoadingCategories = ref(false)
 
 // History from localStorage
-const historyList = ref(JSON.parse(localStorage.getItem('advisor_history')) || [])
+const historyList = ref(safeParseHistory())
 
 // ==================== Animations ====================
 const updateLoadingDots = () => {
@@ -239,33 +293,6 @@ const updateLoadingDots = () => {
 }
 
 // ==================== Watchers ====================
-watch(aiEditContent, (newContent) => {
-  if (!newContent.trim()) {
-    aiEditError.value = ''
-    return
-  }
-  
-  try {
-    const parsed = JSON.parse(newContent)
-    if (!parsed.steps || !Array.isArray(parsed.steps)) {
-      aiEditError.value = '格式无效：缺少 steps 数组'
-      return
-    }
-    
-    const invalidSteps = parsed.steps.filter(step => 
-      !step || typeof step !== 'object' || !step.title || !step.description
-    )
-    
-    if (invalidSteps.length > 0) {
-      aiEditError.value = '格式无效：步骤必须包含标题和描述'
-      return
-    }
-    
-    aiEditError.value = ''
-  } catch (error) {
-    aiEditError.value = `语法错误: ${error.message}`
-  }
-})
 
 // ==================== Lifecycle ====================
 onMounted(async () => {
@@ -298,7 +325,14 @@ onMounted(async () => {
 // ==================== Computed ====================
 const learningSteps = computed(() => {
   if (!advisorResult.value || !Array.isArray(advisorResult.value.steps)) return []
-  return advisorResult.value.steps.filter(step => step.title && step.description)
+  return advisorResult.value.steps.filter((step) => (
+    step &&
+    typeof step === 'object' &&
+    typeof step.title === 'string' &&
+    typeof step.description === 'string' &&
+    step.title.trim() &&
+    step.description.trim()
+  ))
 })
 
 const estimatedDuration = computed(() => {
@@ -308,7 +342,14 @@ const estimatedDuration = computed(() => {
 const isValidTaskStructure = computed(() => {
   const result = advisorResult.value
   if (!result || !result.query || !Array.isArray(result.steps) || result.steps.length === 0) return false
-  return result.steps.every(step => step.title && step.description)
+  return result.steps.every((step) => (
+    step &&
+    typeof step === 'object' &&
+    typeof step.title === 'string' &&
+    typeof step.description === 'string' &&
+    step.title.trim() &&
+    step.description.trim()
+  ))
 })
 
 const formattedDate = computed(() => {
@@ -322,15 +363,215 @@ const formattedFullResponse = computed(() => {
   return JSON.stringify(advisorResult.value, null, 2)
 })
 
+const publishButtonText = computed(() => {
+  if (advisorResult.value?.mode === 'single_task') return '发布单任务'
+  if (advisorResult.value?.mode === 'workflow_chain') return '发布任务组'
+  return '发布到任务系统'
+})
+
+const advisorDebugRows = computed(() => {
+  const debug = advisorResult.value?.meta?.debug
+  if (!debug || typeof debug !== 'object') return []
+  const rows = []
+  if (debug.mode) rows.push({ label: '生成模式', value: String(debug.mode) })
+  if (debug.mode_reason) rows.push({ label: '模式原因', value: String(debug.mode_reason) })
+  if (typeof debug.llm_call_count === 'number') rows.push({ label: 'LLM调用次数', value: String(debug.llm_call_count) })
+  if (typeof debug.cache_hit_count === 'number') rows.push({ label: '缓存命中次数', value: String(debug.cache_hit_count) })
+  if (typeof debug.batch_call_count === 'number') rows.push({ label: '批量调用次数', value: String(debug.batch_call_count) })
+  if (typeof debug.max_review_rounds === 'number') rows.push({ label: '最大审查轮次', value: String(debug.max_review_rounds) })
+  if (debug.stage_time_breakdown && typeof debug.stage_time_breakdown === 'object') {
+    const t = debug.stage_time_breakdown
+    rows.push({
+      label: '阶段耗时',
+      value: `S1 ${t.stage1_ms ?? 0}ms / S2 ${t.stage2_total_ms ?? 0}ms / S3 ${t.stage3_total_ms ?? 0}ms / Total ${t.total_ms ?? 0}ms`
+    })
+  }
+  if (Array.isArray(debug.steps) && debug.steps.length) {
+    const rounds = debug.steps.map((s) => `${(s?.idx ?? 0) + 1}:${s?.review_round ?? 0}`).join(' | ')
+    rows.push({ label: '各步骤审查轮次', value: rounds })
+  }
+  return rows
+})
+
 // ==================== Actions ====================
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+const formatStepMeta = (step) => {
+  const minutes = toNumberOrNull(step?.estimated_time)
+  const coins = toNumberOrNull(step?.reward_coins)
+  const attrPoints = toNumberOrNull(step?.attribute_points)
+  const parts = []
+  parts.push(minutes == null ? '预计用时：未设置' : `预计用时：${minutes} 分钟`)
+  parts.push(coins == null ? '系统币：未设置' : `系统币：+${coins}（VC）`)
+  parts.push(attrPoints == null ? '属性成长：未设置' : `属性成长：+${attrPoints} 点`)
+  return parts.join(' · ')
+}
+
+const getStepAttributePlan = (step) => {
+  const criteria = step?.completion_criteria
+  const plan = Array.isArray(step?.attribute_plan)
+    ? step.attribute_plan
+    : Array.isArray(criteria?.attribute_plan)
+      ? criteria.attribute_plan
+      : []
+  return plan
+    .map((row) => ({
+      attr_id: row?.attr_id || row?.attrId || '',
+      attr_name: row?.attr_name || row?.attrName || row?.attr_id || row?.attrId || '未命名属性',
+      points: Number(row?.points ?? 0)
+    }))
+    .filter((row) => row.attr_id && row.points > 0)
+}
+
+const getStepAttrDetails = (step) => {
+  const details = Array.isArray(step?.related_attrs_detail) ? step.related_attrs_detail : []
+  return details
+    .map((row) => ({
+      attr_id: row?.attr_id || '',
+      attr_name: row?.attr_name || row?.attr_id || '未命名属性',
+      weight: Number(row?.weight ?? 0).toFixed(3)
+    }))
+    .filter((row) => row.attr_id && Number(row.weight) > 0)
+}
+
+const ensureStepSchema = (step, query, index) => {
+  const normalizePriority = (raw) => {
+    if (typeof raw === 'string') {
+      const v = raw.trim().toLowerCase()
+      if (['easy', 'medium', 'hard'].includes(v)) return v
+      if (['1', 'low', '简单'].includes(v)) return 'easy'
+      if (['2', 'normal', '中等'].includes(v)) return 'medium'
+      if (['3', 'high', '困难'].includes(v)) return 'hard'
+    }
+    if (typeof raw === 'number') {
+      if (raw <= 2) return 'easy'
+      if (raw === 3) return 'medium'
+      return 'hard'
+    }
+    return 'medium'
+  }
+
+  const normalizeRelatedAttrs = (raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out = {}
+    for (const [k, v] of Object.entries(raw)) {
+      const attrId = String(k || '').trim()
+      if (!attrId) continue
+      const weight = Number(v)
+      if (Number.isFinite(weight) && weight > 0) {
+        out[attrId] = weight
+      }
+    }
+    return out
+  }
+
+  const relatedAttrs = normalizeRelatedAttrs(step?.related_attrs)
+  const title = (step?.title || '').trim() || `步骤${index + 1}：${query}`
+  const description = (step?.description || '').trim() || `围绕“${query}”执行该步骤并记录可验证结果。`
+  const estimatedTime = toNumberOrNull(step?.estimated_time)
+  const rewardCoins = toNumberOrNull(step?.reward_coins)
+  const attributePoints = toNumberOrNull(step?.attribute_points)
+  const completionCriteria = step?.completion_criteria && typeof step.completion_criteria === 'object'
+    ? step.completion_criteria
+    : {}
+  const deliverables = Array.isArray(completionCriteria.deliverables) && completionCriteria.deliverables.length
+    ? completionCriteria.deliverables
+    : ['执行记录', '结果证明']
+  const checks = Array.isArray(completionCriteria.checks) && completionCriteria.checks.length
+    ? completionCriteria.checks
+    : ['内容与目标一致', '证据可核验']
+  const evidence = Array.isArray(completionCriteria.evidence) && completionCriteria.evidence.length
+    ? completionCriteria.evidence
+    : ['截图', '文本说明']
+
+  return {
+    title,
+    description,
+    related_attrs: relatedAttrs,
+    reward_coins: rewardCoins == null ? 20 : Math.max(0, rewardCoins),
+    attribute_points: attributePoints == null ? 0 : Math.max(0, attributePoints),
+    estimated_time: estimatedTime == null ? 30 : Math.max(1, estimatedTime),
+    priority: normalizePriority(step?.priority),
+    task_type: step?.task_type || 'main',
+    completion_type: step?.completion_type || 'ai_eval',
+    completion_criteria: {
+      criteria: completionCriteria.criteria || `完成“${title}”并提交可验证成果。`,
+      deliverables,
+      checks,
+      pass_threshold: completionCriteria.pass_threshold || '由评分AI综合判定',
+      evidence,
+      attribute_plan: Array.isArray(completionCriteria.attribute_plan)
+        ? completionCriteria.attribute_plan
+        : Array.isArray(step?.attribute_plan)
+          ? step.attribute_plan
+          : []
+    },
+    related_attrs_detail: Array.isArray(step?.related_attrs_detail) ? step.related_attrs_detail : []
+  }
+}
+
+const normalizeResultAndRepairKeys = (parsed, query) => {
+  const safe = normalizeAdvisorPayload(parsed, query)
+  const repairedStepsRaw = Array.isArray(safe.steps) ? safe.steps : []
+  const repairedSteps = repairedStepsRaw.map((step, index) => ensureStepSchema(step, safe.query || query, index))
+  const noSteps = repairedSteps.length === 0
+  const finalSteps = noSteps
+    ? [ensureStepSchema({}, safe.query || query, 0)]
+    : repairedSteps
+  const hasMissingKeys = repairedStepsRaw.some((step) => (
+    !step ||
+    typeof step !== 'object' ||
+    !step.title ||
+    !step.description ||
+    step.estimated_time == null ||
+    step.reward_coins == null ||
+    step.attribute_points == null ||
+    !step.completion_criteria
+  ))
+  const repaired = noSteps || hasMissingKeys
+  return {
+    query: safe.query || query,
+    response: safe.response || '路径合成成功。',
+    steps: finalSteps,
+    estimatedDuration: safe.estimatedDuration || `${finalSteps.reduce((s, x) => s + (x.estimated_time || 0), 0)} 分钟`,
+    mode: safe.mode || (finalSteps.length === 1 ? 'single_task' : 'workflow_chain'),
+    meta: {
+      ...(safe.meta || {}),
+      auto_repaired: repaired
+    },
+    createdAt: new Date()
+  }
+}
+
+const normalizeAdvisorPayload = (result, query) => {
+  const root = result?.data ? result.data : result
+  const singleTask = root?.task || root?.single_task || root?.step
+  const mode = root?.mode || (singleTask ? 'single_task' : 'workflow_chain')
+  const steps = Array.isArray(root?.steps) ? root.steps : (singleTask ? [singleTask] : [])
+  return {
+    query: root?.query || query,
+    response: root?.response || root?.message || '路径合成成功。',
+    steps,
+    estimatedDuration: root?.estimatedDuration || root?.estimated_duration || '',
+    mode,
+    meta: root?.meta || {}
+  }
+}
 
 const saveToHistory = (result) => {
+  const steps = Array.isArray(result?.steps) ? result.steps : []
   const historyItem = {
     id: Date.now(),
-    query: result.query,
-    response: result.response,
+    query: result?.query || '',
+    response: result?.response || '',
     createdAt: new Date().toISOString(),
-    steps: result.steps
+    steps,
+    mode: result?.mode || 'workflow_chain',
+    meta: result?.meta || {}
   }
   
   historyList.value.unshift(historyItem)
@@ -342,39 +583,13 @@ const parseAiResult = (result, query) => {
   aiRawResponse.value = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
   
   try {
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result
-    const cleanSteps = (parsed.steps || []).filter(s => s.title && s.description)
-    
-    if (cleanSteps.length > 0) {
-      return {
-        query,
-        response: parsed.response || '路径合成成功。',
-        steps: cleanSteps,
-        estimatedDuration: parsed.estimatedDuration || '45d',
-        createdAt: new Date()
-      }
-    }
-    
-    showAiEdit.value = true
-    aiEditContent.value = aiRawResponse.value
-    return fallbackSteps(query, parsed.response)
+    const parsedRaw = typeof result === 'string' ? JSON.parse(result) : result
+    const normalized = normalizeResultAndRepairKeys(parsedRaw, query)
+    return normalized
   } catch (e) {
-    showAiEdit.value = true
-    aiEditContent.value = aiRawResponse.value
-    return fallbackSteps(query, result)
+    return normalizeResultAndRepairKeys({}, query)
   }
 }
-
-const fallbackSteps = (query, response) => ({
-  query,
-  response: response || '数据流损坏。正在重新初始化...',
-  steps: [
-    { title: '初始化', description: '正在对齐神经路径...' },
-    { title: '正在处理', description: '正在解析核心目标...' }
-  ],
-  estimatedDuration: '--',
-  createdAt: new Date()
-})
 
 const submitQuery = async () => {
   const query = userQuery.value.trim()
@@ -382,9 +597,9 @@ const submitQuery = async () => {
   
   errorMessage.value = ''
   successMessage.value = ''
-  showAiEdit.value = false
   isLoading.value = true
   progressPercent.value = 0
+  advisorAbortController.value = new AbortController()
   
   let progressIdx = setInterval(() => {
     if (progressPercent.value < 90) progressPercent.value += Math.random() * 10
@@ -393,24 +608,48 @@ const submitQuery = async () => {
   const dotsIdx = updateLoadingDots()
   
   try {
-    const result = await getAdvisor(query)
+    const result = await getAdvisor(query, null, advisorAbortController.value.signal, { forceMode: generationMode.value })
     clearInterval(progressIdx)
     progressPercent.value = 100
-    
-    advisorResult.value = parseAiResult(result, query)
+
+    let parsed = parseAiResult(result, query)
+    const shouldRetry = parsed?.meta?.auto_repaired && parsed?.steps?.length === 1
+    if (shouldRetry) {
+      try {
+        const retryResult = await getAdvisor(query, null, advisorAbortController.value.signal, { forceMode: generationMode.value })
+        const retried = parseAiResult(retryResult, query)
+        if (!(retried?.meta?.auto_repaired && retried?.steps?.length === 1)) {
+          parsed = retried
+        }
+      } catch {
+        // 重试失败时保留首次自动修补结果
+      }
+    }
+
+    advisorResult.value = parsed
     saveToHistory(advisorResult.value)
     ElMessage.success('合成已完成')
   } catch (error) {
-    errorMessage.value = formatAxiosErrorMessage(error, '神经链路故障')
-    ElMessage.error(errorMessage.value)
+    if (error?.name === 'CanceledError' || error?.name === 'AbortError' || /aborted|canceled/i.test(String(error?.message || ''))) {
+      errorMessage.value = '已取消本次生成'
+      ElMessage.warning(errorMessage.value)
+    } else {
+      errorMessage.value = formatAxiosErrorMessage(error, '神经链路故障')
+      ElMessage.error(errorMessage.value)
+    }
   } finally {
     setTimeout(() => {
       isLoading.value = false
       clearInterval(progressIdx)
       clearInterval(dotsIdx)
       loadingDots.value = ''
+      advisorAbortController.value = null
     }, 500)
   }
+}
+
+const cancelGeneration = () => {
+  advisorAbortController.value?.abort()
 }
 
 const publishTask = async () => {
@@ -418,18 +657,56 @@ const publishTask = async () => {
   
   isLoading.value = true
   try {
-    const chainData = {
-      chain_name: advisorResult.value.query.trim(),
-      description: advisorResult.value.response || 'AI-generated evolution path',
-      steps: advisorResult.value.steps.map(step => ({
-        title: step.title,
-        description: step.description,
-        completion_type: 'ai_eval'
-      }))
+    const mode = advisorResult.value?.mode || 'workflow_chain'
+    if (mode === 'single_task') {
+      const step = advisorResult.value.steps[0]
+      const payload = {
+        task_name: step.title,
+        description: step.description || '',
+        priority: step.priority || 'medium',
+        completion_type: step.completion_type || 'ai_eval',
+        related_attrs: step.related_attrs || {},
+        completion_criteria: step.completion_criteria || {}
+      }
+      const estimatedTime = toNumberOrNull(step.estimated_time)
+      const rewardCoins = toNumberOrNull(step.reward_coins)
+      const attributePoints = toNumberOrNull(step.attribute_points)
+      if (estimatedTime != null && estimatedTime >= 1) payload.estimated_time = estimatedTime
+      if (rewardCoins != null && rewardCoins >= 0) payload.reward_coins = rewardCoins
+      if (attributePoints != null && attributePoints >= 0) payload.attribute_points = attributePoints
+      await api.post('/api/tasks', payload)
+      ElMessage.success('单任务已发布')
+    } else {
+      const steps = (advisorResult.value?.steps || []).map((step) => {
+        const estimatedTime = toNumberOrNull(step?.estimated_time)
+        const rewardCoins = toNumberOrNull(step?.reward_coins)
+        const attributePoints = toNumberOrNull(step?.attribute_points)
+        const relatedAttrs = step?.related_attrs && typeof step.related_attrs === 'object' ? step.related_attrs : {}
+        const normalizedRelatedAttrs = Object.fromEntries(
+          Object.entries(relatedAttrs).map(([k, v]) => [k, Number(v)]).filter(([, v]) => Number.isFinite(v) && v > 0)
+        )
+        return {
+          title: step?.title || '未命名步骤',
+          description: step?.description || '',
+          related_attrs: normalizedRelatedAttrs,
+          estimated_time: estimatedTime != null && estimatedTime >= 1 ? estimatedTime : 30,
+          reward_coins: rewardCoins != null && rewardCoins >= 0 ? rewardCoins : 20,
+          priority: ['easy', 'medium', 'hard'].includes(step?.priority) ? step.priority : 'medium',
+          attribute_points: attributePoints != null && attributePoints >= 0 ? attributePoints : 0,
+          completion_type: step?.completion_type || 'ai_eval',
+          completion_criteria: step?.completion_criteria || {},
+          task_type: ['main', 'side', 'daily'].includes(step?.task_type) ? step.task_type : 'main'
+        }
+      })
+      const chainData = {
+        chain_name: advisorResult.value.query.trim(),
+        description: advisorResult.value.response || 'AI-generated evolution path',
+        target_goal: advisorResult.value.query.trim(),
+        steps
+      }
+      await api.post('/api/task-chains', chainData)
+      ElMessage.success('任务组及子任务已发布')
     }
-    
-    await api.post('/api/task-chains', chainData)
-    ElMessage.success('路径已部署到意识网格')
     advisorResult.value = null
     userQuery.value = ''
   } catch (error) {
@@ -445,8 +722,9 @@ const useQuickTopic = (topic) => {
 }
 
 const restoreFromHistory = (item) => {
-  userQuery.value = item.query
-  advisorResult.value = { ...item, createdAt: new Date(item.createdAt) }
+  const normalized = normalizeResultAndRepairKeys(item, item?.query || '历史任务')
+  userQuery.value = normalized.query
+  advisorResult.value = normalized
   showHistory.value = false
 }
 
@@ -464,22 +742,6 @@ const clearHistory = async () => {
 }
 
 const toggleHistory = () => (showHistory.value = !showHistory.value)
-
-const rebuildFromEdit = () => {
-  try {
-    const parsed = JSON.parse(aiEditContent.value)
-    advisorResult.value = {
-      query: advisorResult.value.query,
-      ...parsed,
-      createdAt: new Date()
-    }
-    showAiEdit.value = false
-    saveToHistory(advisorResult.value)
-    ElMessage.success('神经图谱已重构')
-  } catch (e) {
-    ElMessage.error('合成错误：请检查 JSON 格式')
-  }
-}
 </script>
 
 <style scoped>
@@ -540,6 +802,19 @@ const rebuildFromEdit = () => {
   gap: var(--spacing-xs);
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.mode-switcher {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.mode-switcher__label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
 
 /* Topics */
@@ -723,6 +998,56 @@ const rebuildFromEdit = () => {
   line-height: 1.6;
 }
 
+.fallback-alert {
+  margin-bottom: var(--spacing-lg);
+}
+
+.step-meta {
+  margin: var(--spacing-sm) 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.step-attrplan {
+  margin-top: var(--spacing-sm);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm);
+  background: var(--bg-secondary);
+}
+
+.step-attrdetail {
+  margin-top: 8px;
+  border: 1px dashed var(--border-color-light);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm);
+  background: color-mix(in srgb, var(--bg-secondary) 80%, var(--bg-card));
+}
+
+.step-attrplan__title {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.step-attrplan__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-attrplan__item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.step-attrplan__points {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
 /* Alert Boxes */
 .alert-box {
   display: flex;
@@ -762,6 +1087,30 @@ const rebuildFromEdit = () => {
   overflow-y: auto;
   font-family: var(--font-family-mono);
   font-size: 0.85rem;
+}
+
+.debug-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+.debug-label {
+  color: var(--text-muted);
+}
+
+.debug-value {
+  color: var(--text-main);
+  font-family: var(--font-family-mono);
 }
 
 /* History Sidebar */
