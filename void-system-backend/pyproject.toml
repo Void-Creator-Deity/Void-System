@@ -1,6 +1,6 @@
 [project]
 name = "void-system-backend"
-version = "0.1.0"
+version = "0.3.0"
 description = "Void System Backend - 用户认证、AI对话和文档智能处理服务"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,4 +29,5 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "python-dotenv>=1.0.1",
     "sse-starlette>=2.1.0",
+    "httpx>=0.28.0",
 ]

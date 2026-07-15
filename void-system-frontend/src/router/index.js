@@ -11,24 +11,33 @@ import { isLoggedIn } from '@/api/user'
 const Home = () => import('@/pages/Home.vue')
 const AIConsole = () => import('@/pages/AIConsole.vue')
 const Advisor = () => import('@/pages/Advisor.vue')
+const TaskWorkspace = () => import('@/pages/TaskWorkspace.vue')
 const QA = () => import('@/pages/QA.vue')
 const DocumentManager = () => import('@/pages/DocumentManager.vue')
 const Settings = () => import('@/pages/Settings.vue')
 const Profile = () => import('@/pages/Profile.vue')
+const Growth = () => import('@/pages/Growth.vue')
 const Login = () => import('@/pages/Login.vue')
 const Register = () => import('@/pages/Register.vue')
 const RAGManagement = () => import('@/pages/RAGManagement.vue')
+const AdminAIConfiguration = () => import('@/pages/AdminAIConfiguration.vue')
 
 // 获取存储的用户信息
 const getUserInfo = () => {
   const userInfo = localStorage.getItem('user_info')
-  return userInfo ? JSON.parse(userInfo) : null
+  if (!userInfo) return null
+  try {
+    return JSON.parse(userInfo)
+  } catch {
+    localStorage.removeItem('user_info')
+    return null
+  }
 }
 
 // 检查用户是否是管理员
 const isAdmin = () => {
   const userInfo = getUserInfo()
-  return userInfo?.user?.role === 'admin'
+  return userInfo?.user?.role === 'admin' || userInfo?.role === 'admin'
 }
 
 /**
@@ -41,7 +50,7 @@ const routes = [
     component: Home,
     meta: { 
       requiresAuth: true,
-      title: '系统终端'
+      title: '首页'
     }
   },
   {
@@ -50,8 +59,17 @@ const routes = [
     component: AIConsole,
     meta: { 
       requiresAuth: true,
-      title: '系统精灵',
+      title: 'AI 助手',
       fullBleed: true
+    }
+  },
+  {
+    path: '/tasks',
+    name: 'TaskWorkspace',
+    component: TaskWorkspace,
+    meta: {
+      requiresAuth: true,
+      title: '行动'
     }
   },
   {
@@ -60,7 +78,7 @@ const routes = [
     component: Advisor,
     meta: { 
       requiresAuth: true,
-      title: '任务系统'
+      title: '行动规划'
     }
   },
   {
@@ -69,7 +87,7 @@ const routes = [
     component: QA,
     meta: {
       requiresAuth: true,
-      title: '虚空知识库'
+      title: '知识问答'
     }
   },
   {
@@ -78,7 +96,16 @@ const routes = [
     component: DocumentManager,
     meta: {
       requiresAuth: true,
-      title: '文档管理'
+      title: '资料库'
+    }
+  },
+  {
+    path: '/growth',
+    name: 'Growth',
+    component: Growth,
+    meta: {
+      requiresAuth: true,
+      title: '成长'
     }
   },
   {
@@ -87,7 +114,7 @@ const routes = [
     component: Settings,
     meta: { 
       requiresAuth: true,
-      title: '系统设置'
+      title: '设置'
     }
   },
   {
@@ -106,7 +133,17 @@ const routes = [
     meta: { 
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'RAG文档管理'
+      title: '知识库维护'
+    }
+  },
+  {
+    path: '/admin/ai',
+    name: 'AdminAIConfiguration',
+    component: AdminAIConfiguration,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'AI 服务'
     }
   },
   {

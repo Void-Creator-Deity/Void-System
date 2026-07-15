@@ -1,1177 +1,221 @@
 <template>
-  <div class="void-page-container document-manager">
-    <div class="void-content void-content--wide">
-      <!-- Page Header -->
-      <header class="page-header">
-        <h1 class="logo-text"><span class="void-text-gradient">文件</span> 归档</h1>
-        <p class="subtitle">用于知识检索与问答的文档仓库。</p>
+  <div class="knowledge-page">
+    <div class="knowledge-shell">
+      <header class="page-intro">
+        <div>
+          <p class="eyebrow">个人资料库</p>
+          <h1>把资料变成随时可问的答案</h1>
+          <p class="page-copy">上传工作文件，系统会在后台整理内容。资料准备好后，你可以直接围绕它提问。</p>
+        </div>
+        <div class="page-intro__actions"><el-button plain :loading="rebuilding" @click="rebuildKnowledge">重新整理资料</el-button><el-button type="primary" class="primary-action" @click="triggerFileSelect"><el-icon><Upload /></el-icon>添加资料</el-button></div>
       </header>
-      
-      <!-- 注入部分 -->
-      <section class="upload-section animate-slide-up">
-        <div class="void-card upload-card">
-          <div 
-            class="void-upload-area" 
-            :class="{ 'uploading': uploading }"
-            @dragover="onDragOver" 
-            @drop="onDrop" 
-            @click="triggerFileSelect"
-          >
-            <input
-              ref="fileInput"
-              type="file"
-              multiple
-              accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png"
-              style="display: none"
-              @change="onFileSelect"
-            />
-            
-            <div v-if="!uploading" class="upload-prompt">
-              <el-icon class="prompt-icon"><Plus /></el-icon>
-              <div class="prompt-text">
-                <p class="main-text">通过拖拽或 <span class="highlight">点击此处</span> 上传新文档</p>
-                <p class="sub-text">支持格式: PDF, Word, Excel, 图片, 文本 (最大 50MB)</p>
-              </div>
-            </div>
-            
-            <!-- 注入进度 -->
-            <div v-else class="upload-status">
-              <el-progress 
-                type="circle" 
-                :percentage="uploadProgress" 
-                :status="uploadStatus === 'success' ? 'success' : uploadStatus === 'error' ? 'exception' : undefined"
-                :stroke-width="6" 
-                :width="100"
-                class="void-progress"
-              />
-              <p class="filename">{{ currentFileName }}</p>
-              <p class="status-msg">{{ uploadMessage }}</p>
-            </div>
-          </div>
-          
-          <div class="upload-meta">
-            <div class="void-form-group">
-              <label>文档标识 (可选标题)</label>
-              <el-input v-model="uploadTitle" placeholder="指定标题..." class="void-input" />
-            </div>
-            <div class="void-form-group">
-              <label>分类标签</label>
-              <el-select 
-                v-model="uploadTags" 
-                multiple 
-                filterable 
-                allow-create 
-                default-first-option 
-                placeholder="分配标签..." 
-                class="void-select"
-              />
-            </div>
-          </div>
+
+      <section class="upload-panel" :class="{ 'is-uploading': uploading }">
+        <input ref="fileInput" class="file-input" type="file" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png" @change="onFileSelect" />
+        <div class="drop-zone" role="button" tabindex="0" aria-label="选择要添加的资料" @dragover.prevent @drop.prevent="onDrop" @click="triggerFileSelect" @keydown.enter.prevent="triggerFileSelect" @keydown.space.prevent="triggerFileSelect">
+          <template v-if="!uploading">
+            <span class="upload-icon"><el-icon><Upload /></el-icon></span>
+            <div><h2>拖进来，或选择文件</h2><p>支持 PDF、Word、Excel、图片和文本文件，单个文件最大 50 MB。</p></div>
+          </template>
+          <template v-else>
+            <el-progress :percentage="uploadProgress" :stroke-width="8" :show-text="false" />
+            <div class="uploading-copy"><strong>{{ currentFileName }}</strong><span>{{ uploadMessage }}</span></div>
+          </template>
+        </div>
+        <div class="upload-options">
+          <el-input v-model="uploadTitle" placeholder="资料名称（留空则使用文件名）" />
+          <el-select v-model="uploadTags" aria-label="资料标签" multiple filterable allow-create default-first-option placeholder="添加标签，便于以后筛选"><el-option v-for="tag in knownTags" :key="tag" :label="tag" :value="tag" /></el-select>
         </div>
       </section>
-      
-      <!-- 统计概览 -->
-      <section class="stats-overview" v-if="stats">
-        <div class="void-stat-card animate-float">
-          <div class="stat-icon"><DocumentIcon /></div>
-          <div class="stat-info">
-            <span class="stat-label">文档总数</span>
-            <span class="stat-value">{{ stats.total_documents }}</span>
-          </div>
-        </div>
-        <div class="void-stat-card animate-float" style="animation-delay: 0.1s">
-          <div class="stat-icon"><component is="Check" /></div>
-          <div class="stat-info">
-            <span class="stat-label">已集成</span>
-            <span class="stat-value">{{ stats.completed_documents }}</span>
-          </div>
-        </div>
-        <div class="void-stat-card animate-float" style="animation-delay: 0.2s">
-          <div class="stat-icon"><Loading class="is-loading" /></div>
-          <div class="stat-info">
-            <span class="stat-label">正在处理</span>
-            <span class="stat-value alternate">{{ stats.status_stats.processing || 0 }}</span>
-          </div>
-        </div>
-        <div class="void-stat-card animate-float" style="animation-delay: 0.3s">
-          <div class="stat-icon"><Monitor /></div>
-          <div class="stat-info">
-            <span class="stat-label">内存负载</span>
-            <span class="stat-value">{{ formatFileSize(stats.total_size) }}</span>
-          </div>
-        </div>
+
+      <section v-if="stats" class="overview" aria-label="资料概览">
+        <article class="metric"><span class="metric-icon"><el-icon><DocumentIcon /></el-icon></span><div><span>使用中的资料</span><strong>{{ stats.total_documents || 0 }}</strong></div></article>
+        <article class="metric metric-ready"><span class="metric-icon"><el-icon><CircleCheck /></el-icon></span><div><span>可以提问</span><strong>{{ stats.completed_documents || 0 }}</strong></div></article>
+        <article class="metric metric-progress"><span class="metric-icon"><el-icon><Clock /></el-icon></span><div><span>正在整理</span><strong>{{ inProgressCount }}</strong></div></article>
+        <article class="metric metric-size"><span class="metric-icon"><el-icon><FolderOpened /></el-icon></span><div><span>已用空间</span><strong>{{ formatFileSize(stats.total_size) }}</strong></div></article>
       </section>
-      
-      <!-- 文件列表部分 -->
-      <section class="archive-section">
-        <header class="section-header">
-          <div class="title-group">
-            <h2 class="section-title">知识文档库</h2>
-            <div class="void-badge primary">{{ totalCount }} 条目</div>
-          </div>
-          
-          <div class="header-filters">
-            <el-input 
-              v-model="vectorSearchQuery" 
-              placeholder="输入关键词进行检索..." 
-              clearable 
-              class="void-input search-input"
-              @keyup.enter="performVectorSearch"
-            >
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-            
-            <el-select v-model="filterStatus" placeholder="状态过滤" class="void-select status-select" @change="loadDocuments">
-              <el-option label="所有状态" value="" />
-              <el-option label="正在处理" value="processing" />
-              <el-option label="已完成" value="completed" />
-              <el-option label="已失败" value="failed" />
-            </el-select>
-            
-            <button class="void-icon-btn" @click="loadDocuments" :disabled="loading">
-              <el-icon :class="{ 'is-loading': loading }"><RefreshRight /></el-icon>
-            </button>
-          </div>
-        </header>
 
-        <!-- 搜索结果覆盖层 -->
-        <div v-if="vectorSearchResults.length > 0" class="search-overlay void-card animate-fade-in">
-          <div class="overlay-header">
-            <h3>检索匹配结果 ({{ vectorSearchResults.length }})</h3>
-            <button class="void-btn text" @click="vectorSearchResults = []">关闭</button>
-          </div>
-          <div class="results-list">
-            <div v-for="(result, i) in vectorSearchResults" :key="i" class="result-shard">
-              <div class="shard-meta">置信度: {{ (result.score ? (1 - result.score) * 100 : 95).toFixed(1) }}%</div>
-              <p class="shard-content">{{ result.content }}</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- 加载状态 -->
-        <div v-if="loading" class="void-loading-state">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>正在同步归档...</span>
-        </div>
-
-        <!-- 空状态 -->
-        <div v-else-if="documents.length === 0" class="void-empty-state">
-          <el-empty description="当前文档库为空，请先上传文档。" />
-        </div>
-
-        <!-- Document Grid -->
-        <div v-else class="void-grid document-grid">
-          <div 
-            v-for="doc in documents" 
-            :key="doc.doc_id" 
-            class="void-card document-card"
-            :class="getStatusClass(doc.parse_status)"
-          >
-            <div class="card-glow"></div>
-            
-            <div class="doc-header">
-              <div class="type-icon-wrapper">
-                <el-icon><component :is="getFileIcon(doc.file_type)" /></el-icon>
-              </div>
-              <div class="doc-info">
-                <h4 class="doc-title">{{ doc.title }}</h4>
-                <div class="doc-specs">
-                  <span>{{ fileTypeLabel(doc.file_type) }}</span>
-                  <span class="divider"></span>
-                  <span>{{ formatFileSize(doc.file_size) }}</span>
-                </div>
-              </div>
-              <div class="doc-status">
-                <div class="void-status-pill" :class="getStatusType(doc.parse_status)">
-                  {{ getStatusText(doc.parse_status) }}
-                </div>
+      <section class="library-layout">
+        <main class="library-panel">
+          <header class="panel-heading">
+            <div><h2>{{ retentionView === 'archived' ? '回收站' : '我的资料' }}</h2><p>{{ retentionView === 'archived' ? '归档资料不会参与回答，可随时恢复或永久清除。' : totalCount + ' 份资料，按状态和内容快速找到需要的内容。' }}</p></div>
+            <div class="library-toolbar">
+              <el-segmented v-model="retentionView" :options="retentionOptions" size="small" aria-label="资料范围" @change="changeRetentionView" />
+              <div class="library-controls" :class="{ 'is-archived': retentionView === 'archived' }">
+                <el-input v-if="retentionView === 'active'" v-model="searchQuery" clearable placeholder="在资料中查找" @clear="clearSearch" @keyup.enter="performKnowledgeSearch"><template #prefix><el-icon><Search /></el-icon></template></el-input>
+                <el-select v-if="retentionView === 'active'" v-model="filterStatus" aria-label="资料状态" @change="resetAndLoadDocuments"><el-option label="全部状态" value="" /><el-option label="整理中" value="processing" /><el-option label="可以提问" value="completed" /><el-option label="整理失败" value="failed" /></el-select>
+                <el-tooltip content="刷新资料列表" placement="top"><el-button circle aria-label="刷新资料列表" :loading="loading" @click="refreshLibrary"><el-icon><RefreshRight /></el-icon></el-button></el-tooltip>
               </div>
             </div>
+          </header>
 
-            <div v-if="doc.parse_status === 'failed' && doc.error_message" class="error-strip">
-              <el-icon><Warning /></el-icon>
-              <span>{{ doc.error_message }}</span>
-            </div>
-
-            <div class="doc-preview-area">
-              <p class="preview-text">{{ doc.content_preview || '正在解析内容片段...' }}</p>
-              <div class="doc-tags" v-if="doc.tags?.length">
-                <el-tag v-for="tag in doc.tags" :key="tag" size="small" class="void-tag sm">{{ tag }}</el-tag>
-              </div>
-            </div>
-
-            <div class="doc-footer">
-              <span class="timestamp">{{ formatDate(doc.created_at) }}</span>
-              <div class="action-dock">
-                <el-button 
-                  v-if="doc.parse_status === 'completed'" 
-                  type="primary" 
-                  class="void-btn primary sm" 
-                  @click="askWithDocument(doc)"
-                >
-                  深度解析
-                </el-button>
-                
-                <button class="void-icon-btn sm" @click="editDocument(doc)">
-                  <el-icon><Edit /></el-icon>
-                </button>
-
-                <el-dropdown @command="(c) => handleDocumentAction(c, doc)">
-                  <button class="void-icon-btn sm">
-                    <el-icon><ArrowDown /></el-icon>
-                  </button>
-                  <template #dropdown>
-                    <el-dropdown-menu class="void-dropdown">
-                      <el-dropdown-item command="preview">预览原文</el-dropdown-item>
-                      <el-dropdown-item command="delete" class="text-error">删除文档</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </div>
-            </div>
-
-            <!-- Analysis Progress Line -->
-            <div v-if="doc.parse_status === 'processing' || doc.parse_status === 'parsed'" class="analysis-line">
-              <div class="line-shimmer"></div>
-            </div>
+          <div v-if="searchResults.length" class="search-results">
+            <div class="search-results-heading"><div><strong>找到 {{ searchResults.length }} 条相关内容</strong><span>结果来自已整理的资料</span></div><el-button text @click="clearSearch">清除结果</el-button></div>
+            <button v-for="(result, index) in searchResults" :key="result.chunk_id || index" class="search-result" @click="openSearchResult(result)"><span class="result-index">{{ index + 1 }}</span><span class="result-content">{{ result.content }}</span></button>
           </div>
-        </div>
 
-        <!-- Pagination -->
-        <footer class="archive-footer" v-if="totalCount > pageSize">
-          <el-pagination
-            v-model:current-page="currentPage"
-            v-model:page-size="pageSize"
-            :total="totalCount"
-            layout="prev, pager, next"
-            class="void-pagination"
-            @current-change="handleCurrentChange"
-          />
-        </footer>
+          <div v-if="loading" class="state-panel"><el-icon class="is-loading"><Loading /></el-icon><span>正在加载资料…</span></div>
+          <el-empty v-else-if="!documents.length" :description="retentionView === 'archived' ? '回收站是空的' : '这里还没有资料，先上传一份开始吧。'" />
+          <div v-else class="document-list">
+            <article v-for="doc in documents" :key="doc.doc_id" class="document-row">
+              <div class="document-type"><el-icon><component :is="getFileIcon(doc.file_type)" /></el-icon></div>
+              <div class="document-body">
+                <div class="document-title-row"><h3>{{ doc.title || '未命名资料' }}</h3><el-tag size="small" effect="plain" :type="retentionView === 'archived' ? 'info' : getStatusTagType(documentStatus(doc))">{{ retentionView === 'archived' ? '已归档' : getStatusText(documentStatus(doc)) }}</el-tag></div>
+                <p class="document-meta">{{ fileTypeLabel(doc.file_type) }} <i></i> {{ formatFileSize(doc.file_size) }} <i></i> {{ formatDate(doc.created_at) }}</p>
+                <p v-if="documentStatus(doc) === 'failed' && documentError(doc)" class="document-error">{{ documentError(doc) }}</p>
+                <p v-else class="document-preview">{{ doc.content_preview || statusDescription(documentStatus(doc)) }}</p>
+                <div v-if="doc.tags?.length" class="tag-list"><el-tag v-for="tag in doc.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag></div>
+              </div>
+              <div class="document-actions">
+                <template v-if="retentionView === 'archived'">
+                  <el-tooltip content="恢复到资料库" placement="top"><el-button type="primary" circle aria-label="恢复资料" @click="restoreDoc(doc)"><el-icon><RefreshLeft /></el-icon></el-button></el-tooltip>
+                  <el-tooltip content="查看内容" placement="top"><el-button circle aria-label="查看资料内容" @click="previewDocument(doc)"><el-icon><View /></el-icon></el-button></el-tooltip>
+                  <el-tooltip content="永久清除" placement="top"><el-button circle type="danger" plain aria-label="永久清除资料" @click="purgeDoc(doc)"><el-icon><Delete /></el-icon></el-button></el-tooltip>
+                </template>
+                <template v-else>
+                  <el-tooltip v-if="canAsk(doc)" content="围绕这份资料提问" placement="top"><el-button type="primary" circle aria-label="围绕资料提问" @click="askWithDocument(doc)"><el-icon><ChatLineRound /></el-icon></el-button></el-tooltip>
+                  <el-tooltip content="查看内容" placement="top"><el-button circle aria-label="查看资料内容" @click="previewDocument(doc)"><el-icon><View /></el-icon></el-button></el-tooltip>
+                  <el-dropdown trigger="click" @command="command => handleDocumentAction(command, doc)"><el-button circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit">编辑资料</el-dropdown-item><el-dropdown-item command="archive" divided>移到回收站</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+                </template>
+              </div>
+            </article>
+          </div>
+          <footer v-if="totalCount > pageSize" class="pagination-footer"><el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="totalCount" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" @size-change="handleSizeChange" @current-change="handleCurrentChange" /></footer>
+        </main>
+
+        <aside class="activity-panel">
+          <header class="activity-heading"><div><h2>最近提问</h2><p>你最近在资料库里查过什么。</p></div><el-icon><ChatDotRound /></el-icon></header>
+          <div v-if="activityLoading" class="activity-loading"><el-icon class="is-loading"><Loading /></el-icon> 正在整理记录…</div>
+          <el-empty v-else-if="!activity.length" :image-size="72" description="还没有提问记录" />
+          <ol v-else class="activity-list"><li v-for="item in activity" :key="item.activity_id"><p>{{ item.question }}</p><div class="activity-meta"><span>{{ formatRelativeDate(item.created_at) }}</span><span>{{ item.source_count }} 份资料</span></div><div v-if="item.sources?.length" class="activity-sources"><span v-for="source in item.sources.slice(0, 2)" :key="source.document_id || source.title">{{ source.title }}</span></div></li></ol>
+        </aside>
       </section>
     </div>
 
-    <!-- Modals -->
-    <el-dialog v-model="editDialogVisible" title="编辑文档信息" width="500px" class="void-dialog">
-      <div class="modal-body">
-        <div class="void-form-group">
-          <label>标题</label>
-          <el-input v-model="editingDoc.title" placeholder="输入文档标题…" class="void-input" />
-        </div>
-        <div class="void-form-group">
-          <label>标签</label>
-          <el-select v-model="editingDoc.tags" multiple filterable allow-create class="void-select" placeholder="添加或选择标签…" style="width: 100%" />
-        </div>
-      </div>
-      <template #footer>
-        <div class="modal-footer">
-          <el-button class="void-btn text" @click="editDialogVisible = false">取消</el-button>
-          <el-button type="primary" class="void-btn primary" @click="saveDocumentEdit" :loading="saving">保存</el-button>
-        </div>
-      </template>
+    <el-dialog v-model="editDialogVisible" title="编辑资料" width="min(92vw, 520px)" destroy-on-close>
+      <el-form label-position="top"><el-form-item label="资料名称"><el-input v-model="editingDoc.title" maxlength="120" show-word-limit /></el-form-item><el-form-item label="标签"><el-select v-model="editingDoc.tags" aria-label="资料标签" multiple filterable allow-create default-first-option style="width: 100%" placeholder="添加标签"><el-option v-for="tag in knownTags" :key="tag" :label="tag" :value="tag" /></el-select></el-form-item></el-form>
+      <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveDocumentEdit">保存</el-button></template>
     </el-dialog>
-
-    <el-dialog v-model="previewDialogVisible" title="原文预览" width="80%" class="void-dialog full-height">
-      <div class="preview-scroll">
-        <pre class="void-code-block">{{ previewContent }}</pre>
-      </div>
-    </el-dialog>
-
-    <el-dialog v-model="qaDialogVisible" :title="`深度分析：${selectedDocForQA?.title || ''}`" width="900px" class="void-dialog has-footer">
-      <div class="qa-neural-link">
-        <div class="chat-viewport" ref="msgList">
-          <div v-for="m in qaMessages" :key="m.id" class="neural-message" :class="m.type">
-            <div
-              v-if="m.type === 'answer'"
-              class="msg-bubble markdown-body void-markdown"
-              v-html="answerHtmlForMessage(m)"
-            ></div>
-            <div v-else class="msg-bubble">{{ m.content }}</div>
-            <div v-if="m.sources?.length" class="msg-knowledge">
-              <div class="meta-label">引用片段</div>
-              <div class="source-cloud">
-                <el-tag v-for="(s, i) in m.sources" :key="i" size="small" class="void-tag sm">{{ s.title }}</el-tag>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="chat-input-area">
-          <el-input 
-            v-model="qaQuestion" 
-            placeholder="输入针对该文档的问题…" 
-            class="void-input" 
-            @keyup.enter="sendQuestion" 
-            :disabled="asking"
-          >
-            <template #append>
-              <el-button class="void-btn primary" @click="sendQuestion" :loading="asking">
-                <el-icon><Plus /></el-icon>
-              </el-button>
-            </template>
-          </el-input>
-        </div>
-      </div>
+    <el-dialog v-model="previewDialogVisible" :title="previewTitle || '资料内容'" width="min(94vw, 760px)" destroy-on-close><pre class="document-content">{{ previewContent }}</pre></el-dialog>
+    <el-dialog v-model="qaDialogVisible" :title="selectedDocForQA ? '询问：' + selectedDocForQA.title : '围绕资料提问'" width="min(94vw, 760px)" destroy-on-close @closed="closeQA">
+      <div class="qa-thread"><el-empty v-if="!qaMessages.length" :image-size="84" description="用自然语言提出问题，我会只依据这份资料作答。" /><article v-for="message in qaMessages" :key="message.id" class="qa-message" :class="message.type"><span class="message-label">{{ message.type === 'question' ? '你的问题' : '基于资料的回答' }}</span><p v-if="message.type === 'question'">{{ message.content }}</p><div v-else-if="message.type === 'typing'" class="thinking"><el-icon class="is-loading"><Loading /></el-icon> 正在查找资料内容…</div><div v-else class="answer-markdown" v-html="answerHtmlForMessage(message)"></div><div v-if="message.sources?.length" class="answer-sources"><span>参考资料</span><el-tag v-for="source in message.sources" :key="source.document_id || source.title" size="small" effect="plain">{{ source.title || '当前资料' }}</el-tag></div></article></div>
+      <div class="qa-composer"><el-input v-model="qaQuestion" type="textarea" :rows="3" maxlength="1000" show-word-limit resize="none" placeholder="例如：这份资料里最重要的结论是什么？" @keydown.ctrl.enter.prevent="sendQuestion" /><el-button type="primary" :loading="asking" :disabled="!qaQuestion.trim()" @click="sendQuestion">发送</el-button></div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
-import {
-  Upload,
-  Plus,
-  RefreshRight,
-  Loading,
-  ChatLineRound,
-  Edit,
-  ArrowDown,
-  View,
-  Delete,
-  Search,
-  Document as DocumentIcon,
-  Picture as PictureIcon
-} from '@element-plus/icons-vue'
+import { computed, onMounted, ref } from 'vue'
+import { ChatDotRound, ChatLineRound, CircleCheck, Clock, Delete, Document as DocumentIcon, FolderOpened, Loading, MoreFilled, Picture as PictureIcon, RefreshLeft, RefreshRight, Search, Upload, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { documentApi } from '@/api/document'
 import { formatAxiosErrorMessage } from '@/utils/apiPayload'
 import { renderAssistantMarkdown } from '@/utils/markdownThink'
 
-// 响应式数据
 const fileInput = ref(null)
 const uploading = ref(false)
+const rebuilding = ref(false)
 const uploadProgress = ref(0)
-const uploadStatus = ref('')
 const uploadMessage = ref('')
 const currentFileName = ref('')
-
 const uploadTitle = ref('')
 const uploadTags = ref([])
-
 const loading = ref(false)
 const documents = ref([])
 const stats = ref(null)
 const filterStatus = ref('')
+const retentionView = ref('active')
+const retentionOptions = [{ label: '使用中', value: 'active' }, { label: '回收站', value: 'archived' }]
 const currentPage = ref(1)
 const pageSize = ref(20)
 const totalCount = ref(0)
-
+const searchQuery = ref('')
+const searchResults = ref([])
 const editDialogVisible = ref(false)
 const editingDoc = ref({})
 const saving = ref(false)
-
 const previewDialogVisible = ref(false)
 const previewContent = ref('')
-
+const previewTitle = ref('')
 const qaDialogVisible = ref(false)
 const selectedDocForQA = ref(null)
 const qaQuestion = ref('')
 const qaMessages = ref([])
 const asking = ref(false)
+const activity = ref([])
+const activityLoading = ref(false)
 
-function answerHtmlForMessage(m) {
-  if (m.type !== 'answer') return ''
-  return renderAssistantMarkdown(m.content || '')
+const knownTags = computed(() => [...new Set(documents.value.flatMap(doc => doc.tags || []))].slice(0, 30))
+const inProgressCount = computed(() => documents.value.filter(doc => ['queued', 'pending', 'processing', 'parsed', 'indexing'].includes(documentStatus(doc))).length || stats.value?.status_stats?.processing || 0)
+const getFileIcon = fileType => ['jpg', 'jpeg', 'png', 'gif'].includes(String(fileType || '').toLowerCase()) ? PictureIcon : DocumentIcon
+const documentStatus = doc => doc.ingestion?.status || doc.knowledge_status?.status || doc.parse_status || 'pending'
+const documentError = doc => doc.ingestion?.error_message || doc.knowledge_status?.error_message || doc.error_message
+const canAsk = doc => !doc.is_archived && documentStatus(doc) === 'completed'
+function getStatusText(status) { return ({ queued: '等待整理', pending: '等待整理', processing: '正在整理', parsed: '正在整理', indexing: '正在整理', completed: '可以提问', failed: '整理失败' })[status] || '等待整理' }
+function getStatusTagType(status) { return ({ queued: 'info', pending: 'info', processing: 'warning', parsed: 'warning', indexing: 'warning', completed: 'success', failed: 'danger' })[status] || 'info' }
+function statusDescription(status) { return ({ queued: '已收到资料，稍后会开始整理。', pending: '已收到资料，稍后会开始整理。', processing: '正在读取内容并整理为可提问的资料。', parsed: '正在整理内容，马上就可以提问。', indexing: '正在整理内容，马上就可以提问。', completed: '资料已整理完成，可以围绕它提问。', failed: '这份资料暂时无法整理。' })[status] || '正在整理资料内容。' }
+function fileTypeLabel(fileType) { const labels = { pdf: 'PDF 文档', doc: 'Word 文档', docx: 'Word 文档', xls: 'Excel 表格', xlsx: 'Excel 表格', csv: 'CSV 表格', txt: '文本', md: 'Markdown', jpg: '图片', jpeg: '图片', png: '图片', gif: '图片' }; return labels[String(fileType || '').toLowerCase()] || String(fileType || '资料').toUpperCase() }
+function formatFileSize(bytes) { if (!bytes) return '0 字节'; const units = ['字节', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return Number(bytes / 1024 ** index).toFixed(index ? 1 : 0) + ' ' + units[index] }
+function formatDate(value) { if (!value) return '时间未知'; return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' }).format(new Date(value)) }
+function formatRelativeDate(value) { const date = new Date(value); const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000)); if (minutes < 1) return '刚刚'; if (minutes < 60) return minutes + ' 分钟前'; if (minutes < 1440) return Math.floor(minutes / 60) + ' 小时前'; if (minutes < 10080) return Math.floor(minutes / 1440) + ' 天前'; return formatDate(value) }
+function answerHtmlForMessage(message) { return message.type === 'answer' ? renderAssistantMarkdown(message.content || '') : '' }
+function triggerFileSelect() { fileInput.value?.click() }
+function onDrop(event) { handleFileUpload(Array.from(event.dataTransfer.files || [])) }
+function onFileSelect(event) { handleFileUpload(Array.from(event.target.files || [])); event.target.value = '' }
+
+async function handleFileUpload(files) {
+  if (!files.length || uploading.value) return
+  const formData = new FormData(); files.forEach(file => formData.append('files', file))
+  if (uploadTitle.value.trim()) formData.append('title', uploadTitle.value.trim())
+  if (uploadTags.value.length) formData.append('tags', JSON.stringify(uploadTags.value))
+  uploading.value = true; uploadProgress.value = 0; currentFileName.value = files.length === 1 ? files[0].name : '正在上传 ' + files.length + ' 份资料'; uploadMessage.value = '正在上传…'
+  try { await documentApi.upload(formData, event => { uploadProgress.value = event.total ? Math.round((event.loaded * 100) / event.total) : 0; uploadMessage.value = uploadProgress.value >= 100 ? '上传完成，正在加入整理队列…' : '正在上传 ' + uploadProgress.value + '%' }); uploadMessage.value = '上传完成，资料会在后台自动整理。'; uploadTitle.value = ''; uploadTags.value = []; ElMessage.success('资料已上传，正在后台整理'); await Promise.all([loadDocuments(), loadStats()]) } catch (error) { uploadMessage.value = '上传失败'; ElMessage.error(formatAxiosErrorMessage(error, '上传失败，请稍后再试')) } finally { window.setTimeout(() => { uploading.value = false }, 1200) }
 }
-
-// 向量搜索相关
-const vectorSearchQuery = ref('')
-const vectorSearchResults = ref([])
-const vectorSearchLoading = ref(false)
-
-// 文件类型图标映射
-const getFileIcon = (fileType) => {
-  const iconMap = {
-    'pdf': 'DocumentIcon',
-    'doc': 'DocumentIcon',
-    'docx': 'DocumentIcon',
-    'xls': 'DocumentIcon',
-    'xlsx': 'DocumentIcon',
-    'csv': 'DocumentIcon',
-    'txt': 'DocumentIcon',
-    'md': 'DocumentIcon',
-    'jpg': 'PictureIcon',
-    'jpeg': 'PictureIcon',
-    'png': 'PictureIcon',
-    'gif': 'PictureIcon'
-  }
-  return iconMap[fileType] || 'DocumentIcon'
-}
-
-// 状态相关方法
-const getStatusText = (status) => {
-  const statusMap = {
-    'pending': '等待中',
-    'processing': '正在解析',
-    'parsed': '正在向量化',
-    'completed': '处理完成',
-    'failed': '解析失败'
-  }
-  return statusMap[status] || status
-}
-
-const getStatusType = (status) => {
-  const typeMap = {
-    'pending': 'info',
-    'processing': 'warning',
-    'parsed': 'primary',
-    'completed': 'success',
-    'failed': 'danger'
-  }
-  return typeMap[status] || 'info'
-}
-
-const getStatusClass = (status) => {
-  return `status-${status}`
-}
-
-// 工具方法
-const fileTypeLabel = (ft) => {
-  if (!ft) return ''
-  const t = String(ft).toLowerCase()
-  const map = {
-    pdf: 'PDF 文档',
-    doc: 'Word 文档',
-    docx: 'Word 文档',
-    xls: 'Excel 表格',
-    xlsx: 'Excel 表格',
-    csv: 'CSV 表格',
-    txt: '文本',
-    md: 'Markdown',
-    jpg: '图片',
-    jpeg: '图片',
-    png: '图片',
-    gif: '图片'
-  }
-  return map[t] || t.toUpperCase()
-}
-
-const formatFileSize = (bytes) => {
-  if (!bytes) return '0 字节'
-  const k = 1024
-  const sizes = ['字节', '千字节', '兆字节', '吉字节']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
-const formatDate = (dateString) => {
-  if (!dateString) return '-'
-  return new Date(dateString).toLocaleString('zh-CN')
-}
-
-// 上传相关方法
-const triggerFileSelect = () => {
-  fileInput.value?.click()
-}
-
-const onDragOver = (e) => {
-  e.preventDefault()
-}
-
-const onDrop = (e) => {
-  e.preventDefault()
-  const files = Array.from(e.dataTransfer.files)
-  handleFileUpload(files)
-}
-
-const onFileSelect = (e) => {
-  const files = Array.from(e.target.files)
-  handleFileUpload(files)
-}
-
-const handleFileUpload = async (files) => {
-  if (files.length === 0) return
-
-  const formData = new FormData()
-  files.forEach(file => {
-    formData.append('files', file)
-  })
-
-  if (uploadTitle.value.trim()) {
-    formData.append('title', uploadTitle.value.trim())
-  }
-
-  if (uploadTags.value.length > 0) {
-    formData.append('tags', JSON.stringify(uploadTags.value))
-  }
-
-  uploading.value = true
-  uploadProgress.value = 0
-  uploadStatus.value = ''
-  uploadMessage.value = '准备上传...'
-
+async function loadDocuments() { loading.value = true; try { const data = await documentApi.list({ retention: retentionView.value, status: retentionView.value === 'active' ? (filterStatus.value || undefined) : undefined, limit: pageSize.value, offset: (currentPage.value - 1) * pageSize.value }); documents.value = data?.documents || []; totalCount.value = data?.pagination?.total ?? documents.value.length } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '资料列表加载失败')) } finally { loading.value = false } }
+async function loadStats() { try { stats.value = await documentApi.getStats() } catch (error) { console.warn('无法加载资料统计', error) } }
+async function loadActivity() { activityLoading.value = true; try { activity.value = (await documentApi.getActivity(10))?.activity || [] } catch (error) { console.warn('无法加载提问记录', error) } finally { activityLoading.value = false } }
+async function refreshLibrary() { await Promise.all([loadDocuments(), loadStats(), loadActivity()]) }
+function resetAndLoadDocuments() { currentPage.value = 1; loadDocuments() }
+function changeRetentionView() { currentPage.value = 1; filterStatus.value = ''; clearSearch(); loadDocuments() }
+function handleSizeChange(size) { pageSize.value = size; currentPage.value = 1; loadDocuments() }
+function handleCurrentChange(page) { currentPage.value = page; loadDocuments() }
+async function performKnowledgeSearch() { if (!searchQuery.value.trim()) return; try { const data = await documentApi.search(searchQuery.value.trim()); searchResults.value = data?.results || []; if (!searchResults.value.length) ElMessage.info('没有找到相关内容') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '暂时无法在资料中查找')) } }
+function clearSearch() { searchResults.value = []; searchQuery.value = '' }
+function openSearchResult(result) { previewTitle.value = '查找结果'; previewContent.value = result.content || '暂无内容'; previewDialogVisible.value = true }
+function editDocument(doc) { editingDoc.value = { doc_id: doc.doc_id, title: doc.title || '', tags: [...(doc.tags || [])] }; editDialogVisible.value = true }
+async function saveDocumentEdit() { if (!editingDoc.value.title?.trim()) { ElMessage.warning('请填写资料名称'); return } saving.value = true; try { await documentApi.update(editingDoc.value.doc_id, { title: editingDoc.value.title.trim(), tags: editingDoc.value.tags || [] }); editDialogVisible.value = false; await loadDocuments(); ElMessage.success('资料已更新') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '保存失败')) } finally { saving.value = false } }
+async function previewDocument(doc) { try { const data = await documentApi.get(doc.doc_id, { includeArchived: retentionView.value === 'archived' }); previewTitle.value = doc.title || '资料内容'; previewContent.value = data?.content_preview || '暂无可预览内容'; previewDialogVisible.value = true } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '暂时无法查看这份资料')) } }
+function askWithDocument(doc) { selectedDocForQA.value = doc; qaQuestion.value = ''; qaMessages.value = []; qaDialogVisible.value = true }
+async function sendQuestion() { if (!qaQuestion.value.trim() || !selectedDocForQA.value || asking.value) return; const question = qaQuestion.value.trim(); qaQuestion.value = ''; qaMessages.value.push({ id: Date.now(), type: 'question', content: question }); const answerId = Date.now() + 1; qaMessages.value.push({ id: answerId, type: 'typing', content: '' }); asking.value = true; try { const data = await documentApi.ask(question, [selectedDocForQA.value.doc_id]); const index = qaMessages.value.findIndex(message => message.id === answerId); if (index >= 0) qaMessages.value[index] = { id: answerId, type: 'answer', content: data?.answer || '没有找到可以支持回答的内容。', sources: data?.sources || [] }; loadActivity() } catch (error) { const index = qaMessages.value.findIndex(message => message.id === answerId); if (index >= 0) qaMessages.value[index] = { id: answerId, type: 'answer', content: formatAxiosErrorMessage(error, '暂时无法完成回答，请稍后再试。'), sources: [] } } finally { asking.value = false } }
+function closeQA() { selectedDocForQA.value = null; qaMessages.value = []; qaQuestion.value = '' }
+async function archiveDoc(doc) { try { await ElMessageBox.confirm('“' + (doc.title || '这份资料') + '”会移到回收站，并停止参与回答。之后仍可恢复。', '移到回收站', { type: 'warning', confirmButtonText: '移到回收站', cancelButtonText: '取消' }); await documentApi.archive(doc.doc_id); ElMessage.success('资料已移到回收站'); await Promise.all([loadDocuments(), loadStats()]) } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(formatAxiosErrorMessage(error, '暂时无法归档资料')) } }
+async function restoreDoc(doc) { try { await documentApi.restore(doc.doc_id); ElMessage.success('资料已恢复，可以继续用于回答'); await Promise.all([loadDocuments(), loadStats()]) } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '暂时无法恢复资料')) } }
+async function purgeDoc(doc) { try { await ElMessageBox.confirm('永久清除后将无法恢复“' + (doc.title || '这份资料') + '”。', '永久清除资料', { type: 'error', confirmButtonText: '永久清除', cancelButtonText: '取消' }); await documentApi.purge(doc.doc_id); ElMessage.success('资料已永久清除'); await Promise.all([loadDocuments(), loadStats()]) } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(formatAxiosErrorMessage(error, '暂时无法永久清除资料')) } }
+function handleDocumentAction(command, doc) { if (command === 'edit') editDocument(doc); if (command === 'archive') archiveDoc(doc) }
+async function rebuildKnowledge() {
+  rebuilding.value = true
   try {
-    const response = await documentApi.upload(formData, (progressEvent) => {
-      const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
-      uploadProgress.value = percentCompleted
-      uploadMessage.value = `上传中... ${percentCompleted}%`
-      
-      if (percentCompleted === 100) {
-        uploadMessage.value = '上传完成，后台处理中...'
-      }
-    })
-
-    const data = response.data
-    if (data.success) {
-      uploadStatus.value = 'success'
-      uploadMessage.value = `成功上传 ${data.data.successful_count}/${data.data.total_count} 个文件`
-      
-      // 清空表单
-      uploadTitle.value = ''
-      uploadTags.value = []
-      
-      // 刷新数据
-      await Promise.all([loadDocuments(), loadStats()])
-      ElMessage.success(data.message)
-    } else {
-      uploadStatus.value = 'error'
-      uploadMessage.value = data.message || '上传异常'
-    }
+    await documentApi.rebuildIndex()
+    ElMessage.success('资料已进入重新整理队列，完成后会自动更新状态。')
+    await refreshLibrary()
   } catch (error) {
-    uploadStatus.value = 'error'
-    uploadMessage.value = '上传失败'
-    ElMessage.error('上传失败：' + (error.response?.data?.message || error.message))
+    ElMessage.error(formatAxiosErrorMessage(error, '暂时无法重新整理资料。'))
   } finally {
-    setTimeout(() => {
-      uploading.value = false
-    }, 3000)
+    rebuilding.value = false
   }
 }
 
-// 文档管理方法
-const loadDocuments = async () => {
-  loading.value = true
-  try {
-    const response = await documentApi.list({
-      status: filterStatus.value || undefined,
-      limit: pageSize.value,
-      offset: (currentPage.value - 1) * pageSize.value
-    })
-
-    if (response.data.success) {
-      documents.value = response.data.data.documents || []
-      totalCount.value = response.data.data.pagination?.total || documents.value.length
-    }
-  } catch (error) {
-    console.error('加载文档失败:', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-const loadStats = async () => {
-  try {
-    const response = await documentApi.getStats()
-    if (response.data.success) {
-      stats.value = response.data.data
-    }
-  } catch (error) {
-    console.error('加载统计失败:', error)
-  }
-}
-
-// 编辑相关
-const editDocument = (doc) => {
-  editingDoc.value = { 
-    doc_id: doc.doc_id,
-    title: doc.title,
-    tags: [...(doc.tags || [])]
-  }
-  editDialogVisible.value = true
-}
-
-const saveDocumentEdit = async () => {
-  if (!editingDoc.value.title?.trim()) {
-    ElMessage.warning('请输入标题')
-    return
-  }
-
-  saving.value = true
-  try {
-    const response = await documentApi.update(editingDoc.value.doc_id, {
-      title: editingDoc.value.title.trim(),
-      tags: editingDoc.value.tags || []
-    })
-
-    if (response.data.success) {
-      editDialogVisible.value = false
-      await loadDocuments()
-      ElMessage.success('更新成功')
-    }
-  } catch (error) {
-    ElMessage.error('保存失败')
-  } finally {
-    saving.value = false
-  }
-}
-
-// 预览相关
-const previewDocument = async (doc) => {
-  try {
-    const response = await documentApi.get(doc.doc_id)
-    if (response.data.success) {
-      previewContent.value = response.data.data.content_preview || '暂无内容'
-      previewDialogVisible.value = true
-    }
-  } catch (error) {
-    ElMessage.error('无法预览')
-  }
-}
-
-const closePreview = () => {
-  previewDialogVisible.value = false
-  previewContent.value = ''
-}
-
-// 问答相关
-const askWithDocument = (doc) => {
-  selectedDocForQA.value = doc
-  qaMessages.value = []
-  qaQuestion.value = ''
-  qaDialogVisible.value = true
-}
-
-const sendQuestion = async () => {
-  if (!qaQuestion.value.trim()) return
-
-  const question = qaQuestion.value.trim()
-  qaQuestion.value = ''
-  
-  qaMessages.value.push({ id: Date.now(), type: 'question', content: question })
-  
-  const answerId = Date.now() + 1
-  qaMessages.value.push({ id: answerId, type: 'typing', content: '分析中...' })
-  
-  asking.value = true
-  try {
-    const response = await documentApi.ask(question, [selectedDocForQA.value.doc_id])
-    const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
-    if (answerIndex === -1) return
-
-    if (response.data.success) {
-      qaMessages.value[answerIndex] = {
-        id: answerId,
-        type: 'answer',
-        content: response.data.data.answer,
-        sources: response.data.data.sources
-      }
-    } else {
-      qaMessages.value[answerIndex] = {
-        id: answerId,
-        type: 'answer',
-        content: response.data.message || '问答请求未成功',
-        sources: []
-      }
-    }
-  } catch (error) {
-    const answerIndex = qaMessages.value.findIndex(m => m.id === answerId)
-    if (answerIndex !== -1) {
-      const msg = formatAxiosErrorMessage(error, '问答失败，请检查网络或登录状态')
-      qaMessages.value[answerIndex] = {
-        id: answerId,
-        type: 'answer',
-        content: msg,
-        sources: []
-      }
-    }
-  } finally {
-    asking.value = false
-  }
-}
-
-const closeQA = () => {
-  qaDialogVisible.value = false
-  selectedDocForQA.value = null
-}
-
-// 操作分发 (修复 Bug)
-const handleDocumentAction = async (command, doc) => {
-  switch (command) {
-    case 'preview':
-      await previewDocument(doc)
-      break
-    case 'delete':
-      await deleteDoc(doc)
-      break
-  }
-}
-
-const deleteDoc = async (doc) => {
-  try {
-    await ElMessageBox.confirm(`确定要彻底删除 "${doc.title}" 吗？`, '警告', {
-      type: 'warning',
-      confirmButtonText: '极其确定',
-      cancelButtonText: '手滑了'
-    })
-    
-    const response = await documentApi.delete(doc.doc_id)
-    if (response.data.success) {
-      ElMessage.success('文档已删除')
-      await Promise.all([loadDocuments(), loadStats()])
-    }
-  } catch(e) { /* Cancel */ }
-}
-
-// 向量搜索
-const performVectorSearch = async () => {
-  if (!vectorSearchQuery.value.trim()) return
-  
-  vectorSearchLoading.value = true
-  try {
-    const response = await documentApi.search(vectorSearchQuery.value.trim())
-    if (response.data.success) {
-      vectorSearchResults.value = response.data.data.results || []
-    }
-  } catch (error) {
-    ElMessage.error('搜索异常')
-  } finally {
-    vectorSearchLoading.value = false
-  }
-}
-
-// 分页处理
-const handleSizeChange = (val) => {
-  pageSize.value = val
-  currentPage.value = 1
-  loadDocuments()
-}
-
-const handleCurrentChange = (val) => {
-  currentPage.value = val
-  loadDocuments()
-}
-
-// 初始化
-onMounted(() => {
-  loadDocuments()
-  loadStats()
-})
+onMounted(() => { refreshLibrary() })
 </script>
 
 <style scoped>
-/* Page Header */
-.page-header {
-  margin-bottom: var(--spacing-xxxl);
-  text-align: center;
-}
-
-/* Upload Section */
-.upload-section {
-  margin-bottom: var(--spacing-xxxl);
-}
-
-.upload-card {
-  padding: var(--spacing-xl);
-}
-
-.void-upload-area {
-  padding: var(--spacing-xxxl) var(--spacing-xl);
-  border: 2px dashed var(--border-color);
-  border-radius: var(--radius-lg);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-secondary-transparent);
-  cursor: pointer;
-  transition: all var(--transition-normal);
-  position: relative;
-  overflow: hidden;
-}
-
-.void-upload-area:hover {
-  border-color: var(--color-primary);
-  background: var(--color-primary-transparent);
-}
-
-.void-upload-area.uploading {
-  cursor: wait;
-}
-
-.prompt-icon {
-  font-size: 3rem;
-  color: var(--color-primary);
-  margin-bottom: var(--spacing-lg);
-  opacity: 0.6;
-}
-
-.main-text {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin-bottom: var(--spacing-xs);
-}
-
-.highlight {
-  color: var(--color-primary-light);
-  text-decoration: underline;
-}
-
-.sub-text {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.upload-status {
-  text-align: center;
-}
-
-.filename {
-  margin-top: var(--spacing-md);
-  font-weight: 600;
-}
-
-.status-msg {
-  color: var(--color-primary);
-  font-family: var(--font-family-mono);
-  font-size: 0.85rem;
-  margin-top: var(--spacing-sm);
-}
-
-.upload-meta {
-  margin-top: var(--spacing-xl);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-xl);
-  padding-top: var(--spacing-xl);
-  border-top: 1px solid var(--border-color-light);
-}
-
-/* Stats Overview */
-.stats-overview {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--spacing-xl);
-  margin-bottom: var(--spacing-xxxl);
-}
-
-.void-stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xl);
-  backdrop-filter: blur(10px);
-}
-
-.stat-icon {
-  width: 50px;
-  height: 50px;
-  background: var(--color-primary-transparent);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-  color: var(--color-primary);
-}
-
-.stat-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-label {
-  font-size: 0.7rem;
-  font-weight: 800;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.stat-value {
-  font-size: 1.75rem;
-  font-weight: 800;
-  font-family: var(--font-family-mono);
-  color: var(--color-primary-light);
-}
-
-.stat-value.alternate {
-  color: var(--color-warning);
-}
-
-/* Archive Section */
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-xl);
-  gap: var(--spacing-xl);
-  flex-wrap: wrap;
-}
-
-.title-group {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-}
-
-.section-title {
-  font-size: 1.5rem;
-  margin: 0;
-}
-
-.header-filters {
-  display: flex;
-  gap: var(--spacing-md);
-  align-items: center;
-}
-
-.search-input {
-  width: 300px;
-}
-
-.status-select {
-  width: 160px;
-}
-
-/* Document Grid */
-.document-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: var(--spacing-xl);
-}
-
-.document-card {
-  padding: var(--spacing-xl);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-
-.doc-header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-lg);
-  margin-bottom: var(--spacing-lg);
-}
-
-.type-icon-wrapper {
-  width: 44px;
-  height: 44px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  color: var(--color-primary);
-  border: 1px solid var(--border-color-light);
-}
-
-.doc-info {
-  flex: 1;
-}
-
-.doc-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  margin-bottom: 4px;
-  color: var(--text-main);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
-}
-
-.doc-specs {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.divider {
-  width: 3px;
-  height: 3px;
-  background: var(--text-muted);
-  border-radius: 50%;
-}
-
-.doc-preview-area {
-  flex: 1;
-  margin-bottom: var(--spacing-xl);
-}
-
-.preview-text {
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-bottom: var(--spacing-md);
-}
-
-.doc-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-}
-
-.doc-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--border-color-light);
-}
-
-.timestamp {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-family: var(--font-family-mono);
-}
-
-.action-dock {
-  display: flex;
-  gap: var(--spacing-xs);
-}
-
-.error-strip {
-  background: var(--color-danger-transparent);
-  border-left: 3px solid var(--color-danger);
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  color: var(--color-danger-light);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: var(--spacing-md);
-}
-
-.analysis-line {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: var(--color-primary-transparent);
-}
-
-.line-shimmer {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
-  animation: shimmer 2s infinite linear;
-}
-
-/* Modals & Overlays */
-.search-overlay {
-  margin-bottom: var(--spacing-xl);
-  padding: var(--spacing-lg);
-}
-
-.result-shard {
-  padding: var(--spacing-md);
-  background: var(--bg-secondary-transparent);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--spacing-sm);
-}
-
-.shard-meta {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--color-primary);
-  margin-bottom: 4px;
-}
-
-.preview-scroll {
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
-.qa-neural-link {
-  height: 600px;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-viewport {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xl);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xl);
-}
-
-.neural-message {
-  max-width: 80%;
-  display: flex;
-  flex-direction: column;
-}
-
-.neural-message.question {
-  align-self: flex-end;
-}
-
-.neural-message.answer {
-  align-self: flex-start;
-}
-
-.msg-bubble {
-  padding: var(--spacing-lg);
-  border-radius: var(--radius-lg);
-  line-height: 1.6;
-}
-
-.question .msg-bubble {
-  background: var(--void-gradient);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.answer .msg-bubble {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-bottom-left-radius: 4px;
-}
-
-.msg-knowledge {
-  margin-top: var(--spacing-md);
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--border-color-light);
-}
-
-.meta-label {
-  font-size: 0.7rem;
-  font-weight: 800;
-  color: var(--text-muted);
-  margin-bottom: var(--spacing-xs);
-}
-
-.source-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-}
-
-.chat-input-area {
-  padding: var(--spacing-xl);
-  border-top: 1px solid var(--border-color-light);
-}
-
-@keyframes shimmer {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100%); }
-}
-
-@media (max-width: 768px) {
-  .header-filters {
-    width: 100%;
-  }
-  .search-input {
-    flex: 1;
-  }
-  .upload-meta {
-    grid-template-columns: 1fr;
-  }
-}
+.knowledge-page { min-height: 100%; background: var(--bg-primary); color: var(--text-primary); }.knowledge-shell { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0 64px; }.page-intro { display: flex; align-items: end; justify-content: space-between; gap: 32px; padding: 6px 2px 32px; }.eyebrow { margin: 0 0 10px; color: var(--color-accent); font-size: 13px; font-weight: 700; letter-spacing: 0; }h1, h2, h3, p { margin-top: 0; }h1, h2, h3 { color: var(--text-primary); letter-spacing: 0; }h1 { margin-bottom: 12px; font-size: 40px; line-height: 1.18; }.page-copy { max-width: 680px; margin-bottom: 0; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }.page-intro__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .primary-action { min-height: 42px; border-color: var(--color-primary); background: var(--color-primary); box-shadow: none; }
+.upload-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, .65fr); border: 1px solid var(--border-color); background: var(--bg-secondary); box-shadow: 0 12px 30px var(--shadow-md); }.drop-zone { display: flex; align-items: center; gap: 18px; min-height: 154px; padding: 28px 32px; border-right: 1px solid var(--border-color-light); cursor: pointer; transition: background-color .2s ease; }.drop-zone:hover { background: color-mix(in srgb, var(--color-primary) 6%, var(--bg-secondary)); }.drop-zone:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -3px; }.drop-zone h2 { margin-bottom: 6px; font-size: 18px; }.drop-zone p { margin-bottom: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }.upload-icon, .metric-icon, .document-type { display: inline-grid; place-items: center; flex: 0 0 auto; }.upload-icon { width: 46px; height: 46px; border-radius: 8px; background: color-mix(in srgb, var(--color-primary) 12%, var(--bg-secondary)); color: var(--color-primary); font-size: 22px; }.upload-options { display: grid; align-content: center; gap: 12px; padding: 24px; }.file-input { display: none; }.is-uploading .drop-zone { cursor: default; }.is-uploading .el-progress { width: min(230px, 48%); }.uploading-copy { display: grid; gap: 4px; }.uploading-copy span { color: var(--text-secondary); font-size: 14px; }
+.overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 22px 0; }.metric { display: flex; align-items: center; gap: 13px; min-width: 0; padding: 16px; border: 1px solid var(--border-color); background: var(--bg-secondary); }.metric-icon { width: 38px; height: 38px; border-radius: 8px; background: var(--bg-tertiary); color: var(--text-secondary); }.metric-ready .metric-icon { background: color-mix(in srgb, var(--color-success) 13%, var(--bg-secondary)); color: var(--color-success); }.metric-progress .metric-icon { background: color-mix(in srgb, var(--color-warning) 13%, var(--bg-secondary)); color: var(--color-warning); }.metric-size .metric-icon { background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); color: var(--color-primary); }.metric div { display: grid; gap: 3px; }.metric span:not(.metric-icon) { color: var(--text-muted); font-size: 13px; }.metric strong { color: var(--text-primary); font-size: 19px; font-variant-numeric: tabular-nums; }
+.library-layout { display: grid; grid-template-columns: minmax(0, 1fr) 304px; gap: 22px; align-items: start; }.library-panel, .activity-panel { border: 1px solid var(--border-color); background: var(--bg-secondary); }.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 24px 20px; border-bottom: 1px solid var(--border-color-light); }.panel-heading h2, .activity-heading h2 { margin-bottom: 5px; font-size: 19px; }.panel-heading p, .activity-heading p { margin-bottom: 0; color: var(--text-muted); font-size: 13px; }.library-toolbar { display: grid; gap: 10px; justify-items: end; }.library-toolbar :deep(.el-segmented) { min-width: 190px; }.library-controls { display: grid; grid-template-columns: 240px 128px 36px; gap: 8px; align-items: center; }.library-controls.is-archived { grid-template-columns: 36px; }.library-controls .el-button { padding: 8px; }
+.search-results { margin: 18px 24px 0; padding: 16px; border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 5%, var(--bg-secondary)); }.search-results-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }.search-results-heading div { display: grid; gap: 3px; }.search-results-heading span { color: var(--text-muted); font-size: 12px; }.search-result { display: grid; grid-template-columns: 24px 1fr; gap: 10px; width: 100%; padding: 10px 0; border: 0; border-top: 1px solid var(--border-color-light); background: transparent; color: var(--text-primary); cursor: pointer; text-align: left; }.search-result:first-of-type { border-top: 0; }.search-result:hover .result-content { color: var(--color-primary); }.result-index { color: var(--color-accent); font-size: 12px; font-weight: 700; }.result-content { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.55; transition: color .2s ease; }
+.state-panel { display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 250px; color: var(--text-muted); }.document-list { padding: 0 24px; }.document-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 19px 0; border-bottom: 1px solid var(--border-color-light); }.document-row:last-child { border-bottom: 0; }.document-type { width: 38px; height: 38px; border-radius: 8px; background: color-mix(in srgb, var(--color-primary) 12%, var(--bg-secondary)); color: var(--color-primary); font-size: 18px; }.document-body { min-width: 0; }.document-title-row { display: flex; gap: 10px; align-items: center; min-width: 0; }.document-title-row h3 { overflow: hidden; margin-bottom: 0; font-size: 16px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.document-meta { display: flex; align-items: center; gap: 8px; margin: 5px 0 7px; color: var(--text-muted); font-size: 12px; }.document-meta i { width: 3px; height: 3px; border-radius: 50%; background: color-mix(in srgb, var(--text-muted) 58%, transparent); }.document-preview, .document-error { display: -webkit-box; overflow: hidden; margin-bottom: 9px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }.document-error { color: var(--color-error); }.tag-list { display: flex; flex-wrap: wrap; gap: 5px; }.tag-list :deep(.el-tag), .activity-sources :deep(.el-tag) { border-color: var(--border-color); background: var(--bg-tertiary); color: var(--text-secondary); }.document-actions { display: flex; gap: 7px; padding-top: 1px; }.document-actions :deep(.el-button) { margin: 0; }.pagination-footer { display: flex; justify-content: flex-end; padding: 18px 24px 22px; border-top: 1px solid var(--border-color-light); }
+.activity-panel { padding-bottom: 4px; }.activity-heading { display: flex; justify-content: space-between; align-items: flex-start; padding: 24px 20px 18px; border-bottom: 1px solid var(--border-color-light); }.activity-heading > .el-icon { padding: 9px; border-radius: 8px; background: color-mix(in srgb, var(--color-warning) 13%, var(--bg-secondary)); color: var(--color-accent); font-size: 18px; }.activity-loading { display: flex; gap: 7px; align-items: center; padding: 20px; color: var(--text-muted); font-size: 13px; }.activity-list { display: grid; gap: 0; padding: 0 20px; list-style: none; }.activity-list li { padding: 16px 0; border-bottom: 1px solid var(--border-color-light); }.activity-list li:last-child { border-bottom: 0; }.activity-list p { display: -webkit-box; overflow: hidden; margin-bottom: 9px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text-primary); font-size: 13px; line-height: 1.5; }.activity-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 12px; }.activity-sources { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }.activity-sources span { max-width: 100%; overflow: hidden; padding: 3px 6px; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.document-content { max-height: 60vh; overflow: auto; margin: 0; padding: 16px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }.qa-thread { display: grid; gap: 16px; min-height: 240px; max-height: 52vh; overflow: auto; padding-right: 4px; }.qa-message { padding: 14px; border: 1px solid var(--border-color); background: var(--bg-secondary); }.qa-message.question { border-color: color-mix(in srgb, var(--color-primary) 26%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-secondary)); }.message-label { display: block; margin-bottom: 7px; color: var(--text-muted); font-size: 12px; font-weight: 700; }.qa-message p { margin-bottom: 0; line-height: 1.65; }.thinking { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); }.answer-markdown { color: var(--text-primary); font-size: 14px; line-height: 1.7; }.answer-markdown :deep(p:last-child) { margin-bottom: 0; }.answer-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); }.answer-sources > span { color: var(--text-muted); font-size: 12px; }.qa-composer { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-top: 20px; }
+@media (max-width: 1080px) { .overview { grid-template-columns: repeat(2, 1fr); }.library-layout { grid-template-columns: 1fr; }.activity-panel { display: none; }.upload-panel { grid-template-columns: 1fr; }.drop-zone { border-right: 0; border-bottom: 1px solid var(--border-color-light); }.library-controls { grid-template-columns: minmax(200px, 1fr) 128px 36px; } }@media (max-width: 720px) { h1 { font-size: 32px; } .knowledge-shell { width: min(100% - 28px, 1440px); padding-top: 26px; }.page-intro { display: grid; align-items: start; padding-bottom: 22px; }.page-intro__actions { width: 100%; } .page-intro__actions .el-button { flex: 1; } .primary-action { width: auto; }.overview { grid-template-columns: 1fr 1fr; gap: 8px; }.metric { padding: 12px; }.metric strong { font-size: 16px; } .panel-heading { display: grid; padding: 18px 16px; }.library-toolbar { width: 100%; justify-items: stretch; }.library-toolbar :deep(.el-segmented) { width: 100%; }.library-controls { grid-template-columns: 1fr 42px; }.library-controls .el-input { grid-column: 1 / -1; }.library-controls .el-select { width: 100%; }.document-list { padding: 0 16px; }.document-row { grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }.document-type { width: 34px; height: 34px; }.document-actions { grid-column: 2; padding-top: 0; }.document-title-row { align-items: flex-start; }.document-title-row h3 { white-space: normal; }.document-meta { flex-wrap: wrap; }.pagination-footer { overflow: auto; justify-content: flex-start; padding: 14px 16px 18px; }.qa-composer { grid-template-columns: 1fr; }.upload-options { padding: 16px; }.drop-zone { min-height: 128px; padding: 20px; }.upload-icon { width: 38px; height: 38px; }.drop-zone h2 { font-size: 16px; } }
 </style>
-

@@ -10,7 +10,10 @@
       :class="{ active: isActive }"
       @click="handleClick(navigate, $event)"
     >
-      <span class="nav-icon">{{ icon }}</span>
+      <span class="nav-icon">
+        <component v-if="typeof icon !== 'string'" :is="icon" />
+        <span v-else>{{ icon }}</span>
+      </span>
       <span class="nav-text"><slot /></span>
       <div v-if="isActive" class="nav-indicator"></div>
     </div>
@@ -37,7 +40,7 @@ const props = defineProps({
   },
   /** 图标（emoji 或文本） */
   icon: {
-    type: String,
+    type: [String, Object, Function],
     default: ''
   }
 })
@@ -63,145 +66,119 @@ const handleClick = (navigate, event) => {
 <style scoped>
 .nav-item {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
 }
 
 .nav-link {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs, 0.5rem);
-  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 0.75rem);
-  color: var(--color-text-secondary, #cbd5e1);
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 11px;
+  color: var(--text-secondary, #4d5b54);
   text-decoration: none;
-  border-radius: var(--radius-lg, 12px);
-  transition: all var(--transition-normal, 0.3s ease);
+  border-radius: var(--radius-md, 8px);
+  transition:
+    color var(--transition-normal, 0.3s ease),
+    background var(--transition-normal, 0.3s ease),
+    border-color var(--transition-normal, 0.3s ease);
   cursor: pointer;
   position: relative;
-  overflow: visible;
-  font-weight: 500;
-  font-size: 0.875rem;
+  overflow: hidden;
+  font-weight: 700;
+  font-size: 0.84rem;
   line-height: 1.25;
   border: 1px solid transparent;
-  background: rgba(30, 41, 59, 0.3);
-  backdrop-filter: blur(8px);
+  background: transparent;
   flex-shrink: 0;
-  max-width: 11rem;
+  max-width: 10.5rem;
 }
 
 .nav-link::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
-  transition: left var(--transition-slow, 0.5s ease);
-  z-index: 0;
+  inset: auto 10px 5px 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  opacity: 0;
+  transition: opacity var(--transition-normal, 0.3s ease);
+  pointer-events: none;
 }
 
 .nav-link:hover {
-  background: rgba(51, 65, 85, 0.6);
-  color: var(--color-text-primary, #f8fafc);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25),
-              0 0 0 1px rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.3);
+  background: color-mix(in srgb, var(--bg-card) 84%, transparent);
+  color: var(--text-primary, #17201c);
+  border-color: var(--border-color-light);
 }
 
-.nav-link:hover::before {
-  left: 100%;
+.nav-link:hover::before,
+.nav-link.active::before {
+  opacity: 1;
 }
 
 .nav-link.active {
-  color: var(--color-primary-light, #93c5fd);
-  background: linear-gradient(135deg, 
-    rgba(99, 102, 241, 0.2), 
-    rgba(6, 182, 212, 0.15)
-  );
-  box-shadow: 
-    0 6px 20px rgba(99, 102, 241, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  text-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  transform: translateY(-1px);
-}
-
-.nav-link.active::before {
-  left: 100%;
+  color: var(--color-primary-dark, #164d49);
+  background: var(--bg-card);
+  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--border-color));
+  box-shadow: var(--shadow-sm);
 }
 
 .nav-indicator {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, 
-    var(--color-primary, #6366f1), 
-    var(--color-secondary, #06b6d4),
-    var(--color-accent, #ec4899)
-  );
-  background-size: 200% 100%;
-  border-radius: var(--radius-full, 9999px);
-  box-shadow: 0 0 15px rgba(99, 102, 241, 0.7);
-  animation: indicatorGlow 3s ease-in-out infinite;
-}
-
-@keyframes indicatorGlow {
-  0%, 100% {
-    opacity: 0.8;
-    box-shadow: 0 0 15px rgba(99, 102, 241, 0.7);
-    background-position: 0% 50%;
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 25px rgba(99, 102, 241, 1);
-    background-position: 100% 50%;
-  }
+  display: none;
 }
 
 .nav-icon {
-  font-size: 1.35rem;
-  transition: all var(--transition-normal, 0.3s ease);
-  filter: drop-shadow(0 0 5px rgba(99, 102, 241, 0.3));
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.98rem;
+  line-height: 1;
   position: relative;
   z-index: 1;
-}
-
-.nav-link:hover .nav-icon {
-  transform: scale(1.15);
-  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5));
-}
-
-.nav-link.active .nav-icon {
-  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.8));
-  animation: iconPulse 2s ease-in-out infinite;
-}
-
-@keyframes iconPulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.2);
-  }
+  filter: grayscale(0.2);
 }
 
 .nav-text {
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0;
   position: relative;
   z-index: 1;
   transition: color var(--transition-normal, 0.3s ease);
   word-break: keep-all;
-  white-space: normal;
+  white-space: nowrap;
   text-align: left;
 }
 
-/* 勿用 background-clip:text + transparent 填充：深色主题下常导致选中态文字「消失」 */
 .nav-link.active .nav-text {
-  color: var(--text-primary, #e8eaed);
-  text-shadow: 0 0 20px rgba(147, 197, 253, 0.45);
+  color: var(--text-primary, #17201c);
+}
+@media (max-width: 900px) {
+  .nav-item { display: block; min-width: 0; }
+
+  .nav-link {
+    width: 100%;
+    min-height: 52px;
+    padding: 5px 2px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    border-radius: var(--radius-md, 8px);
+    font-size: 0.68rem;
+    max-width: none;
+  }
+
+  .nav-link::before {
+    inset: 3px auto auto 50%;
+    width: 18px;
+    transform: translateX(-50%);
+  }
+
+  .nav-icon { width: 20px; height: 20px; font-size: 1.05rem; }
+  .nav-icon :deep(svg) { width: 18px; height: 18px; }
+  .nav-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 }
 </style>

@@ -154,10 +154,8 @@ export default {
     async loadSessionFiles() {
       try {
         const { sessionApi } = await import('../api/session');
-        const response = await sessionApi.getSessionContext(this.sessionId);
-        if (response.data.success) {
-          this.uploadedFiles = response.data.data.files || [];
-        }
+        const context = await sessionApi.getSessionContext(this.sessionId);
+        this.uploadedFiles = context.files || [];
       } catch (error) {
         this.$message.error('加载会话文件失败：' + (error.response?.data?.message || error.message));
       }
@@ -212,12 +210,8 @@ export default {
           const formData = new FormData();
           formData.append('file', file.raw);
           
-          const response = await sessionApi.uploadTemporaryFile(this.sessionId, formData);
-          if (response.data.success) {
-            this.$message.success(`文件 ${file.name} 上传成功`);
-          } else {
-            this.$message.error(`文件 ${file.name} 上传失败：${response.data.message}`);
-          }
+          await sessionApi.uploadTemporaryFile(this.sessionId, formData);
+          this.$message.success(`文件 ${file.name} 上传成功`);
         }
         
         // 清空上传队列
@@ -247,15 +241,10 @@ export default {
       
       try {
         const { sessionApi } = await import('../api/session');
-        const response = await sessionApi.deleteTemporaryFile(file_id);
-        
-        if (response.data.success) {
-          this.$message.success('文件删除成功');
-          // 从列表中移除
-          this.uploadedFiles = this.uploadedFiles.filter(file => file.file_id !== file_id);
-        } else {
-          this.$message.error('文件删除失败：' + response.data.message);
-        }
+        await sessionApi.deleteTemporaryFile(file_id);
+        this.$message.success('文件删除成功');
+        // 从列表中移除
+        this.uploadedFiles = this.uploadedFiles.filter(file => file.file_id !== file_id);
       } catch (error) {
         this.$message.error('文件删除失败：' + (error.response?.data?.message || error.message));
       } finally {

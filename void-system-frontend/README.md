@@ -1,42 +1,35 @@
 # Void System Frontend
 
-Void System 的前端应用，负责页面渲染、路由管理、状态交互与后端 API 调用。
+Void System 的 Vue 3 前端。它面向普通用户呈现目标、行动、资料、成长和对话，不把 RAG、向量、provider、prompt、任务链或数据库结构暴露为主要交互概念。
 
-## 技术栈
+## 主要页面
 
-- Vue 3
-- Vite
-- Vue Router
-- Element Plus
-- Axios
+- `Home.vue`：当前进展、优先行动、常用入口和成长动态
+- `TaskWorkspace.vue`：Goal、Run、Step 与自动安排的统一行动工作台
+- `Advisor.vue`：把目标整理成可审阅方案并发布
+- `AIConsole.vue`：分组对话、会话管理与临时附件
+- `DocumentManager.vue`：个人资料上传、归档、恢复、搜索和资料问答
+- `QA.vue`：知识问答与来源支持信息
+- `Growth.vue`：能力方向、积分余额和活动记录
+- `Settings.vue` / `Profile.vue`：用户偏好、账号和个人资料
+- `RAGManagement.vue` / `AdminAIConfiguration.vue`：仅管理员可见的共享资料与模型连接维护
 
-## 功能范围
+## API 组织
 
-- 登录注册与基础用户流程
-- 首页、任务、AI 控制台等业务页面
-- 文档管理与知识问答页面
-- 与后端接口的统一请求封装
+页面不得直接拼接 HTTP 请求。稳定入口位于 `src/api/`：
 
-界面表达采用“系统终端”风格，强调信息密度、状态反馈与可操作性，面向真实使用场景而非展示页。
+- `goals.js`：Goal 生命周期
+- `runs.js`：Run、Step、Approval、Event 和 Run Command
+- `triggers.js`：自动安排与触发
+- `plans.js`：规范规划接口
+- `growthProfile.js`：能力与积分记录
+- `document.js` / `rag.js` / `knowledge.js`：个人与共享资料
+- `chat.js` / `session.js`：对话与临时附件
+- `administration.js` / `knowledgeAdministration.js`：管理员接口
 
-## 项目结构（核心）
+旧 task catalog、task chain 和 reward marketplace 客户端已经移除。兼容端点仍由后端保留，但不应在新页面中继续扩展。
 
-```text
-void-system-frontend/
-├── src/
-│   ├── api/
-│   ├── components/
-│   ├── pages/
-│   ├── router/
-│   ├── App.vue
-│   └── main.js
-├── vite.config.js
-└── package.json
-```
-
-文档管理 API 统一入口为 `src/api/document.js`。
-
-## 本地启动
+## 本地开发
 
 ```powershell
 cd void-system-frontend
@@ -44,49 +37,26 @@ npm install
 npm run dev
 ```
 
-默认地址：`http://localhost:5173`
+默认开发地址是 `http://127.0.0.1:5173`。Vite 将 `/api/*` 代理到 `http://127.0.0.1:8000`。需要使用其他后端时：
 
-## 使用教程（前端）
+```powershell
+$env:VITE_API_PROXY_TARGET = "http://127.0.0.1:8011"
+npm run dev
+```
 
-1. 打开 `http://localhost:5173`
-2. 注册并登录账号
-3. 在首页查看任务与状态面板
-4. 在 AI 页面发起多轮对话
-5. 在文档页面上传资料并进入问答页面验证结果
-
-## 与后端联调说明
-
-`vite.config.js` 已配置开发代理：
-
-- `/api/*` -> `http://127.0.0.1:8000`
-
-因此前端请求使用相对路径即可，不需要写死后端域名。
-
-联调前请确认：
-
-- 后端服务运行在 `127.0.0.1:8000`
-- 后端鉴权接口可正常返回 token
-- 代理未被本地安全软件拦截
-
-## 构建与预览
+## 构建
 
 ```powershell
 npm run build
 npm run preview
 ```
 
-## 页面映射（核心）
+## 交互约束
 
-- `Home.vue`：系统主页与任务总览
-- `AIConsole.vue`：系统精灵对话
-- `Advisor.vue`：AI 任务建议
-- `QA.vue`：知识问答
-- `DocumentManager.vue`：文档管理
-- `RAGManagement.vue`：RAG 管理
+- 普通用户使用“目标、行动、步骤、资料、成长、自动安排”等语言。
+- 模型连接、索引修复和共享资料维护属于管理员操作。
+- 写接口返回的 Run、Goal 或资料状态是权威结果，不在页面中猜测后端状态。
+- 异步流程必须展示准备中、进行中、失败、可重试和完成状态。
+- 桌面与移动端都必须保持无页面级横向滚动、按钮文字不溢出和可键盘操作。
 
-## 注意事项
-
-- 登录态令牌存于本地存储，调试时可清理 `localStorage` 重新登录。
-- 若出现请求失败，优先检查后端服务是否在 `127.0.0.1:8000` 运行。
-- 若页面空白或路由异常，先检查依赖是否完整安装并重启 `npm run dev`。
-- 视觉与文案修改需保持统一术语：系统终端、任务模块、系统精灵、知识问答。
+接口细节见 `../docs/api-contract.md`。

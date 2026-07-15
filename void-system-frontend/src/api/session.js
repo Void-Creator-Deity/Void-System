@@ -1,78 +1,39 @@
-/**
- * Void System Frontend - Session Management API
- * ------------------------------------------
- * 会话临时文件管理API服务
- */
+import api, { apiRequest } from './index'
 
-import api from './index'
+const multipartConfig = {
+  transformRequest: [(data, headers) => {
+    if (data instanceof FormData) delete headers['Content-Type']
+    return data
+  }]
+}
 
-/**
- * 会话管理API服务
- */
+/** Temporary attachments that belong to a persisted chat session. */
 export const sessionApi = {
-  /**
-   * 创建新会话
-   * @returns {Promise}
-   */
   createSession() {
-    return api.post('/api/session/new')
+    return apiRequest(api.post('/api/session/new'))
   },
 
-  /**
-   * 上传临时文件
-   * @param {string} sessionId - 会话ID
-   * @param {FormData} formData - 包含文件的FormData对象
-   * @returns {Promise}
-   */
   uploadTemporaryFile(sessionId, formData) {
-    return api.post(
-      `/api/session/upload-temporary?session_id=${encodeURIComponent(sessionId)}`,
+    return apiRequest(api.post(
+      '/api/session/upload-temporary',
       formData,
-      {
-        transformRequest: [
-          (data, headers) => {
-            if (data instanceof FormData) {
-              delete headers['Content-Type']
-            }
-            return data
-          },
-        ],
-      }
-    )
+      { params: { session_id: sessionId }, ...multipartConfig }
+    ))
   },
 
-  /**
-   * 获取会话上下文
-   * @param {string} sessionId - 会话ID
-   * @returns {Promise}
-   */
   getSessionContext(sessionId) {
-    return api.get(`/api/session/context/${sessionId}`)
+    return apiRequest(api.get('/api/session/context/' + encodeURIComponent(sessionId)))
   },
 
-  /**
-   * 获取活跃会话列表
-   * @returns {Promise}
-   */
   getActiveSessions() {
-    return api.get('/api/session/active')
+    return apiRequest(api.get('/api/session/active'))
   },
 
-  /**
-   * 获取临时文件内容
-   * @param {string} file_id - 文件ID
-   * @returns {Promise}
-   */
-  getTemporaryFileContent(file_id) {
-    return api.get(`/api/session/files/${file_id}`)
+  getTemporaryFileContent(fileId) {
+    return apiRequest(api.get('/api/session/files/' + encodeURIComponent(fileId)))
   },
 
-  /**
-   * 删除临时文件
-   * @param {string} file_id - 文件ID
-   * @returns {Promise}
-   */
-  deleteTemporaryFile(file_id) {
-    return api.delete(`/api/session/files/${file_id}`)
+  deleteTemporaryFile(fileId) {
+    return apiRequest(api.delete('/api/session/files/' + encodeURIComponent(fileId)))
   }
 }

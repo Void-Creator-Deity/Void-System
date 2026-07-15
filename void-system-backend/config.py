@@ -27,6 +27,7 @@ class Config:
 
     # 是否开启调试模式
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+    RELOAD: bool = os.getenv("RELOAD", "false").lower() == "true"
 
     # ==================== 数据库配置 ====================
     # 数据库文件路径
@@ -49,6 +50,15 @@ class Config:
 
     # 刷新令牌过期时间（天）
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+    # Bootstrap is deliberately opt-in. A deployed service must never mint a
+    # known administrator password merely because it is running in development.
+    BOOTSTRAP_ADMIN_ENABLED: bool = os.getenv("BOOTSTRAP_ADMIN_ENABLED", "false").lower() == "true"
+    DEFAULT_ADMIN_USERNAME: str = os.getenv("DEFAULT_ADMIN_USERNAME", "")
+    DEFAULT_ADMIN_EMAIL: str = os.getenv("DEFAULT_ADMIN_EMAIL", "")
+    DEFAULT_ADMIN_PASSWORD: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
+    ENABLE_TEST_USER_ENDPOINT: bool = os.getenv("ENABLE_TEST_USER_ENDPOINT", "false").lower() == "true"
+    ENABLE_LANGSERVE_ROUTES: bool = os.getenv("ENABLE_LANGSERVE_ROUTES", "false").lower() == "true"
 
     # ==================== 文件上传配置 ====================
     # 最大文件大小 (50MB)
@@ -139,6 +149,16 @@ class Config:
 
     # 缓存过期时间（秒）
     CACHE_EXPIRE_SECONDS: int = int(os.getenv("CACHE_EXPIRE_SECONDS", "3600"))
+
+    @classmethod
+    def validate_runtime(cls) -> None:
+        """Fail fast for unsafe production configuration."""
+        if cls.is_production() and cls.SECRET_KEY == cls._default_secret:
+            raise RuntimeError("生产环境必须显式设置 SECRET_KEY")
+        if cls.is_production() and len(cls.SECRET_KEY) < 32:
+            raise RuntimeError("生产环境 SECRET_KEY 至少需要 32 个字符")
+        if cls.is_production() and "*" in cls.CORS_ORIGINS:
+            raise RuntimeError("生产环境不能使用通配 CORS 来源")
 
     @classmethod
     def is_production(cls) -> bool:

@@ -1,196 +1,112 @@
 # Void System
 
-Void System 是一个面向学习与成长场景的全栈应用，整合了任务管理、AI 对话和文档问答能力。
+Void System 是一个面向个人成长、学习与长期目标推进的工作台。它把目标、可执行行动、知识资料、AI 协作和成长记录放在同一套可追踪流程中，而不是把任务、自动任务和任务链做成彼此独立的系统。
 
-## 项目简介
+## 当前产品闭环
 
-项目采用“系统终端”交互理念，将目标管理、任务执行、过程反馈与知识问答统一到一个工作台中。  
-该设计源于“系统化成长”概念，但产品目标是严肃、可落地的学习与训练效率提升。
+1. 用户创建一个 Goal，描述真正想完成的结果。
+2. Planning Engine 将目标整理为可审阅的 Run 和 Step 图。
+3. 用户发布并推进 Run；Step 可以依赖、跳过、重试、暂停、等待确认或由 Agent 执行。
+4. Action、Event、Artifact、Approval、Checkpoint 记录执行过程和可恢复状态。
+5. 完成结果经过证据与评估后触发一次性 Reward Settlement，更新积分、经验与能力成长。
+6. 首页、行动工作台和成长页读取同一份执行事实，形成计划、执行、反馈和下一步的闭环。
 
-适用场景：
+## 核心能力
 
-- 将长期目标拆分为可执行任务
-- 在执行过程中保持连续反馈
-- 管理个人资料并进行知识检索问答
-- 将学习、健身、技能训练等规划型目标持续推进
+- **目标与行动**：Goal → Run → Step 是唯一的新执行模型，支持编辑、归档、重开和多次执行。
+- **行动规划**：将自然语言目标转换为可审阅方案，再由用户决定是否发布。
+- **自动安排**：Trigger 负责定时或事件触发 Run，不再维护另一套自动任务状态。
+- **Agent 执行基础**：Worker Lease、Heartbeat、Checkpoint、Run Command 和事件流支持可恢复执行与用户中途干预。
+- **对话协作**：分组、会话、临时附件和流式回复。
+- **资料与问答**：个人资料生命周期、共享资料维护、检索、引用、支持度和索引修复。
+- **成长记录**：能力方向、积分余额与积分活动；当前版本不展示没有明确价值闭环的商城。
+- **管理功能**：管理员可维护共享资料、模型连接和运行配置。
 
-## 核心功能
+## 架构方向
 
-- **任务模块**：根据目标生成任务模板，支持发布与历史回溯
-- **系统精灵**：基于历史会话实现连续对话
-- **文档问答**：支持文档上传、检索与 RAG 问答
-- **状态面板**：集中展示任务和阶段信息
+- `Workspace Core` 保存可迁移的领域合同与规则。
+- `Growth App` 是当前产品外壳，组合目标、行动、知识、成长和对话模块。
+- HTTP 路由只负责鉴权、传输格式和错误映射。
+- SQLite、Chroma、旧 advisor/task 实现通过 Adapter 接入；兼容接口不是新的业务事实源。
+- 旧 `/api/tasks`、`/api/task-chains` 等路径暂时保留，但写入会投影到 Goal、Run、Step、Event 和 Approval。新前端只使用规范接口。
 
-## 面向用户
-
-- 学生、自学者、备考人群
-- 需要稳定推进计划的个人成长用户（如健身、技能训练、职业成长）
-- 需要沉淀并复用个人知识资料的用户
-
-当前阶段以学习与知识管理场景为核心，后续将扩展到更广泛的个人规划场景。
+详细领域语言与不变量见 `CONTEXT.md`，架构决策见 `docs/adr/`，前端接口约束见 `docs/api-contract.md`。
 
 ## 技术栈
 
-- 后端：Python、FastAPI、LangChain、SQLite、ChromaDB
-- 前端：Vue 3、Vite、Element Plus、Axios
-- 包管理：`uv`（后端）+ `npm`（前端）
+- 后端：Python 3.11+、FastAPI、SQLite、LangChain adapters、ChromaDB
+- 前端：Vue 3、Vite、Vue Router、Pinia、Element Plus、Axios
+- 包管理：`uv` 和 `npm`
 
-## 环境要求
-
-- Python 3.11+
-- Node.js 18+
-- `uv`
-- 可用模型服务（按 `LLM_PROVIDER` / `EMBEDDING_PROVIDER` 配置）
-
-## 拉取与安装
+## 快速开始
 
 ```powershell
-# 1) 拉取仓库
-git clone <your-repo-url>
-cd <repo-folder>
-
-# 2) 安装后端依赖
-cd void-system-backend
-uv sync
-
-# 3) 安装前端依赖
-cd ..\void-system-frontend
-npm install
-```
-
-如需检查前端依赖安装是否完整，可执行：
-
-```powershell
-cd void-system-frontend
-npm run build
-```
-
-## 首次配置
-
-在 `void-system-backend` 目录创建 `.env`（可基于 `.env.example`）：
-
-```powershell
+# 后端
 cd void-system-backend
 copy .env.example .env
-```
-
-建议至少确认以下字段：
-
-- `SECRET_KEY`
-- `LLM_PROVIDER`
-- `CHAT_MODEL`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`（兼容接口时）
-- `EMBEDDING_PROVIDER`（建议 `ollama` 或 `openai`）
-
-说明：
-
-- 后端会优先读取 `void-system-backend/.env`
-- `EMBEDDING_PROVIDER` 如配置为 `ollama`，请确保本机 Ollama 服务可用
-
-## 启动项目
-
-### Windows 一键启动（推荐）
-
-在仓库根目录直接运行：
-
-```bat
-start-dev.bat
-```
-
-该脚本会启动两个终端：
-
-- 后端：`uv run main.py`
-- 前端：`npm run dev`
-
-### 手动启动（任意平台）
-
-后端：
-
-```powershell
-cd void-system-backend
+uv sync
 uv run main.py
-```
 
-前端：
-
-```powershell
+# 另一个终端启动前端
 cd void-system-frontend
+npm install
 npm run dev
 ```
+
+Windows 也可以在仓库根目录运行 `start-dev.bat`。
 
 默认地址：
 
+- 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:8000`
-- API 文档：`http://127.0.0.1:8000/docs`
-- 前端：`http://localhost:5173`
+- API 文档：`http://127.0.0.1:8000/api/docs`
 
-## 使用教程（标准流程）
-
-完成启动后，建议按以下顺序体验：
-
-1. **账户初始化**：注册并登录系统  
-2. **任务生成**：在任务页面输入目标，生成并发布任务  
-3. **连续对话**：在系统精灵页面发起多轮对话  
-4. **文档入库**：上传文档并确认处理状态为完成  
-5. **知识问答**：在问答页面针对文档提问并验证结果
-
-若以上流程全部正常，说明项目主功能链路已可用。
-
-## 常用命令
+需要联调其他后端端口时，可在启动前端前设置 `VITE_API_PROXY_TARGET`，例如：
 
 ```powershell
-# 后端启动
-cd void-system-backend
-uv run main.py
-
-# 前端启动
-cd void-system-frontend
+$env:VITE_API_PROXY_TARGET = "http://127.0.0.1:8011"
 npm run dev
+```
 
-# 前端构建
+## 配置
+
+从 `void-system-backend/.env.example` 创建 `.env`。生产环境必须设置唯一且足够长的 `SECRET_KEY`，并显式配置 `CORS_ORIGINS`、持久化数据库、模型服务和文件存储。管理员引导账号、测试用户接口和旧 LangServe 路由默认关闭。
+
+普通用户设置不暴露 provider、向量库、prompt 或数据库字段；模型连接和索引维护只出现在管理员页面。
+
+LM Studio 仅用于显式集成测试。需要测试时加载 `google/gemma-4-12b-qat`，服务地址为 `http://127.0.0.1:1234/v1`，不要把它写成项目默认配置。
+
+## 验证
+
+```powershell
+# 后端全量测试
+cd void-system-backend
+uv run python -m unittest discover -s tests -v
+
+# 前端生产构建
+cd ..\void-system-frontend
 npm run build
 ```
 
-## 联调检查清单
+显式 LM Studio 冒烟测试：
 
-- 后端日志中 `LLM_PROVIDER` 与 `EMBEDDING_PROVIDER` 正确
-- 前端页面可加载且登录成功
-- `/api/*` 请求返回非 404/502
-- `http://127.0.0.1:8000/docs` 可访问
-
-## 常见问题
-
-- **前端请求失败/跨域**：确认后端在 `127.0.0.1:8000`，并通过 Vite 代理访问 `/api`
-- **AI 调用无响应**：检查 `.env` 模型配置、`OPENAI_BASE_URL` 和密钥
-- **RAG 效果异常**：确认文档上传后已完成向量化
-- **启动脚本不可用**：改用手动启动命令分别运行前后端
-- **DeepSeek 调用失败**：确认 `OPENAI_BASE_URL` 使用兼容接口地址且包含 `/v1`
-
-## 部署建议
-
-- 后端建议使用 `uvicorn` 多 worker 并置于反向代理后（Nginx/Caddy）
-- 前端执行 `npm run build` 后进行静态托管
-- 生产环境关闭调试、单独管理密钥并配置备份
-
-## 项目结构（顶层）
-
-```text
-.
-├── start-dev.bat
-├── void-system-backend/
-├── void-system-frontend/
-└── docs/
+```powershell
+cd void-system-backend
+$env:RUN_LMSTUDIO_INTEGRATION = "1"
+uv run python tools/test_lmstudio_gemma.py
 ```
 
 ## 文档入口
 
-- 后端：`void-system-backend/README.md`
-- 前端：`void-system-frontend/README.md`
-- 项目理念：`docs/project-concept.md`
-- 历史资料：`docs/archive/README.md`
+- `CONTEXT.md`：领域语言、架构不变量和迁移方向
+- `docs/api-contract.md`：前端可依赖的接口合同
+- `docs/adr/`：已确认的架构决策
+- `docs/next-iteration-product-loop.md`：商城、系统伙伴、上下文工程、长期记忆和用户画像的下一迭代范围
+- `void-system-backend/README.md`：后端开发与部署
+- `void-system-frontend/README.md`：前端页面与联调
 
 ## 安全说明
 
-- 不要提交真实密钥、用户数据、数据库快照
-- 本地敏感配置仅放在 `.env`，并确保被 `.gitignore` 屏蔽
+- 不要提交 `.env`、真实密钥、数据库、用户文件或向量索引。
+- 管理员账号必须通过环境变量显式引导或由部署流程创建；仓库不提供固定生产密码。
+- 用户数据访问必须保持 owner-scoped；管理员操作和 Agent 执行都应可审计。

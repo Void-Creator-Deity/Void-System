@@ -1,153 +1,189 @@
-"""
-Void System - LLM Factory
---------------------------
-统一的 LLM 工厂模块，支持本地 Ollama 模式和各类 API 模式。
-通过 config.py 中的 LLM_PROVIDER 环境变量切换提供商。
+"""Factory functions for models selected by an explicit runtime configuration."""
+from __future__ import annotations
 
-支持的提供商 (LLM_PROVIDER):
-  - ollama       : 本地 Ollama (默认)
-  - openai       : OpenAI (gpt-4o, gpt-4-turbo 等)
-  - deepseek     : DeepSeek API (兼容 OpenAI 协议)
-  - gemini       : Google Gemini
-  - openai_compat: 任意兼容 OpenAI 协议的第三方 API
-
-嵌入模型 (EMBEDDING_PROVIDER):
-  - ollama       : 本地 Ollama Embeddings (默认)
-  - openai       : OpenAI text-embedding-*
-  - huggingface  : HuggingFace 本地嵌入 (不需要 API Key)
-"""
+import json
 import logging
-from typing import Any, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, List, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
+
 from config import config
+from core.runtime_settings import RuntimeSettings
+
 
 logger = logging.getLogger("void-system-llm-factory")
+
+_active_runtime_settings: ContextVar[Optional[RuntimeSettings]] = ContextVar(
+    "void_system_active_runtime_settings", default=None
+)
+
+
+@contextmanager
+def runtime_settings_scope(settings: RuntimeSettings):
+    """Bind application-owned settings while a legacy adapter invokes AI code."""
+    token = _active_runtime_settings.set(settings)
+    try:
+        yield
+    finally:
+        _active_runtime_settings.reset(token)
+
+
+def active_runtime_settings() -> Optional[RuntimeSettings]:
+    """Return request-scoped settings for adapters that cannot accept parameters yet."""
+    return _active_runtime_settings.get()
+
+
+def _resolve_runtime(settings: Optional[RuntimeSettings]) -> RuntimeSettings:
+    return settings or active_runtime_settings() or config
 
 
 def get_chat_llm(
     temperature: float = 0.5,
     json_mode: bool = False,
+    settings: Optional[RuntimeSettings] = None,
 ) -> Any:
-    """
-    根据配置返回合适的 ChatLLM 实例。
+    """Build a chat model from the supplied application settings.
 
-    Args:
-        temperature: 温度参数 (创意度)
-        json_mode:   是否强制 JSON 输出 (仅 Ollama 支持 format='json')
-
-    Returns:
-        LangChain ChatModel 实例
+    The legacy global configuration remains a compatibility fallback for callers
+    outside application composition. New paths should always pass settings.
     """
-    provider = config.LLM_PROVIDER.lower()
-    logger.info(f"🤖 初始化 LLM 提供商: {provider} | 模型: {config.CHAT_MODEL}")
+    runtime = _resolve_runtime(settings)
+    provider = runtime.LLM_PROVIDER.lower()
+    logger.info("Initializing chat provider=%s model=%s", provider, runtime.CHAT_MODEL)
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
+
         kwargs = {
-            "model": config.CHAT_MODEL,
-            "base_url": config.OLLAMA_BASE_URL,
+            "model": _resolve_ollama_chat_model(runtime.CHAT_MODEL, runtime.OLLAMA_BASE_URL),
+            "base_url": runtime.OLLAMA_BASE_URL,
             "temperature": temperature,
         }
         if json_mode:
             kwargs["format"] = "json"
         return ChatOllama(**kwargs)
-
-    elif provider == "openai":
+    if provider == "openai":
         from langchain_openai import ChatOpenAI
-        _require_key("OPENAI_API_KEY")
-        return ChatOpenAI(
-            model=config.CHAT_MODEL,
-            temperature=temperature,
-            api_key=config.OPENAI_API_KEY,
-        )
 
-    elif provider == "deepseek":
+        _require_key("OPENAI_API_KEY", settings=runtime)
+        return ChatOpenAI(model=runtime.CHAT_MODEL, temperature=temperature, api_key=runtime.OPENAI_API_KEY)
+    if provider == "deepseek":
         from langchain_openai import ChatOpenAI
-        _require_key("OPENAI_API_KEY", hint="DeepSeek 使用 OPENAI_API_KEY 存放 DeepSeek API Key")
-        return ChatOpenAI(
-            model=config.CHAT_MODEL or "deepseek-chat",
-            temperature=temperature,
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_BASE_URL or "https://api.deepseek.com/v1",
-        )
 
-    elif provider in ("openai_compat", "compatible"):
-        # 支持 moonshot, qwen, yi, groq 等任意 OpenAI 兼容的第三方 API
+        _require_key("OPENAI_API_KEY", "DeepSeek uses OPENAI_API_KEY", runtime)
+        return ChatOpenAI(
+            model=runtime.CHAT_MODEL or "deepseek-chat",
+            temperature=temperature,
+            api_key=runtime.OPENAI_API_KEY,
+            base_url=runtime.OPENAI_BASE_URL or "https://api.deepseek.com/v1",
+        )
+    if provider in {"openai_compat", "compatible"}:
         from langchain_openai import ChatOpenAI
-        _require_key("OPENAI_API_KEY", hint="请设置 OPENAI_API_KEY 为对应平台的 API Key")
-        _require_key("OPENAI_BASE_URL", hint="请设置 OPENAI_BASE_URL 为对应平台的 Base URL")
-        return ChatOpenAI(
-            model=config.CHAT_MODEL,
-            temperature=temperature,
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_BASE_URL,
-        )
 
-    elif provider == "gemini":
+        _require_key("OPENAI_API_KEY", "Set OPENAI_API_KEY for the compatible provider", runtime)
+        _require_key("OPENAI_BASE_URL", "Set OPENAI_BASE_URL for the compatible provider", runtime)
+        return ChatOpenAI(
+            model=runtime.CHAT_MODEL,
+            temperature=temperature,
+            api_key=runtime.OPENAI_API_KEY,
+            base_url=runtime.OPENAI_BASE_URL,
+        )
+    if provider in {"lmstudio", "lm_studio"}:
+        from langchain_openai import ChatOpenAI
+
+        # LM Studio exposes the OpenAI chat protocol locally and accepts a
+        # placeholder token. Keeping this provider explicit avoids persisting a
+        # real cloud secret solely to test a local model.
+        return ChatOpenAI(
+            model=runtime.CHAT_MODEL,
+            temperature=temperature,
+            api_key="lm-studio",
+            base_url=runtime.OPENAI_BASE_URL or "http://127.0.0.1:1234/v1",
+        )
+    if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        _require_key("GOOGLE_API_KEY")
+
+        _require_key("GOOGLE_API_KEY", settings=runtime)
         return ChatGoogleGenerativeAI(
-            model=config.CHAT_MODEL or "gemini-1.5-flash",
+            model=runtime.CHAT_MODEL or "gemini-1.5-flash",
             temperature=temperature,
-            google_api_key=config.GOOGLE_API_KEY,
+            google_api_key=runtime.GOOGLE_API_KEY,
         )
 
-    else:
-        logger.warning(f"⚠️ 未知的 LLM_PROVIDER: '{provider}'，回退到 Ollama")
-        from langchain_ollama import ChatOllama
-        return ChatOllama(
-            model=config.CHAT_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
-            temperature=temperature,
-        )
+    logger.warning("Unknown LLM provider=%s; falling back to Ollama", provider)
+    from langchain_ollama import ChatOllama
+
+    return ChatOllama(
+        model=_resolve_ollama_chat_model(runtime.CHAT_MODEL, runtime.OLLAMA_BASE_URL),
+        base_url=runtime.OLLAMA_BASE_URL,
+        temperature=temperature,
+    )
 
 
-def get_embeddings() -> Any:
-    """
-    根据配置返回合适的 Embeddings 实例。
-
-    Returns:
-        LangChain Embeddings 实例
-    """
-    provider = config.EMBEDDING_PROVIDER.lower()
-    logger.info(f"🔢 初始化 Embeddings 提供商: {provider} | 模型: {config.EMBEDDING_MODEL}")
+def get_embeddings(settings: Optional[RuntimeSettings] = None) -> Any:
+    """Build embeddings from the supplied application settings."""
+    runtime = _resolve_runtime(settings)
+    provider = runtime.EMBEDDING_PROVIDER.lower()
+    logger.info("Initializing embeddings provider=%s model=%s", provider, runtime.EMBEDDING_MODEL)
 
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
-        return OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
-        )
 
-    elif provider == "openai":
+        return OllamaEmbeddings(model=runtime.EMBEDDING_MODEL, base_url=runtime.OLLAMA_BASE_URL)
+    if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
-        _require_key("OPENAI_API_KEY")
+
+        _require_key("OPENAI_API_KEY", settings=runtime)
         return OpenAIEmbeddings(
-            model=config.EMBEDDING_MODEL or "text-embedding-3-small",
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_BASE_URL or None,
+            model=runtime.EMBEDDING_MODEL or "text-embedding-3-small",
+            api_key=runtime.OPENAI_API_KEY,
+            base_url=runtime.OPENAI_BASE_URL or None,
         )
-
-    elif provider == "huggingface":
+    if provider == "huggingface":
         raise EnvironmentError(
-            "EMBEDDING_PROVIDER=huggingface 已在当前项目中移除。"
-            "请改用 EMBEDDING_PROVIDER=ollama 或 EMBEDDING_PROVIDER=openai。"
+            "HuggingFace embeddings must be configured by the vector adapter, not llm_factory."
         )
 
-    else:
-        logger.warning(f"⚠️ 未知的 EMBEDDING_PROVIDER: '{provider}'，回退到 Ollama")
-        from langchain_ollama import OllamaEmbeddings
-        return OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
-        )
+    logger.warning("Unknown embeddings provider=%s; falling back to Ollama", provider)
+    from langchain_ollama import OllamaEmbeddings
+
+    return OllamaEmbeddings(model=runtime.EMBEDDING_MODEL, base_url=runtime.OLLAMA_BASE_URL)
 
 
-def _require_key(key_name: str, hint: str = "") -> None:
-    """检查必要的 API Key 是否已配置"""
-    value = getattr(config, key_name, None)
-    if not value:
-        msg = f"❌ 缺少必要的 API Key: {key_name}"
-        if hint:
-            msg += f" ({hint})"
-        msg += f"。请在 .env 文件中设置 {key_name}=your_key"
-        raise EnvironmentError(msg)
+def _require_key(
+    key_name: str,
+    hint: str = "",
+    settings: Optional[RuntimeSettings] = None,
+) -> None:
+    if getattr(settings or config, key_name, None):
+        return
+    message = f"Missing required configuration: {key_name}"
+    if hint:
+        message = f"{message} ({hint})"
+    raise EnvironmentError(message)
+
+
+def _resolve_ollama_chat_model(configured: str, base_url: str) -> str:
+    preferred = str(configured or "").strip()
+    available = _list_ollama_models(base_url)
+    if not preferred:
+        return available[0] if available else preferred
+    if not available or preferred in available:
+        return preferred
+    logger.warning("Configured Ollama model=%s is unavailable; using %s", preferred, available[0])
+    return available[0]
+
+
+def _list_ollama_models(base_url: str) -> List[str]:
+    base = str(base_url or "http://127.0.0.1:11434").rstrip("/")
+    try:
+        with urlopen(f"{base}/api/tags", timeout=2) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, ValueError):
+        return []
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return []
+    return [str(row["name"]) for row in models if isinstance(row, dict) and row.get("name")]

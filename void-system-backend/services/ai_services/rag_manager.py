@@ -20,48 +20,49 @@ if backend_dir not in sys.path:
 
 from database import Database
 from api.user_document_parser import document_parser
-from config import config
+from core.runtime_settings import RuntimeSettings
 from services.ai_services.llm_factory import get_embeddings
 
 class SystemRAGManager:
-    """
-    系统RAG文档管理器 - 仅管理员操作
-    负责系统知识库的文档管理，包括添加、删除、列出和更新文档。
-    """
+    """Manage administrator-owned documents in the system knowledge index."""
 
-    def __init__(self, chroma_dir: Optional[str] = None, db_path: str = "void_system.db"):
-        """
-        初始化RAG文档管理器
-        """
-        self.chroma_dir = config.get_chroma_path() if chroma_dir is None else Path(chroma_dir).resolve()
+    def __init__(
+        self,
+        chroma_dir: Optional[str] = None,
+        database: Optional[Database] = None,
+        settings: Optional[RuntimeSettings] = None,
+    ):
+        """Initialize system knowledge resources owned by the HTTP application."""
+        self.settings = settings or RuntimeSettings.from_environment()
+        self.chroma_dir = (
+            self.settings.get_chroma_path()
+            if chroma_dir is None
+            else Path(chroma_dir).resolve()
+        )
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
-
-        # 与 qa_chain、用户向量共用同一嵌入工厂，保证入库与检索维度、模型一致
-        self.embeddings = get_embeddings()
-
-        # 初始化向量数据库
+        self.embeddings = get_embeddings(settings=self.settings)
         self.vector_db = Chroma(
             persist_directory=str(self.chroma_dir),
             embedding_function=self.embeddings,
         )
-
-        # 初始化数据库连接
-        self.db = Database(db_path)
-
-        # 智能切片器集合
+        self.db = database or Database(self.settings.get_database_path())
         self.default_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         self.code_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1200, chunk_overlap=150,
-            separators=["\ndef ", "\nclass ", "\n\n", "\n", " ", ""]
+            chunk_size=1200,
+            chunk_overlap=150,
+            separators=["\ndef ", "\nclass ", "\n\n", "\n", " ", ""],
         )
         self.md_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1200, chunk_overlap=200,
-            separators=["\n# ", "\n## ", "\n### ", "\n\n", "\n", " ", ""]
+            chunk_size=1200,
+            chunk_overlap=200,
+            separators=["\n# ", "\n## ", "\n### ", "\n\n", "\n", " ", ""],
         )
 
     def _get_splitter(self, file_type: str):
-        if file_type in {'py', 'js', 'java', 'cpp', 'ts'}: return self.code_splitter
-        if file_type == 'md': return self.md_splitter
+        if file_type in {"py", "js", "java", "cpp", "ts"}:
+            return self.code_splitter
+        if file_type == "md":
+            return self.md_splitter
         return self.default_splitter
 
     def add_document_async(self, file_data: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,7 +165,9 @@ class SystemRAGManager:
             if not doc:
                 return {
                     "success": False,
-                    "message": "文档不存在"
+                    "message": "Knowledge document not found",
+                    "error_code": "RAG_DOCUMENT_NOT_FOUND",
+                    "status_code": 404,
                 }
 
             # 从Chroma中删除向量
@@ -222,7 +225,9 @@ class SystemRAGManager:
             if not doc:
                 return {
                     "success": False,
-                    "message": "文档不存在"
+                    "message": "Knowledge document not found",
+                    "error_code": "RAG_DOCUMENT_NOT_FOUND",
+                    "status_code": 404,
                 }
 
             return {

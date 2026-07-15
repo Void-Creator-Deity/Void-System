@@ -1,0 +1,60 @@
+"""Portable contracts for the user-facing task workspace."""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence
+
+
+class TaskWorkspaceError(Exception):
+    """Expected workspace failure that any transport can translate."""
+
+    def __init__(self, message: str, code: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.status_code = status_code
+
+
+class TaskWorkspaceRepository(Protocol):
+    """Persistence seam for task catalog, workspace, and workflow containers."""
+
+    def list_attributes(self, user_id: str) -> List[Dict[str, Any]]: ...
+
+    def create_task(self, user_id: str, values: Mapping[str, Any]) -> str: ...
+    def list_workspace_tasks(
+        self,
+        user_id: str,
+        *,
+        task_status: Optional[str] = None,
+        category_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Sequence[Dict[str, Any]]: ...
+    def get_workspace_task(self, user_id: str, task_id: str) -> Optional[Dict[str, Any]]: ...
+    def delete_workspace_task(self, user_id: str, task_id: str) -> bool: ...
+    def update_task_progress(self, user_id: str, task_id: str, progress: int) -> bool: ...
+    def task_statistics(self, user_id: str) -> Dict[str, Any]: ...
+
+    def list_categories(self, user_id: str) -> Sequence[Dict[str, Any]]: ...
+    def get_category(self, user_id: str, category_id: str) -> Optional[Dict[str, Any]]: ...
+    def create_category(self, user_id: str, values: Mapping[str, Any]) -> str: ...
+    def update_category(
+        self, user_id: str, category_id: str, values: Mapping[str, Any]
+    ) -> bool: ...
+    def delete_category(self, user_id: str, category_id: str) -> bool: ...
+
+    def create_chain(
+        self, user_id: str, chain_name: str, description: str, generation_status: str
+    ) -> str: ...
+    def list_chains(self, user_id: str) -> Sequence[Dict[str, Any]]: ...
+    def get_chain(self, user_id: str, chain_id: str) -> Optional[Dict[str, Any]]: ...
+    def delete_chain(self, user_id: str, chain_id: str) -> bool: ...
+    def update_chain_generation(
+        self,
+        user_id: str,
+        chain_id: str,
+        generation_status: str,
+        generation_error: Optional[str] = None,
+    ) -> bool: ...
+    def create_chain_steps(
+        self, user_id: str, chain_id: str, steps: Sequence[Mapping[str, Any]]
+    ) -> List[str]: ...

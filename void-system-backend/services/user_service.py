@@ -1,355 +1,237 @@
-"""
-Void System - User Service
-用户业务逻辑服务，实现用户注册、登录、信息管理等功能
-"""
+"""Identity workflow: registration, sessions, profile, and password rotation."""
+from __future__ import annotations
+
+import hmac
 import logging
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
+import secrets
+from datetime import timedelta
+from typing import Any, Dict, Optional
 
 from config import config
+from core.identity_contracts import IdentityRepository
+from core.runtime_settings import RuntimeSettings
+from adapters.sqlite.identity_repository import SQLiteIdentityRepository
 from database import Database
 from errors import ErrorCode, VoidSystemException, create_auth_error
-from tools.utils import sanitize_string, get_current_timestamp
-from middleware.auth import get_password_hash, verify_password, create_access_token, create_refresh_token
+from middleware.auth import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_password_hash,
+    token_digest,
+    utc_now,
+    utc_timestamp,
+    verify_password,
+)
+from tools.utils import sanitize_string
+
 
 logger = logging.getLogger(__name__)
 
 
 class UserService:
-    """用户服务类"""
+    """Own the account lifecycle behind stable HTTP-facing operations."""
 
-    def __init__(self, db: Database):
-        """
-        初始化用户服务
-
-        Args:
-            db: 数据库实例
-        """
-        self.db = db
+    def __init__(
+        self,
+        repository: IdentityRepository,
+        settings: Optional[RuntimeSettings] = None,
+    ):
+        self.repository = repository
+        self.settings = settings or config
 
     def register_user(self, email: str, password: str, username: str) -> Dict[str, Any]:
-        """
-        用户注册
-        """
-        # 清理输入
-        username = sanitize_string(username, 50)
-        email = sanitize_string(email, 100)
-        password = sanitize_string(password, 100)
-        
-        # 检查邮箱是否已存在
-        if self.db.get_user_by_email(email):
-            raise VoidSystemException.from_error_code(ErrorCode.USER_ALREADY_EXISTS, details={"message": "该邮箱已注册"})
-        
-        # 检查用户名是否已存在
-        if self.db.get_user_by_username(username):
-             raise VoidSystemException.from_error_code(ErrorCode.USER_ALREADY_EXISTS, details={"message": "档案代号已存在"})
-        
-        # 创建密码哈希
-        password_hash = get_password_hash(password)
-        
-        # 入库 (昵称同步为用户名)
-        user_id = self.db.add_user(
+        username = sanitize_string(username, 50).strip()
+        email = email.strip().lower()
+        if not username:
+            raise VoidSystemException.from_error_code(ErrorCode.INVALID_REQUEST)
+        if self.repository.get_user_by_email(email):
+            raise VoidSystemException.from_error_code(ErrorCode.EMAIL_IN_USE)
+        if self.repository.get_user_by_username(username):
+            raise VoidSystemException.from_error_code(ErrorCode.USERNAME_IN_USE)
+
+        user_id = self.repository.add_user(
             username=username,
             email=email,
-            password_hash=password_hash
+            password_hash=get_password_hash(password),
         )
-        
-        return {
-            "user_id": user_id,
-            "username": username,
-            "email": email,
-            "role": "user"
-        }
-    
+        if not user_id:
+            # The database unique constraints remain authoritative under concurrent requests.
+            if self.repository.get_user_by_email(email):
+                raise VoidSystemException.from_error_code(ErrorCode.EMAIL_IN_USE)
+            raise VoidSystemException.from_error_code(ErrorCode.USERNAME_IN_USE)
+        return {"user_id": user_id, "username": username, "email": email, "role": "user"}
 
-    def authenticate_user(self, identifier: str, password: str) -> Dict[str, Any]:
-        """
-        用户认证 (支持通过邮箱或用户名登录)
-        """
-        # 登录策略控制
-        is_email = "@" in identifier
-        
-        user = None
-        if is_email:
-            # 1. 尝试邮箱登录 (普通用户标准)
-            user = self.db.get_user_by_email(identifier)
+    def authenticate_user(
+        self,
+        identifier: str,
+        password: str,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        identifier = identifier.strip()
+        if "@" in identifier:
+            user = self.repository.get_user_by_email(identifier.lower())
         else:
-            # 2. 尝试用户名登录 (管理员/特殊用户标准)
-            user = self.db.get_user_by_username(identifier)
-            if user and user.get("role") != "admin" and identifier != "test":
-                # 非管理员禁止使用用户名登录
-                raise VoidSystemException.from_error_code(
-                    ErrorCode.INVALID_CREDENTIALS, 
-                    details={"message": "普通账号请使用邮箱登录"}
-                )
-            
-        if not user:
+            user = self.repository.get_user_by_username(identifier)
+        if not user or not verify_password(password, user.get("password_hash") or ""):
             raise create_auth_error(ErrorCode.INVALID_CREDENTIALS)
-
-        # 验证密码
-        if not verify_password(password, user["password_hash"]):
-            raise create_auth_error(ErrorCode.INVALID_CREDENTIALS)
-
-        # 检查用户状态
         if not user.get("is_active", True):
             raise create_auth_error(ErrorCode.USER_INACTIVE)
 
-        # 更新最后登录时间
-        self.db.update_last_login(user["user_id"])
+        self.repository.update_last_login(user["user_id"])
+        session_id = secrets.token_urlsafe(24)
+        token_result = self._issue_token_pair(user, session_id)
+        self.repository.create_auth_session(
+            session_id=session_id,
+            user_id=user["user_id"],
+            refresh_token_hash=token_digest(token_result["refresh_token"]),
+            expires_at=token_result["refresh_expires_at"],
+            created_at=utc_timestamp(),
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+        logger.info("Login succeeded for user_id=%s", user["user_id"])
+        return self._public_token_result(token_result, user)
 
-        # 生成令牌
-        access_token = create_access_token({
-            "sub": user["user_id"],
-            "username": user["username"]
-        })
+    def refresh_user_token(self, refresh_token: str) -> Dict[str, Any]:
+        payload = decode_token(refresh_token, "refresh", self.settings)
+        user_id = str(payload["sub"])
+        session_id = str(payload["sid"])
+        user = self.repository.get_user_by_id(user_id)
+        if not user or not user.get("is_active", True):
+            raise create_auth_error(ErrorCode.TOKEN_INVALID)
+        if int(payload.get("ver", -1)) != int(user.get("token_version", 0)):
+            raise create_auth_error(ErrorCode.TOKEN_INVALID)
 
-        refresh_token = create_refresh_token({
-            "sub": user["user_id"],
-            "username": user["username"]
-        })
+        session = self.repository.get_auth_session(session_id, user_id)
+        refresh_hash = token_digest(refresh_token)
+        if (
+            not session
+            or session.get("revoked_at")
+            or not hmac.compare_digest(session["refresh_token_hash"], refresh_hash)
+        ):
+            if session and not session.get("revoked_at"):
+                self.repository.revoke_auth_session(session_id, user_id, utc_timestamp())
+            raise create_auth_error(ErrorCode.TOKEN_INVALID)
 
-        logger.info(f"登录成功: {user['username']} ({user['email']})")
+        token_result = self._issue_token_pair(user, session_id)
+        if not self.repository.rotate_auth_session(
+            session_id=session_id,
+            user_id=user_id,
+            expected_refresh_hash=refresh_hash,
+            replacement_refresh_hash=token_digest(token_result["refresh_token"]),
+            expires_at=token_result["refresh_expires_at"],
+            used_at=utc_timestamp(),
+        ):
+            raise create_auth_error(ErrorCode.TOKEN_INVALID)
+        logger.info("Refresh succeeded for user_id=%s", user_id)
+        return self._public_token_result(token_result, user)
 
+    def logout(self, user_id: str, session_id: str, all_sessions: bool = False) -> int:
+        revoked_at = utc_timestamp()
+        if all_sessions:
+            return self.repository.revoke_all_auth_sessions(user_id, revoked_at)
+        return int(self.repository.revoke_auth_session(session_id, user_id, revoked_at))
+
+    def get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        user = self.repository.get_user_by_id(user_id)
+        if not user:
+            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
+        return self._public_user(user)
+
+    def update_user_profile(self, user_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        user = self.repository.get_user_by_id(user_id)
+        if not user:
+            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
+
+        email = update_data.get("email")
+        username = update_data.get("username")
+        if email is not None:
+            email = str(email).strip().lower()
+            existing_user = self.repository.get_user_by_email(email)
+            if existing_user and existing_user["user_id"] != user_id:
+                raise VoidSystemException.from_error_code(ErrorCode.EMAIL_IN_USE)
+        if username is not None:
+            username = sanitize_string(str(username), 50).strip()
+            existing_user = self.repository.get_user_by_username(username)
+            if existing_user and existing_user["user_id"] != user_id:
+                raise VoidSystemException.from_error_code(ErrorCode.USERNAME_IN_USE)
+
+        changed = self.repository.update_user_profile(
+            user_id=user_id,
+            email=email,
+            username=username,
+            learning_goal=update_data.get("learning_goal"),
+            specialization=update_data.get("specialization"),
+        )
+        if not changed:
+            raise VoidSystemException.from_error_code(ErrorCode.INVALID_REQUEST)
+        return self.get_user_profile(user_id)
+
+    def change_user_password(self, user_id: str, old_password: str, new_password: str) -> bool:
+        user = self.repository.get_user_by_id(user_id)
+        if not user:
+            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
+        if not verify_password(old_password, user.get("password_hash") or ""):
+            raise create_auth_error(ErrorCode.INVALID_CREDENTIALS)
+        if verify_password(new_password, user.get("password_hash") or ""):
+            raise VoidSystemException.from_error_code(
+                ErrorCode.PASSWORD_POLICY_VIOLATION,
+                details={"reason": "新密码不能与当前密码相同"},
+            )
+
+        changed_at = utc_timestamp()
+        if not self.repository.update_user_password(user_id, get_password_hash(new_password), changed_at):
+            raise VoidSystemException.from_error_code(ErrorCode.SYSTEM_ERROR)
+        self.repository.revoke_all_auth_sessions(user_id, changed_at)
+        logger.info("Password rotated for user_id=%s", user_id)
+        return True
+
+    def get_user_stats(self, user_id: str) -> Dict[str, Any]:
+        user = self.repository.get_user_by_id(user_id)
+        if not user:
+            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
+        return self.repository.get_user_stats(user_id)
+
+    @staticmethod
+    def _public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+        excluded = {"password_hash", "token_version", "password_changed_at"}
+        return {key: value for key, value in user.items() if key not in excluded}
+
+    def _issue_token_pair(self, user: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+        version = int(user.get("token_version", 0))
+        claims = {"sub": user["user_id"], "sid": session_id, "ver": version}
+        now = utc_now()
+        refresh_expires_at = now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
         return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
+            "access_token": create_access_token(claims, self.settings),
+            "refresh_token": create_refresh_token(claims, self.settings),
             "token_type": "bearer",
-            "expires_in": config.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "expires_in": self.settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "refresh_expires_at": utc_timestamp(refresh_expires_at),
+        }
+
+    def _public_token_result(self, token_result: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "access_token": token_result["access_token"],
+            "refresh_token": token_result["refresh_token"],
+            "token_type": token_result["token_type"],
+            "expires_in": token_result["expires_in"],
             "user": {
                 "user_id": user["user_id"],
                 "username": user["username"],
                 "email": user["email"],
                 "level": user.get("level", 1),
-                "role": user["role"]
-            }
+                "role": user.get("role", "user"),
+            },
         }
 
-    def refresh_user_token(self, refresh_token: str) -> Dict[str, Any]:
-        """
-        刷新用户访问令牌
 
-        Args:
-            refresh_token: 刷新令牌
-
-        Returns:
-            新令牌信息
-
-        Raises:
-            VoidSystemException: 令牌无效
-        """
-        try:
-            from jose import jwt
-
-            # 解码刷新令牌
-            payload = jwt.decode(refresh_token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
-            sub: str = payload.get("sub")
-
-            if not sub:
-                raise create_auth_error(ErrorCode.TOKEN_INVALID)
-
-            # 验证用户存在 (尝试作为ID，或作为用户名 fallback)
-            user = self.db.get_user_by_id(sub)
-            if not user:
-                user = self.db.get_user_by_username(sub)
-                
-            if not user:
-                raise create_auth_error(ErrorCode.USER_NOT_FOUND)
-
-            # 生成新令牌
-            new_access_token = create_access_token({
-                "sub": user["user_id"],
-                "username": user["username"]
-            })
-
-            logger.info(f"用户令牌刷新成功: {user['username']}")
-
-            return {
-                "access_token": new_access_token,
-                "token_type": "bearer",
-                "expires_in": config.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-            }
-
-        except Exception as e:
-            logger.error(f"令牌刷新失败: {e}")
-            raise create_auth_error(ErrorCode.TOKEN_INVALID)
-
-    def get_user_profile(self, user_id: str) -> Dict[str, Any]:
-        """
-        获取用户资料
-
-        Args:
-            user_id: 用户ID
-
-        Returns:
-            用户资料字典
-
-        Raises:
-            VoidSystemException: 用户不存在
-        """
-        user = self.db.get_user_by_id(user_id)
-        if not user:
-            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
-
-        # 移除敏感信息
-        user_profile = user.copy()
-        if "password_hash" in user_profile:
-            del user_profile["password_hash"]
-
-        return user_profile
-
-    def update_user_profile(self, user_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        更新用户资料
-
-        Args:
-            user_id: 用户ID
-            update_data: 更新数据
-
-        Returns:
-            更新后的用户资料
-
-        Raises:
-            VoidSystemException: 用户不存在或更新失败
-        """
-        # 验证用户存在
-        user = self.db.get_user_by_id(user_id)
-        if not user:
-            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
-
-        # 清理输入数据
-        allowed_fields = ["username"]
-        cleaned_data = {}
-
-        for field in allowed_fields:
-            if field in update_data:
-                value = update_data[field]
-                if value is not None:
-                    cleaned_data[field] = sanitize_string(str(value), 50)
-
-        if not cleaned_data:
-            raise VoidSystemException.from_error_code(
-                ErrorCode.INVALID_REQUEST,
-                details={"message": "没有有效的更新字段"}
-            )
-
-        # 更新数据库
-        try:
-            self.db.update_user(user_id, cleaned_data)
-
-            # 获取更新后的用户资料
-            updated_user = self.db.get_user_by_id(user_id)
-            user_profile = updated_user.copy()
-            if "password_hash" in user_profile:
-                del user_profile["password_hash"]
-
-            logger.info(f"用户资料更新成功: {user_id}")
-            return user_profile
-
-        except Exception as e:
-            logger.error(f"用户资料更新失败: {user_id}, 错误: {e}")
-            raise VoidSystemException.from_error_code(
-                ErrorCode.SYSTEM_ERROR,
-                details={"operation": "user_profile_update"}
-            )
-
-    def change_user_password(self, user_id: str, old_password: str, new_password: str) -> bool:
-        """
-        修改用户密码
-
-        Args:
-            user_id: 用户ID
-            old_password: 旧密码
-            new_password: 新密码
-
-        Returns:
-            修改是否成功
-
-        Raises:
-            VoidSystemException: 密码验证失败或修改失败
-        """
-        # 获取用户
-        user = self.db.get_user_by_id(user_id)
-        if not user:
-            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
-
-        # 验证旧密码
-        if not verify_password(old_password, user["password_hash"]):
-            raise create_auth_error(ErrorCode.INVALID_CREDENTIALS)
-
-        # 验证新密码
-        if len(new_password) < 6:
-            raise VoidSystemException.from_error_code(
-                ErrorCode.INVALID_REQUEST,
-                details={"message": "新密码长度至少6位"}
-            )
-
-        # 生成新密码哈希
-        new_password_hash = get_password_hash(new_password)
-
-        # 更新密码
-        try:
-            self.db.update_user(user_id, {"password_hash": new_password_hash})
-            logger.info(f"用户密码修改成功: {user_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"用户密码修改失败: {user_id}, 错误: {e}")
-            raise VoidSystemException.from_error_code(
-                ErrorCode.SYSTEM_ERROR,
-                details={"operation": "password_change"}
-            )
-
-    def get_user_stats(self, user_id: str) -> Dict[str, Any]:
-        """
-        获取用户统计信息
-
-        Args:
-            user_id: 用户ID
-
-        Returns:
-            用户统计信息字典
-        """
-        try:
-            # 获取用户基本信息
-            user = self.db.get_user_by_id(user_id)
-            if not user:
-                raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
-
-            # 从数据库获取详细统计
-            db_stats = self.db.get_user_stats(user_id)
-
-            stats = {
-                "user_id": user_id,
-                "level": user.get("level", 1),
-                "experience": user.get("experience", 0),
-                "role": user.get("role", "user"),
-                "is_active": user.get("is_active", True),
-                "created_at": user.get("created_at"),
-                "last_login": user.get("last_login"),
-                "documents_count": db_stats.get("total_documents", 0),
-                "tasks_completed": db_stats.get("completed_tasks", 0),
-                "tasks_total": db_stats.get("total_tasks", 0),
-                "tasks_in_progress": db_stats.get("in_progress_tasks", 0),
-                "completion_rate": db_stats.get("completion_rate", 0),
-                "total_earned_coins": db_stats.get("total_earned_coins", 0),
-                "total_spent_coins": db_stats.get("total_spent_coins", 0)
-            }
-
-            return stats
-
-        except VoidSystemException:
-            raise
-        except Exception as e:
-            logger.error(f"获取用户统计失败: {user_id}, 错误: {e}")
-            raise VoidSystemException.from_error_code(
-                ErrorCode.SYSTEM_ERROR,
-                details={"operation": "user_stats"}
-            )
-
-
-# 全局用户服务实例
-def get_user_service(db: Database = None) -> UserService:
-    """获取用户服务实例"""
-    if db is None:
-        db = Database(config.get_database_path())
-    return UserService(db)
+def get_user_service(
+    db: Optional[Database] = None,
+    settings: Optional[RuntimeSettings] = None,
+) -> UserService:
+    active_settings = settings or config
+    database = db or Database(active_settings.get_database_path())
+    return UserService(SQLiteIdentityRepository(database.get_connection), active_settings)

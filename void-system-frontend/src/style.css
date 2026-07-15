@@ -6,41 +6,42 @@
  */
 
 :root {
-  /* --- Default Theme: Gemini Light (Inspired by Google Gemini) --- */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f9fa;
-  --bg-tertiary: #f1f3f4;
+  /* --- Default Theme: Calm Operations Console --- */
+  --bg-primary: #f5f7f4;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef2ed;
   --bg-card: #ffffff;
-  --bg-glass: rgba(255, 255, 255, 0.8);
+  --bg-glass: rgba(255, 255, 255, 0.88);
   
-  --text-primary: #1f1f1f;
-  --text-secondary: #474747;
-  --text-muted: #757575;
+  --text-primary: #17201c;
+  --text-secondary: #4d5b54;
+  --text-muted: #7b8780;
   
-  --color-primary: #1a73e8;
-  --color-primary-light: #4285f4;
-  --color-primary-dark: #1557b0;
+  --color-primary: #256f68;
+  --color-primary-light: #2f9b8e;
+  --color-primary-dark: #164d49;
   
-  --color-accent: #8ab4f8;
-  --color-success: #1e8e3e;
-  --color-warning: #f9ab00;
-  --color-error: #d93025;
+  --color-accent: #b9682f;
+  --color-success: #2c7a4b;
+  --color-warning: #b87918;
+  --color-error: #b4483c;
+  --color-danger: var(--color-error);
   
-  --border-color: rgba(0, 0, 0, 0.1);
-  --border-color-light: rgba(0, 0, 0, 0.05);
-  --border-dim: rgba(0, 0, 0, 0.02);
+  --border-color: rgba(23, 32, 28, 0.13);
+  --border-color-light: rgba(23, 32, 28, 0.08);
+  --border-dim: rgba(23, 32, 28, 0.04);
   
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 8px 16px -4px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
-  --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  --shadow-glow: 0 0 20px rgba(26, 115, 232, 0.15);
+  --shadow-sm: 0 1px 2px rgba(23, 32, 28, 0.05);
+  --shadow-md: 0 14px 30px -24px rgba(23, 32, 28, 0.45);
+  --shadow-lg: 0 28px 60px -34px rgba(23, 32, 28, 0.5);
+  --shadow-glow: 0 0 0 3px rgba(37, 111, 104, 0.14);
   
-  --accent-glow: rgba(26, 115, 232, 0.2);
-  --glass-border: rgba(0, 0, 0, 0.08);
+  --accent-glow: rgba(37, 111, 104, 0.16);
+  --glass-border: rgba(23, 32, 28, 0.1);
 
   /* --- Base Tokens (Theme Agnostic) --- */
-  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-family-mono: 'JetBrains Mono', monospace;
+  --font-family-sans: "Microsoft YaHei UI", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-family-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -50,8 +51,8 @@
   
   --radius-sm: 4px;
   --radius-md: 8px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
   --radius-full: 9999px;
 
   /* 对话主栏最大宽度（Gemini / 博客阅读宽） */
@@ -61,9 +62,9 @@
   --spacing-xxl: 40px;
   --spacing-xxxl: 56px;
   --page-max-width: 880px;
-  --page-max-wide: 1400px;
-  --bg-page: #f8fafc;
-  --bg-page-transparent: rgba(15, 23, 42, 0.42);
+  --page-max-wide: 1360px;
+  --bg-page: #f5f7f4;
+  --bg-page-transparent: rgba(23, 32, 28, 0.32);
   --color-primary-transparent: color-mix(in srgb, var(--color-primary) 20%, transparent);
   --void-gradient: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
   --text-main: var(--text-primary);
@@ -82,34 +83,73 @@
   --color-bg-tertiary: var(--bg-tertiary);
   --color-border: var(--border-color);
   --color-border-light: var(--border-color-light);
+
+  /* Element Plus follows the product palette instead of its default blue theme. */
+  --el-font-family: var(--font-family-sans);
+  --el-color-primary: var(--color-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--color-primary) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--color-primary) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--color-primary) 30%, white);
+  --el-color-primary-light-8: color-mix(in srgb, var(--color-primary) 20%, white);
+  --el-color-primary-light-9: color-mix(in srgb, var(--color-primary) 10%, white);
+  --el-color-primary-dark-2: var(--color-primary-dark);
+  --el-color-success: var(--color-success);
+  --el-color-warning: var(--color-warning);
+  --el-color-danger: var(--color-danger);
+  --el-color-error: var(--color-error);
+  --el-color-info: #66736c;
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-muted);
+  --el-text-color-placeholder: color-mix(in srgb, var(--text-muted) 76%, transparent);
+  --el-text-color-disabled: color-mix(in srgb, var(--text-muted) 58%, transparent);
+  --el-border-color: var(--border-color);
+  --el-border-color-light: var(--border-color-light);
+  --el-border-color-lighter: color-mix(in srgb, var(--border-color) 58%, transparent);
+  --el-border-color-extra-light: color-mix(in srgb, var(--border-color) 36%, transparent);
+  --el-border-color-dark: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  --el-fill-color: var(--bg-tertiary);
+  --el-fill-color-light: color-mix(in srgb, var(--bg-tertiary) 72%, var(--bg-secondary));
+  --el-fill-color-lighter: color-mix(in srgb, var(--bg-tertiary) 46%, var(--bg-secondary));
+  --el-fill-color-extra-light: color-mix(in srgb, var(--bg-tertiary) 24%, var(--bg-secondary));
+  --el-fill-color-blank: var(--bg-secondary);
+  --el-bg-color: var(--bg-secondary);
+  --el-bg-color-page: var(--bg-primary);
+  --el-bg-color-overlay: var(--bg-secondary);
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 999px;
 }
 
 /* --- Hacker Dark Theme (Inspired by VS Code) --- */
 [data-theme="dark"] {
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #2d2d30;
-  --bg-card: #252526;
-  --bg-glass: rgba(30, 30, 30, 0.85);
+  --bg-primary: #111716;
+  --bg-secondary: #18211f;
+  --bg-tertiary: #202c29;
+  --bg-card: #18211f;
+  --bg-glass: rgba(17, 23, 22, 0.88);
 
-  --text-primary: #cccccc;
-  --text-secondary: #9d9d9d;
-  --text-muted: #6a6a6a;
+  --text-primary: #e4ebe7;
+  --text-secondary: #afbbb5;
+  --text-muted: #77847d;
 
-  --color-primary: #007acc;
-  --color-primary-light: #4c9aff;
-  --color-primary-dark: #005a9e;
+  --color-primary: #55b8a8;
+  --color-primary-light: #7bd6c5;
+  --color-primary-dark: #2e756b;
 
-  --color-accent: #0e639c;
+  --color-accent: #d28b52;
+  --color-success: #68c98d;
+  --color-warning: #dfb456;
+  --color-error: #e87d70;
   
-  --border-color: #3e3e42;
-  --border-color-light: #333333;
-  --border-dim: #2b2b2b;
+  --border-color: rgba(228, 235, 231, 0.13);
+  --border-color-light: rgba(228, 235, 231, 0.08);
+  --border-dim: rgba(228, 235, 231, 0.04);
 
   --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 10px 20px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 25px rgba(0, 122, 204, 0.25);
+  --shadow-glow: 0 0 0 3px rgba(85, 184, 168, 0.18);
   
   --accent-glow: rgba(0, 122, 204, 0.3);
   --glass-border: rgba(255, 255, 255, 0.1);
@@ -130,7 +170,9 @@
 
 html, body {
   font-family: var(--font-family-sans);
-  background-color: var(--bg-primary);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), transparent 340px),
+    var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.5;
   transition: background-color var(--transition-normal), color var(--transition-normal);
@@ -138,6 +180,7 @@ html, body {
 
 #app {
   min-height: 100vh;
+  isolation: isolate;
 }
 
 /* App.vue 主内容区：与首页 / 博客页同最大宽，避免全屏贴边 */
@@ -151,11 +194,24 @@ html, body {
   box-sizing: border-box;
 }
 
+.el-button,
+.el-input__inner,
+.el-textarea__inner,
+.el-select__wrapper,
+.el-segmented,
+.el-dropdown-menu,
+.el-dialog,
+.el-drawer,
+.el-message,
+.el-notification {
+  font-family: var(--font-family-sans);
+}
+
 /* --- Typography --- */
 h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   color: var(--text-primary);
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .void-text-gradient {
@@ -198,9 +254,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .void-page-container .logo-text {
-  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  font-size: 2.25rem;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   margin: 0;
 }
 
@@ -335,18 +391,17 @@ h1, h2, h3, h4, h5, h6 {
 /* Card */
 .void-card {
   background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: var(--spacing-lg);
   box-shadow: var(--shadow-sm);
-  transition: all var(--transition-slow);
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
 .void-card:hover {
-  border-color: var(--color-primary-light);
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--border-color));
   box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 /* Button */
@@ -356,7 +411,7 @@ h1, h2, h3, h4, h5, h6 {
   justify-content: center;
   padding: 8px 16px;
   border-radius: var(--radius-md);
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   transition: all var(--transition-fast);
   border: 1px solid transparent;
@@ -365,12 +420,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .void-btn.primary {
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
   color: #ffffff;
 }
 .void-btn.primary:hover {
-  background: var(--color-primary-dark);
-  box-shadow: 0 0 10px var(--shadow-glow);
+  background: linear-gradient(135deg, var(--color-primary-light), var(--color-primary));
+  box-shadow: var(--shadow-glow);
 }
 
 .void-btn.secondary {
@@ -414,7 +469,7 @@ h1, h2, h3, h4, h5, h6 {
   outline: none;
   border-color: var(--color-primary);
   background: var(--bg-primary);
-  box-shadow: 0 0 0 3px var(--shadow-glow);
+  box-shadow: var(--shadow-glow);
 }
 
 /* Badge / Tag */
@@ -681,7 +736,7 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   text-transform: uppercase;
   font-size: 0.75rem;
-  letter-spacing: 1px;
+  letter-spacing: 0;
   border-bottom: 1px solid var(--border-color) !important;
   padding: 12px 8px !important;
 }
@@ -724,7 +779,7 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 0.8rem;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0;
   margin-bottom: 4px;
 }
 
@@ -738,6 +793,38 @@ h1, h2, h3, h4, h5, h6 {
 
 .void-stat-item .value.small {
   font-size: 1.25rem;
+}
+
+/* --- Metric Cards (可跨页面复用的统计卡片) --- */
+.void-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.void-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 88px;
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color-light);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+}
+
+.void-metric-card__label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.void-metric-card__value {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.1;
 }
 
 /* --- Composer attachments (Gemini-style chips; theme tokens only) --- */

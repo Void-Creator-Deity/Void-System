@@ -151,7 +151,7 @@ class SessionContextManager:
         try:
             row = self.db.get_user_session_file(user_id, file_id)
             if not row:
-                return {"success": False, "message": "文件不存在或已过期"}
+                return {"success": False, "message": "Attachment not found", "error_code": "SESSION_FILE_NOT_FOUND", "status_code": 404}
             preview = row.get("content_preview") or ""
             return {
                 "success": True,
@@ -173,7 +173,7 @@ class SessionContextManager:
         try:
             prev = self.db.delete_user_session_file(user_id, file_id)
             if not prev:
-                return {"success": False, "message": "文件不存在或无权删除"}
+                return {"success": False, "message": "Attachment not found", "error_code": "SESSION_FILE_NOT_FOUND", "status_code": 404}
             sp = prev.get("storage_path")
             if sp:
                 try:
@@ -234,71 +234,82 @@ class SessionContextManager:
         if len(file_data) > self.max_file_size:
             return {
                 "success": False,
-                "message": f"文件大小超过限制，最大允许 {self.max_file_size / 1024 / 1024:.1f}MB",
+                "message": f"File exceeds the {self.max_file_size / 1024 / 1024:.1f}MB limit",
+                "error_code": "FILE_TOO_LARGE",
+                "status_code": 413,
             }
 
         allowed_extensions = {
-            "txt",
-            "md",
-            "json",
-            "csv",
-            "pdf",
-            "doc",
-            "docx",
-            "png",
-            "jpg",
-            "jpeg",
-            "webp",
-            "gif",
-            "bmp",
+            "txt", "md", "json", "csv", "pdf", "doc", "docx",
+            "png", "jpg", "jpeg", "webp", "gif", "bmp",
         }
-        file_extension = file_name.split(".")[-1].lower() if "." in file_name else ""
-
+        file_extension = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
         if file_extension and file_extension not in allowed_extensions:
             return {
                 "success": False,
-                "message": f"不支持的文件类型: {file_extension}，允许的类型: {', '.join(sorted(allowed_extensions))}",
+                "message": "This file type is not supported",
+                "error_code": "FILE_TYPE_NOT_ALLOWED",
+                "status_code": 415,
             }
-
-        if len(file_data) == 0:
+        if not file_data:
             return {
                 "success": False,
-                "message": "空文件不允许上传",
+                "message": "An empty file cannot be uploaded",
+                "error_code": "EMPTY_FILE",
+                "status_code": 422,
             }
-
-        return {
-            "success": True,
-            "message": "文件验证通过",
-        }
+        return {"success": True, "message": "File validated"}
 
     def create_new_session(self, user_id: str) -> Dict[str, Any]:
+        """Create a persisted chat session suitable for temporary attachments."""
         try:
-            session_id = str(uuid.uuid4())
+            group_name = "Temporary sessions"
+            group_id = next(
+                (
+                    group["group_id"]
+                    for group in self.db.get_chat_groups(user_id)
+                    if group.get("group_name") == group_name
+                ),
+                None,
+            )
+            if not group_id:
+                group_id = self.db.add_chat_group(user_id, group_name)
+            session_id = self.db.add_chat_session(
+                user_id=user_id,
+                group_id=group_id,
+                session_name="New temporary session",
+            )
             return {
                 "success": True,
                 "session_id": session_id,
-                "message": "新会话创建成功",
+                "message": "Temporary session created",
                 "created_at": datetime.now().isoformat(),
                 "expires_in": 86400,
             }
-        except Exception as e:
-            logger.error(f"创建新会话失败: {str(e)}")
+        except Exception:
+            logger.exception("Temporary session creation failed")
             return {
                 "success": False,
-                "message": f"创建新会话失败: {str(e)}",
+                "message": "Temporary session could not be created",
+                "error_code": "SESSION_CREATE_FAILED",
+                "status_code": 503,
             }
 
     def get_active_sessions(self, user_id: str) -> Dict[str, Any]:
         try:
+            self.cleanup_expired_files()
+            sessions = self.db.list_active_session_file_summaries(user_id)
             return {
                 "success": True,
-                "message": "获取活跃会话成功",
-                "sessions": [],
-                "session_count": 0,
+                "message": "Active attachment sessions loaded",
+                "sessions": sessions,
+                "session_count": len(sessions),
             }
-        except Exception as e:
-            logger.error(f"获取活跃会话失败: {str(e)}")
+        except Exception:
+            logger.exception("Active attachment sessions could not be loaded")
             return {
                 "success": False,
-                "message": f"获取活跃会话失败: {str(e)}",
+                "message": "Active attachment sessions could not be loaded",
+                "error_code": "SESSION_LIST_FAILED",
+                "status_code": 503,
             }

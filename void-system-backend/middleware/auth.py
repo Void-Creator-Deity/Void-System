@@ -1,203 +1,154 @@
-"""
-Void System - Authentication Middleware
-认证中间件，实现JWT令牌验证和用户权限检查
-"""
+"""Authentication primitives shared by the HTTP identity workflow."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import hashlib
 import logging
-from typing import Optional, Dict, Any
-from fastapi import Request, HTTPException, status, Depends
+import secrets
+from typing import Any, Dict, Optional
+
+import bcrypt
+from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-import bcrypt
 
 from config import config
-from errors import ErrorCode, VoidSystemException
 from database import Database
+from errors import ErrorCode, VoidSystemException
+
 
 logger = logging.getLogger(__name__)
-
-# OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/token", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token", auto_error=False)
 
 
-async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme),
-    db: Database = Depends(lambda: Database(config.get_database_path()))
-) -> Optional[Dict[str, Any]]:
-    """
-    获取当前用户信息
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
-    Args:
-        token: JWT访问令牌
-        db: 数据库实例
 
-    Returns:
-        用户信息字典，如果未认证返回None
+def utc_timestamp(value: Optional[datetime] = None) -> str:
+    return (value or utc_now()).isoformat()
 
-    Raises:
-        VoidSystemException: 令牌无效或过期
-    """
-    if not token:
-        return None
 
+def token_digest(token: str) -> str:
+    """Return a non-reversible digest suitable for refresh-token storage."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _create_token(
+    data: Dict[str, Any],
+    token_type: str,
+    expires_delta: timedelta,
+    settings: Any = None,
+) -> str:
+    active_settings = settings or config
+    payload = data.copy()
+    now = utc_now()
+    payload.pop("expires_delta", None)
+    payload["type"] = token_type
+    payload.setdefault("iat", now)
+    payload.setdefault("jti", secrets.token_urlsafe(18))
+    payload.setdefault("exp", now + expires_delta)
+    return jwt.encode(payload, active_settings.SECRET_KEY, algorithm=active_settings.ALGORITHM)
+
+
+def create_access_token(data: Dict[str, Any], settings: Any = None) -> str:
+    """Create a short-lived access token with an explicit purpose claim."""
+    active_settings = settings or config
+    expires_delta = data.get("expires_delta") or timedelta(
+        minutes=active_settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    return _create_token(data, "access", expires_delta, active_settings)
+
+
+def create_refresh_token(data: Dict[str, Any], settings: Any = None) -> str:
+    """Create a long-lived refresh token with an explicit purpose claim."""
+    active_settings = settings or config
+    expires_delta = data.get("expires_delta") or timedelta(
+        days=active_settings.REFRESH_TOKEN_EXPIRE_DAYS
+    )
+    return _create_token(data, "refresh", expires_delta, active_settings)
+
+
+def decode_token(token: str, expected_type: str, settings: Any = None) -> Dict[str, Any]:
+    """Decode one JWT and reject tokens minted for another purpose."""
+    active_settings = settings or config
     try:
-        # 解码JWT令牌
-        payload = jwt.decode(token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
-        user_id: str = payload.get("user_id")
-        username: str = payload.get("sub")
-
-        if user_id is None or username is None:
-            raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
-
-        # 从数据库验证用户
-        user = db.get_user_by_id(user_id)
-        if not user:
-            raise VoidSystemException.from_error_code(ErrorCode.USER_NOT_FOUND)
-
-        # 检查用户是否激活
-        if not user.get("is_active", True):
-            raise VoidSystemException.from_error_code(ErrorCode.USER_INACTIVE)
-
-        return user
-
-    except JWTError as e:
-        logger.warning(f"JWT解码失败: {e}")
-        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
-    except VoidSystemException:
-        raise
-    except Exception as e:
-        logger.error(f"用户认证失败: {e}")
-        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
-
-
-def require_authentication(current_user: Optional[Dict[str, Any]] = Depends(get_current_user)) -> Dict[str, Any]:
-    """
-    要求用户必须认证的依赖注入
-
-    Args:
-        current_user: 当前用户信息
-
-    Returns:
-        用户信息字典
-
-    Raises:
-        VoidSystemException: 用户未认证
-    """
-    if current_user is None:
-        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_MISSING)
-
-    return current_user
-
-
-def require_admin_role(current_user: Dict[str, Any] = Depends(require_authentication)) -> Dict[str, Any]:
-    """
-    要求用户必须是管理员的依赖注入
-
-    Args:
-        current_user: 当前用户信息
-
-    Returns:
-        用户信息字典
-
-    Raises:
-        VoidSystemException: 权限不足
-    """
-    if current_user.get("role") != "admin":
-        raise VoidSystemException.from_error_code(
-            ErrorCode.INSUFFICIENT_PERMISSIONS,
-            details={"required_role": "admin", "user_role": current_user.get("role")}
+        payload = jwt.decode(
+            token,
+            active_settings.SECRET_KEY,
+            algorithms=[active_settings.ALGORITHM],
         )
+    except JWTError as exc:
+        logger.info("JWT decode rejected: %s", exc)
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID) from exc
 
-    return current_user
-
-
-def create_access_token(data: Dict[str, Any]) -> str:
-    """
-    创建访问令牌
-
-    Args:
-        data: 要编码的数据
-
-    Returns:
-        JWT访问令牌
-    """
-    to_encode = data.copy()
-
-    # 设置过期时间
-    expire = data.get("exp")
-    if not expire:
-        expire = (data.get("expires_delta") or timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES))
-
-        if isinstance(expire, timedelta):
-            expire = datetime.utcnow() + expire
-
-        to_encode.update({"exp": expire})
-
-    # 编码JWT
-    encoded_jwt = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
-    return encoded_jwt
-
-
-def create_refresh_token(data: Dict[str, Any]) -> str:
-    """
-    创建刷新令牌
-
-    Args:
-        data: 要编码的数据
-
-    Returns:
-        JWT刷新令牌
-    """
-    to_encode = data.copy()
-
-    # 设置过期时间（更长）
-    expire = data.get("exp")
-    if not expire:
-        expire_delta = timedelta(days=config.REFRESH_TOKEN_EXPIRE_DAYS)
-        expire = datetime.utcnow() + expire_delta
-        to_encode.update({"exp": expire})
-
-    # 编码JWT
-    encoded_jwt = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
-    return encoded_jwt
+    if payload.get("type") != expected_type:
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
+    if not payload.get("sub") or not payload.get("sid"):
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
+    return payload
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    验证密码
-
-    Args:
-        plain_password: 明文密码
-        hashed_password: 哈希密码
-
-    Returns:
-        密码是否正确
-    """
     try:
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-    except Exception as e:
-        logger.error(f"密码验证失败: {e}")
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+        )
+    except (ValueError, TypeError) as exc:
+        logger.warning("Password verification rejected: %s", exc)
         return False
 
 
 def get_password_hash(password: str) -> str:
-    """
-    生成密码哈希
-
-    Args:
-        password: 明文密码
-
-    Returns:
-        密码哈希字符串
-    """
+    if not password or len(password.encode("utf-8")) > 72:
+        raise VoidSystemException.from_error_code(
+            ErrorCode.PASSWORD_POLICY_VIOLATION,
+            details={"reason": "密码必须为 1 到 72 个字节"},
+        )
     try:
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    except Exception as e:
-        logger.error(f"密码哈希生成失败: {e}")
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    except Exception as exc:
+        logger.exception("Password hashing failed")
         raise VoidSystemException.from_error_code(
             ErrorCode.SYSTEM_ERROR,
-            details={"operation": "password_hashing"}
+            details={"operation": "password_hashing"},
+        ) from exc
+
+
+async def get_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Database = Depends(lambda: Database(config.get_database_path())),
+) -> Optional[Dict[str, Any]]:
+    """Legacy dependency retained for callers outside the application factory."""
+    if not token:
+        return None
+    payload = decode_token(token, "access")
+    user = db.get_user_by_id(str(payload["sub"]))
+    if not user or not user.get("is_active", True):
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
+    if int(payload.get("ver", -1)) != int(user.get("token_version", 0)):
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
+    session = db.get_auth_session(str(payload["sid"]), user["user_id"])
+    if not session or session.get("revoked_at"):
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_INVALID)
+    user["auth_session_id"] = str(payload["sid"])
+    return user
+
+
+def require_authentication(
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    if current_user is None:
+        raise VoidSystemException.from_error_code(ErrorCode.TOKEN_MISSING)
+    return current_user
+
+
+def require_admin_role(
+    current_user: Dict[str, Any] = Depends(require_authentication),
+) -> Dict[str, Any]:
+    if current_user.get("role") != "admin":
+        raise VoidSystemException.from_error_code(
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+            details={"required_role": "admin", "user_role": current_user.get("role")},
         )
-
-
-# 导入datetime（避免循环导入）
-from datetime import datetime, timedelta
+    return current_user

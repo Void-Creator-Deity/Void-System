@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import logging
 
+from adapters.sqlite.migrations import Migration, run_migrations
+
 logger: logging.Logger = logging.getLogger("void-system-db")
 
 class Database:
@@ -26,8 +28,22 @@ class Database:
         """获取数据库连接"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row  # 返回字典格式
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
         return conn
     
+    def _task_workflow_repository(self):
+        """Return the focused SQLite Adapter used by Task Workflow."""
+        from adapters.sqlite.task_repository import SQLiteTaskRepository
+
+        return SQLiteTaskRepository(self.get_connection)
+
+    def _task_workspace_repository(self):
+        """Return the focused SQLite Adapter used by Task Workspace."""
+        from adapters.sqlite.task_workspace_repository import SQLiteTaskWorkspaceRepository
+
+        return SQLiteTaskWorkspaceRepository(self.get_connection)
+
     def test_connection(self) -> None:
         """测试数据库连接"""
         conn = self.get_connection()
@@ -40,8 +56,460 @@ class Database:
         pass  # SQLite会自动管理连接
     
     def init_database(self) -> None:
-        """初始化数据库表结构"""
-        conn = self.get_connection()
+        """Bring the embedded store to the latest ordered schema version."""
+        run_migrations(
+            self.get_connection,
+            [
+                Migration(1, "initial_schema", self._create_initial_schema),
+                Migration(2, "runtime_columns_and_indexes", self._add_runtime_columns_and_indexes),
+                Migration(3, "reward_marketplace_integrity", self._add_reward_marketplace_integrity),
+                Migration(4, "task_workspace_generation_state", self._add_task_workspace_generation_state),
+                Migration(5, "knowledge_engine_lifecycle", self._add_knowledge_engine_lifecycle),
+                Migration(6, "identity_security_sessions", self._add_identity_security_sessions),
+                Migration(7, "knowledge_document_retention", self._add_knowledge_document_retention),
+                Migration(8, "goal_run_step_task_execution", self._add_task_execution_model),
+                Migration(9, "agent_run_leases", self._add_agent_run_leases),
+                Migration(10, "legacy_task_execution_projection", self._add_legacy_task_execution_projection),
+                Migration(11, "canonical_reward_settlement_links", self._add_canonical_reward_settlement_links),
+                Migration(12, "task_triggers_and_run_commands", self._add_task_triggers_and_run_commands),
+            ],
+        )
+
+    def _add_task_execution_model(self, conn: sqlite3.Connection) -> None:
+        """Add durable Goal, Run, Step, Action, Event, Artifact, and Approval records."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS task_goals (
+                goal_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                desired_outcome TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                priority TEXT NOT NULL DEFAULT 'medium',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                archived_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_runs (
+                run_id TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                objective TEXT NOT NULL DEFAULT '',
+                mode TEXT NOT NULL DEFAULT 'manual',
+                status TEXT NOT NULL DEFAULT 'queued',
+                version INTEGER NOT NULL DEFAULT 1,
+                idempotency_key TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                error_summary TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                paused_at TEXT,
+                completed_at TEXT,
+                cancelled_at TEXT,
+                FOREIGN KEY (goal_id) REFERENCES task_goals(goal_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (user_id, idempotency_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS task_steps (
+                step_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                client_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'manual',
+                status TEXT NOT NULL DEFAULT 'pending',
+                position INTEGER NOT NULL DEFAULT 0,
+                parallel_group TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                requires_approval INTEGER NOT NULL DEFAULT 0,
+                progress INTEGER NOT NULL DEFAULT 0,
+                completion_criteria TEXT NOT NULL DEFAULT '{}',
+                input_data TEXT NOT NULL DEFAULT '{}',
+                output_data TEXT NOT NULL DEFAULT '{}',
+                error_summary TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (run_id, client_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS task_step_dependencies (
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                depends_on_step_id TEXT NOT NULL,
+                PRIMARY KEY (step_id, depends_on_step_id),
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_actions (
+                action_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                tool_name TEXT,
+                input_data TEXT NOT NULL DEFAULT '{}',
+                output_data TEXT NOT NULL DEFAULT '{}',
+                error_summary TEXT,
+                idempotency_key TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (step_id, idempotency_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS task_events (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT,
+                user_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT,
+                user_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                uri TEXT,
+                content_type TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE SET NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_approvals (
+                approval_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                request_data TEXT NOT NULL DEFAULT '{}',
+                decision_data TEXT NOT NULL DEFAULT '{}',
+                requested_at TEXT NOT NULL,
+                resolved_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_goals_user_status
+                ON task_goals(user_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_runs_user_status
+                ON task_runs(user_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_runs_goal
+                ON task_runs(goal_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_steps_run_status
+                ON task_steps(run_id, status, position);
+            CREATE INDEX IF NOT EXISTS idx_task_events_run_created
+                ON task_events(run_id, created_at, event_id);
+            CREATE INDEX IF NOT EXISTS idx_task_approvals_user_status
+                ON task_approvals(user_id, status, requested_at DESC);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+    def _add_agent_run_leases(self, conn: sqlite3.Connection) -> None:
+        """Add renewable worker ownership and resumable checkpoints for agent Runs."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS task_run_leases (
+                run_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                lease_token TEXT NOT NULL UNIQUE,
+                acquired_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                checkpoint_data TEXT NOT NULL DEFAULT '{}',
+                released_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_run_leases_expiry
+                ON task_run_leases(expires_at, released_at);
+            CREATE INDEX IF NOT EXISTS idx_task_run_leases_worker
+                ON task_run_leases(worker_id, expires_at);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+    def _add_legacy_task_execution_projection(self, conn: sqlite3.Connection) -> None:
+        """Link legacy task APIs to the canonical Goal, Run, and Step model."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS legacy_chain_execution_links (
+                legacy_chain_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (legacy_chain_id) REFERENCES task_chains(chain_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES task_goals(goal_id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS legacy_task_execution_links (
+                legacy_task_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                legacy_chain_id TEXT,
+                goal_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (legacy_task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+                FOREIGN KEY (legacy_chain_id) REFERENCES task_chains(chain_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES task_goals(goal_id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (step_id) REFERENCES task_steps(step_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_legacy_task_execution_owner_run
+                ON legacy_task_execution_links(user_id, run_id);
+            CREATE INDEX IF NOT EXISTS idx_legacy_task_execution_chain
+                ON legacy_task_execution_links(legacy_chain_id, legacy_task_id);
+            CREATE INDEX IF NOT EXISTS idx_legacy_chain_execution_owner
+                ON legacy_chain_execution_links(user_id, run_id);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+        from adapters.sqlite.task_execution_projection import backfill_legacy_task_execution
+
+        backfill_legacy_task_execution(conn, datetime.now().isoformat())
+
+    def _add_canonical_reward_settlement_links(self, conn: sqlite3.Connection) -> None:
+        """Link legacy reward grants to their canonical Run and Step identities."""
+        columns = {
+            row[1] for row in conn.execute(
+                "PRAGMA table_info(task_reward_settlements)"
+            ).fetchall()
+        }
+        if "run_id" not in columns:
+            conn.execute("ALTER TABLE task_reward_settlements ADD COLUMN run_id TEXT")
+        if "step_id" not in columns:
+            conn.execute("ALTER TABLE task_reward_settlements ADD COLUMN step_id TEXT")
+        conn.execute(
+            """UPDATE task_reward_settlements
+               SET run_id = (
+                       SELECT link.run_id FROM legacy_task_execution_links link
+                       WHERE link.legacy_task_id = task_reward_settlements.task_id
+                         AND link.user_id = task_reward_settlements.user_id
+                   ),
+                   step_id = (
+                       SELECT link.step_id FROM legacy_task_execution_links link
+                       WHERE link.legacy_task_id = task_reward_settlements.task_id
+                         AND link.user_id = task_reward_settlements.user_id
+                   )
+               WHERE run_id IS NULL OR step_id IS NULL"""
+        )
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_task_reward_settlement_step
+               ON task_reward_settlements(user_id, step_id) WHERE step_id IS NOT NULL"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_task_reward_settlement_run
+               ON task_reward_settlements(user_id, run_id, created_at DESC)"""
+        )
+
+    def _add_task_triggers_and_run_commands(self, conn: sqlite3.Connection) -> None:
+        """Add portable Trigger-to-Run automation and durable steering commands."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS task_triggers (
+                trigger_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+                name TEXT NOT NULL, trigger_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+                configuration TEXT NOT NULL DEFAULT '{}', run_template TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_fired_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES task_goals(goal_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS task_trigger_firings (
+                firing_id TEXT PRIMARY KEY, trigger_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                source_key TEXT NOT NULL, run_id TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+                fired_at TEXT NOT NULL,
+                FOREIGN KEY (trigger_id) REFERENCES task_triggers(trigger_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                UNIQUE (trigger_id, source_key)
+            );
+            CREATE TABLE IF NOT EXISTS task_run_commands (
+                command_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                command_type TEXT NOT NULL, instruction TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending', idempotency_key TEXT, created_at TEXT NOT NULL,
+                acknowledged_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (run_id, user_id, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_triggers_owner_status
+                ON task_triggers(user_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_run_commands_pending
+                ON task_run_commands(run_id, status, created_at);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+    def _add_knowledge_document_retention(self, conn: sqlite3.Connection) -> None:
+        """Add reversible retention state for personal knowledge sources."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(user_documents)").fetchall()
+        }
+        if "is_active" not in columns:
+            conn.execute(
+                "ALTER TABLE user_documents ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+            )
+        if "archived_at" not in columns:
+            conn.execute("ALTER TABLE user_documents ADD COLUMN archived_at TEXT")
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_user_documents_owner_retention
+               ON user_documents(user_id, is_active, created_at DESC)"""
+        )
+
+    def _add_identity_security_sessions(self, conn: sqlite3.Connection) -> None:
+        """Add durable per-device refresh sessions and token invalidation state."""
+        user_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "token_version" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
+            )
+        if "password_changed_at" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN password_changed_at TEXT")
+
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS auth_sessions (
+                   session_id TEXT PRIMARY KEY,
+                   user_id TEXT NOT NULL,
+                   refresh_token_hash TEXT NOT NULL,
+                   expires_at TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   last_used_at TEXT,
+                   revoked_at TEXT,
+                   user_agent TEXT,
+                   ip_address TEXT,
+                   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active
+               ON auth_sessions(user_id, revoked_at, expires_at DESC)"""
+        )
+
+    def _add_reward_marketplace_integrity(self, conn: sqlite3.Connection) -> None:
+        """Add indexes used by atomic reward marketplace settlement."""
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_resources_owner_key "
+            "ON user_resources(user_id, resource_key)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_coins_user_created_at "
+            "ON coins(user_id, created_at)"
+        )
+
+
+    def _add_knowledge_engine_lifecycle(self, conn: sqlite3.Connection) -> None:
+        """Add durable knowledge ingestion and retrieval trace records."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS knowledge_document_versions (
+                   version_id TEXT PRIMARY KEY,
+                   document_id TEXT NOT NULL,
+                   owner_id TEXT NOT NULL,
+                   content_fingerprint TEXT NOT NULL,
+                   source_size INTEGER NOT NULL DEFAULT 0,
+                   index_version TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+               )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS knowledge_ingestion_jobs (
+                   job_id TEXT PRIMARY KEY,
+                   version_id TEXT NOT NULL,
+                   document_id TEXT NOT NULL,
+                   owner_id TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   chunk_count INTEGER,
+                   index_version TEXT,
+                   error_message TEXT,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   FOREIGN KEY (version_id) REFERENCES knowledge_document_versions(version_id)
+                       ON DELETE CASCADE
+               )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS knowledge_retrieval_traces (
+                   trace_id TEXT PRIMARY KEY,
+                   owner_id TEXT NOT NULL,
+                   question TEXT NOT NULL,
+                   mode TEXT NOT NULL,
+                   candidate_count INTEGER NOT NULL,
+                   ranked_count INTEGER NOT NULL,
+                   citations TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_knowledge_versions_document_owner
+               ON knowledge_document_versions(document_id, owner_id, created_at DESC)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_knowledge_ingestion_document_owner
+               ON knowledge_ingestion_jobs(document_id, owner_id, created_at DESC)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_knowledge_traces_owner_created
+               ON knowledge_retrieval_traces(owner_id, created_at DESC)"""
+        )
+
+    def _add_task_workspace_generation_state(self, conn: sqlite3.Connection) -> None:
+        """Expose asynchronous planning progress without leaking provider internals."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(task_chains)").fetchall()
+        }
+        if "generation_status" not in columns:
+            conn.execute(
+                "ALTER TABLE task_chains ADD COLUMN generation_status TEXT NOT NULL DEFAULT 'ready'"
+            )
+        if "generation_error" not in columns:
+            conn.execute("ALTER TABLE task_chains ADD COLUMN generation_error TEXT")
+
+    def _create_initial_schema(self, conn: sqlite3.Connection) -> None:
+        """Create the legacy-compatible baseline inside the migration transaction."""
         cursor = conn.cursor()
         
         # 用户表
@@ -172,6 +640,23 @@ class Database:
         )
         ''')
         
+        # Idempotent task reward ledger. One task can settle rewards only once.
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS task_reward_settlements (
+            settlement_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            coins INTEGER NOT NULL DEFAULT 0,
+            experience INTEGER NOT NULL DEFAULT 0,
+            attribute_increments TEXT NOT NULL DEFAULT '{}',
+            source TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(task_id, user_id),
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        ''')
+
         # 用户资源表
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_resources (
@@ -407,35 +892,162 @@ class Database:
         # 4. 重命名新表为旧表名
         # 对于简单的列添加，上述for循环足够。
 
-        conn.commit()
-        conn.close()
-        
-        # 种子数据：确保管理员账号存在
-        self._ensure_default_admin()
 
-    def _ensure_default_admin(self) -> None:
-        """初始化默认管理员账号"""
+    def _add_runtime_columns_and_indexes(self, conn: sqlite3.Connection) -> None:
+        """Add columns and indexes required by current runtime invariants."""
+        user_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "is_active" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+            )
+
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner_group
+               ON chat_sessions(user_id, group_id, updated_at)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_chat_messages_owner_session
+               ON chat_messages(user_id, session_id, created_at)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_tasks_owner_status
+               ON tasks(user_id, status, updated_at)"""
+        )
+
+    def ensure_default_admin(
+        self,
+        username: str,
+        email: str,
+        password_hash: str,
+        user_id: str = "0000",
+    ) -> bool:
+        """Create the bootstrap administrator explicitly from application startup."""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            # 检查管理员是否已存在
-            cursor.execute("SELECT 1 FROM users WHERE username = '虚空管理员'")
-            if not cursor.fetchone():
-                admin_id = "0000"
-                from middleware.auth import get_password_hash
-                password_hash = get_password_hash("xk1234")
-                
-                cursor.execute(
-                    "INSERT INTO users (user_id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)",
-                    (admin_id, "虚空管理员", "admin@void-system.com", password_hash, "admin")
-                )
-                conn.commit()
-                logger.info("🛡️ 数据库初始化：已同步默认管理员 (虚空管理员 / xk1234, UID: 0000)")
-        except Exception as e:
-            logger.error(f"❌ 初始化管理员失败: {e}")
+            cursor.execute(
+                "SELECT 1 FROM users WHERE user_id = ? OR username = ?",
+                (user_id, username),
+            )
+            if cursor.fetchone():
+                return False
+            cursor.execute(
+                """INSERT INTO users
+                   (user_id, username, email, password_hash, role)
+                   VALUES (?, ?, ?, ?, 'admin')""",
+                (user_id, username, email, password_hash),
+            )
+            conn.commit()
+            return True
         finally:
             conn.close()
-    
+
+    # ==================== 身份会话相关方法 ====================
+    def create_auth_session(
+        self,
+        session_id: str,
+        user_id: str,
+        refresh_token_hash: str,
+        expires_at: str,
+        created_at: str,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> None:
+        """Persist the current refresh token for one device session."""
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO auth_sessions
+                   (session_id, user_id, refresh_token_hash, expires_at, created_at,
+                    user_agent, ip_address)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (session_id, user_id, refresh_token_hash, expires_at, created_at, user_agent, ip_address),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_auth_session(self, session_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """Return one owned authentication session."""
+        conn = self.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM auth_sessions WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def rotate_auth_session(
+        self,
+        session_id: str,
+        user_id: str,
+        expected_refresh_hash: str,
+        replacement_refresh_hash: str,
+        expires_at: str,
+        used_at: str,
+    ) -> bool:
+        """Atomically rotate a refresh token and reject a replayed predecessor."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute(
+                """UPDATE auth_sessions
+                   SET refresh_token_hash = ?, expires_at = ?, last_used_at = ?
+                   WHERE session_id = ? AND user_id = ?
+                     AND refresh_token_hash = ? AND revoked_at IS NULL
+                     AND expires_at > ?""",
+                (replacement_refresh_hash, expires_at, used_at, session_id, user_id, expected_refresh_hash, used_at),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
+    def revoke_auth_session(self, session_id: str, user_id: str, revoked_at: str) -> bool:
+        """Revoke the active session on one device."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute(
+                """UPDATE auth_sessions SET revoked_at = ?
+                   WHERE session_id = ? AND user_id = ? AND revoked_at IS NULL""",
+                (revoked_at, session_id, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
+    def revoke_all_auth_sessions(self, user_id: str, revoked_at: str) -> int:
+        """Revoke all active device sessions owned by one user."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute(
+                "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                (revoked_at, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def update_user_password(self, user_id: str, password_hash: str, changed_at: str) -> bool:
+        """Rotate password and invalidate every outstanding token version."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute(
+                """UPDATE users
+                   SET password_hash = ?, password_changed_at = ?, token_version = token_version + 1
+                   WHERE user_id = ?""",
+                (password_hash, changed_at, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
     # ==================== 用户相关方法 ====================
     def _generate_next_uid(self, cursor: sqlite3.Cursor) -> str:
         """生成下一个连续的UID"""
@@ -702,8 +1314,14 @@ class Database:
         finally:
             conn.close()
     
-    def update_attribute(self, attr_id: str, attr_value: Optional[int] = None, 
-                        description: Optional[str] = None, max_value: Optional[int] = None) -> bool:
+    def update_attribute(
+        self,
+        attr_id: str,
+        attr_name: Optional[str] = None,
+        attr_value: Optional[int] = None,
+        description: Optional[str] = None,
+        max_value: Optional[int] = None,
+    ) -> bool:
         """更新属性信息"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -711,6 +1329,10 @@ class Database:
             updates: List[str] = []
             params: List[Any] = []
             
+            if attr_name is not None:
+                updates.append("attr_name = ?")
+                params.append(attr_name)
+
             if attr_value is not None:
                 updates.append("attr_value = ?")
                 params.append(attr_value)
@@ -1030,50 +1652,31 @@ class Database:
         completion_criteria: Optional[Dict[str, Any]] = None,
         task_type: str = "main",
         is_optional: int = 0,
-        is_daily: int = 0
+        is_daily: int = 0,
     ) -> str:
-        """
-        创建新任务
-        Args:
-            user_id: 用户ID
-            task_name: 任务名称
-            description: 任务描述
-            related_attrs: 关联的属性字典（属性ID: 权重）
-            estimated_time: 预计耗时（分钟）
-            reward_coins: 奖励系统币数量
-            priority: 任务优先级 (easy/medium/hard)
-            attribute_points: 属性点奖励数量
-            category_id: 任务类别ID
-            prerequisites: 前置任务ID列表
-            is_daily: 是否映射到每日任务
-        Returns:
-            新创建的任务ID
-        """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        task_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-        # 将关联属性和前置任务转换为JSON字符串
-        related_attrs_json = json.dumps(related_attrs or {})
-        prerequisites_json = json.dumps(prerequisites or [])
-        try:
-            cursor.execute(
-                """INSERT INTO tasks
-                   (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
-                    related_attrs, estimated_time, reward_coins, priority, attribute_points,
-                    prerequisites, completion_type, completion_criteria, task_type, is_optional, 
-                    is_daily, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
-                 related_attrs_json, estimated_time, reward_coins, priority, attribute_points,
-                 prerequisites_json, completion_type, json.dumps(completion_criteria or {}), 
-                 task_type, is_optional, is_daily, now, now)
-            )
-            conn.commit()
-            return task_id
-        finally:
-            conn.close()
-    
+        """Compatibility facade for task creation and canonical execution projection."""
+        return self._task_workspace_repository().create_task(
+            user_id,
+            {
+                "task_name": task_name,
+                "description": description,
+                "related_attrs": related_attrs or {},
+                "estimated_time": estimated_time,
+                "reward_coins": reward_coins,
+                "priority": priority,
+                "attribute_points": attribute_points,
+                "category_id": category_id,
+                "chain_id": chain_id,
+                "chain_order": chain_order,
+                "prerequisites": prerequisites or [],
+                "completion_type": completion_type,
+                "completion_criteria": completion_criteria or {},
+                "task_type": task_type,
+                "is_optional": bool(is_optional),
+                "is_daily": bool(is_daily),
+            },
+        )
+
     def get_user_tasks(
         self,
         user_id: str,
@@ -1171,167 +1774,59 @@ class Database:
             conn.close()
     
     def update_task_status(self, task_id: str, user_id: str, status: str) -> bool:
-        """
-        更新任务状态
-        Args:
-            task_id: 任务ID
-            user_id: 用户ID
-            status: 新状态
-        Returns:
-            是否更新成功
-        """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        now = datetime.now().isoformat()
-        try:
-            # 如果状态是完成，记录完成时间
-            if status == 'completed':
-                cursor.execute(
-                    """UPDATE tasks SET status = ?, completed_at = ?, updated_at = ?
-                       WHERE task_id = ? AND user_id = ?""",
-                    (status, now, now, task_id, user_id)
-                )
-            else:
-                cursor.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND user_id = ?",
-                    (status, now, task_id, user_id)
-                )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-    
+        """Compatibility facade for Task Workflow status persistence."""
+        return self._task_workflow_repository().update_status(user_id, task_id, status)
+    def settle_task_completion(
+        self,
+        task_id: str,
+        user_id: str,
+        coins: int,
+        experience: int,
+        attribute_increments: Dict[str, int],
+        source: str,
+        ai_suggestion: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Compatibility facade for atomic, idempotent Reward Settlement."""
+        from core.task_contracts import RewardGrant
+
+        reward = RewardGrant(
+            coins=coins,
+            experience=experience,
+            attribute_increments=attribute_increments,
+            source=source,
+        )
+        return self._task_workflow_repository().settle_completion(
+            user_id,
+            task_id,
+            reward,
+            ai_suggestion=ai_suggestion,
+        )
     def submit_task_proof(
         self,
         task_id: str,
         user_id: str,
-        proof_data: Dict[str, Any]
+        proof_data: Dict[str, Any],
     ) -> bool:
-        """
-        提交任务完成证明
-        Args:
-            task_id: 任务ID
-            user_id: 用户ID
-            proof_data: 证明数据字典
-        Returns:
-            是否提交成功
-        """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "UPDATE tasks SET proof_data = ? WHERE task_id = ? AND user_id = ?",
-                (json.dumps(proof_data), task_id, user_id)
-            )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-    
+        """Compatibility facade for task evidence submission."""
+        return self._task_workflow_repository().submit_proof(user_id, task_id, proof_data)
     def update_task_evaluation(
         self,
         task_id: str,
         user_id: str,
         self_evaluation: Optional[Dict[str, Any]] = None,
-        ai_suggestion: Optional[Dict[str, Any]] = None
+        ai_suggestion: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """
-        更新任务自评和AI建议
-        Args:
-            task_id: 任务ID
-            user_id: 用户ID
-            self_evaluation: 自评数据（可选）
-            ai_suggestion: AI建议（可选）
-        Returns:
-            是否更新成功
-        """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            updates: List[str] = []
-            params: List[Any] = []
-            
-            if self_evaluation is not None:
-                updates.append("self_evaluation = ?")
-                params.append(json.dumps(self_evaluation))
-            
-            if ai_suggestion is not None:
-                updates.append("ai_suggestion = ?")
-                params.append(json.dumps(ai_suggestion))
-            
-            if not updates:
-                return False
-            
-            params.append(task_id)
-            params.append(user_id)
-            
-            query = f"UPDATE tasks SET {', '.join(updates)} WHERE task_id = ? AND user_id = ?"
-            cursor.execute(query, params)
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-    
-    def delete_task(self, task_id: str) -> bool:
-        """删除任务"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-    
-    def get_task_stats(self, user_id: str) -> Dict[str, Any]:
-        """获取任务统计信息"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            # 各状态任务数量
-            cursor.execute("""
-                SELECT status, COUNT(*) as count 
-                FROM tasks 
-                WHERE user_id = ? 
-                GROUP BY status
-            """, (user_id,))
-            rows = cursor.fetchall()
-            
-            status_stats: Dict[str, int] = {}
-            total_tasks: int = 0
-            for row in rows:
-                status_stats[row[0]] = row[1]
-                total_tasks += row[1]
-            
-            # 最近30天完成任务数
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM tasks 
-                WHERE user_id = ? AND status = 'completed' 
-                AND completed_at >= date('now', '-30 days')
-            """, (user_id,))
-            completed_last_30_days_result = cursor.fetchone()
-            completed_last_30_days = completed_last_30_days_result[0] if completed_last_30_days_result else 0
-            
-            # 平均完成时间（按已完成任务）
-            cursor.execute("""
-                SELECT AVG(estimated_time) 
-                FROM tasks 
-                WHERE user_id = ? AND status = 'completed'
-            """, (user_id,))
-            avg_estimated_time_result = cursor.fetchone()
-            avg_estimated_time = avg_estimated_time_result[0] if avg_estimated_time_result[0] is not None else 0
-            
-            return {
-                "total_tasks": total_tasks,
-                "status_stats": status_stats,
-                "completed_last_30_days": completed_last_30_days,
-                "avg_estimated_time": round(avg_estimated_time, 1)
-            }
-        finally:
-            conn.close()
-    
-    # ==================== 任务类别相关方法 ====================
+        """Compatibility facade for task evaluation persistence."""
+        return self._task_workflow_repository().update_evaluation(
+            user_id,
+            task_id,
+            self_evaluation=self_evaluation,
+            ai_suggestion=ai_suggestion,
+        )
+    def delete_task(self, task_id: str, user_id: str) -> bool:
+        """Compatibility facade for owner-scoped task and projection deletion."""
+        return self._task_workspace_repository().delete_workspace_task(user_id, task_id)
+
     def add_task_category(
         self,
         user_id: str,
@@ -1527,32 +2022,88 @@ class Database:
         finally:
             conn.close()
     
-    # ==================== 购买记录相关方法 ====================
-    def record_purchase(
+    # ==================== 兑换中心相关方法 ====================
+    def purchase_reward_item(
         self,
         user_id: str,
         item_id: str,
         item_name: str,
-        quantity: int = 1,
-        total_price: int = 0
-    ) -> bool:
-        """记录购买记录"""
+        quantity: int,
+        unit_price: int,
+    ) -> Optional[int]:
+        """Settle a reward marketplace purchase in one SQLite transaction.
+
+        Returns the remaining balance, or ``None`` when the user cannot afford the
+        purchase. Inventory, ledger activity, and purchase history either all
+        commit together or none of them do.
+        """
+        total_price = quantity * unit_price
+        resource_key = f"shop_{item_id}"
         conn = self.get_connection()
         cursor = conn.cursor()
-        purchase_id = str(uuid.uuid4())
-        unit_price = total_price // quantity if quantity > 0 else 0
         try:
+            cursor.execute("BEGIN IMMEDIATE")
             cursor.execute(
-                """INSERT INTO purchase_history 
+                "SELECT COALESCE(SUM(amount), 0) FROM coins WHERE user_id = ?",
+                (user_id,),
+            )
+            balance = int(cursor.fetchone()[0] or 0)
+            if balance < total_price:
+                conn.rollback()
+                return None
+
+            cursor.execute(
+                """INSERT INTO coins (record_id, user_id, amount, type, source)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()),
+                    user_id,
+                    -total_price,
+                    "spend",
+                    f"reward_marketplace:{item_id}",
+                ),
+            )
+            cursor.execute(
+                "SELECT resource_id FROM user_resources WHERE user_id = ? AND resource_key = ?",
+                (user_id, resource_key),
+            )
+            resource = cursor.fetchone()
+            if resource:
+                cursor.execute(
+                    """UPDATE user_resources
+                       SET quantity = quantity + ?
+                       WHERE resource_id = ?""",
+                    (quantity, resource[0]),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO user_resources
+                       (resource_id, user_id, resource_key, quantity)
+                       VALUES (?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), user_id, resource_key, quantity),
+                )
+            cursor.execute(
+                """INSERT INTO purchase_history
                    (purchase_id, user_id, item_id, item_name, quantity, unit_price, total_price)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (purchase_id, user_id, item_id, item_name, quantity, unit_price, total_price)
+                (
+                    str(uuid.uuid4()),
+                    user_id,
+                    item_id,
+                    item_name,
+                    quantity,
+                    unit_price,
+                    total_price,
+                ),
             )
             conn.commit()
-            return True
+            return balance - total_price
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
-    
+
     # ==================== RAG文档管理相关方法 ====================
     def add_system_rag_document(
         self,
@@ -1904,6 +2455,31 @@ class Database:
         finally:
             conn.close()
     
+    def list_active_session_file_summaries(self, user_id: str) -> List[Dict[str, Any]]:
+        """List owned chat sessions that still contain temporary attachments."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT files.session_id,
+                          sessions.session_name,
+                          sessions.group_id,
+                          COUNT(files.id) AS file_count,
+                          MAX(files.upload_time) AS last_upload_at,
+                          MAX(files.expires_at) AS expires_at
+                   FROM user_session_files AS files
+                   JOIN chat_sessions AS sessions
+                     ON sessions.session_id = files.session_id
+                    AND sessions.user_id = files.user_id
+                   WHERE files.user_id = ? AND files.expires_at > ?
+                   GROUP BY files.session_id, sessions.session_name, sessions.group_id
+                   ORDER BY last_upload_at DESC""",
+                (user_id, datetime.now().isoformat()),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
     def cleanup_expired_session_files(self) -> int:
         """
         清理过期的会话临时文件
@@ -1991,7 +2567,7 @@ class Database:
 
     def add_user_document(self, user_id: str, title: str, original_name: str, file_type: str,
                          file_size: int, storage_path: str, content_preview: str = "",
-                         tags: Optional[List[str]] = None) -> str:
+                         tags: Optional[List[str]] = None, doc_id: Optional[str] = None) -> str:
         """
         添加用户文档记录
         Args:
@@ -2008,7 +2584,7 @@ class Database:
         """
         conn = self.get_connection()
         cursor = conn.cursor()
-        doc_id = str(uuid.uuid4())
+        doc_id = doc_id or str(uuid.uuid4())
         now = datetime.now().isoformat()
 
         try:
@@ -2041,7 +2617,7 @@ class Database:
         cursor = conn.cursor()
 
         try:
-            query = "SELECT * FROM user_documents WHERE user_id = ?"
+            query = "SELECT * FROM user_documents WHERE user_id = ? AND is_active = 1"
             params = [user_id]
 
             if status:
@@ -2141,19 +2717,19 @@ class Database:
             updates = ["parse_status = ?", "updated_at = ?"]
             params = [status, datetime.now().isoformat()]
 
-            if vector_collection:
+            if vector_collection is not None:
                 updates.append("vector_collection = ?")
                 params.append(vector_collection)
 
-            if chroma_ids:
+            if chroma_ids is not None:
                 updates.append("chroma_ids = ?")
                 params.append(json.dumps(chroma_ids))
 
-            if content_preview:
+            if content_preview is not None:
                 updates.append("content_preview = ?")
                 params.append(content_preview)
 
-            if error_message:
+            if error_message is not None:
                 updates.append("error_message = ?")
                 params.append(error_message)
 
@@ -2527,22 +3103,62 @@ class Database:
 
     # ==================== 任务链相关方法 ====================
 
-    def create_task_chain(self, user_id: str, chain_name: str, description: str = "") -> str:
-        """创建任务链，返回 chain_id"""
+    def create_task_chain(
+        self,
+        user_id: str,
+        chain_name: str,
+        description: str = "",
+        generation_status: str = "ready",
+    ) -> str:
+        """Create a workflow container and expose its planning state to the UI."""
         conn = self.get_connection()
         cursor = conn.cursor()
         chain_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
         try:
             cursor.execute(
-                """INSERT INTO task_chains (chain_id, user_id, chain_name, description, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (chain_id, user_id, chain_name, description, now, now)
+                """INSERT INTO task_chains
+                   (chain_id, user_id, chain_name, description, generation_status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (chain_id, user_id, chain_name, description, generation_status, now, now),
             )
             conn.commit()
             return chain_id
         finally:
             conn.close()
+
+    def update_task_chain_generation_state(
+        self,
+        chain_id: str,
+        user_id: str,
+        generation_status: str,
+        generation_error: Optional[str] = None,
+    ) -> bool:
+        """Record a user-actionable planning state for an owned workflow."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """UPDATE task_chains
+                   SET generation_status = ?, generation_error = ?, updated_at = ?
+                   WHERE chain_id = ? AND user_id = ?""",
+                (generation_status, generation_error, datetime.now().isoformat(), chain_id, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def create_task_chain_steps(
+        self,
+        user_id: str,
+        chain_id: str,
+        task_specs: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Compatibility facade for atomically creating projected workflow steps."""
+        return self._task_workspace_repository().create_chain_steps(
+            user_id, chain_id, task_specs
+        )
 
     def get_user_task_chains(self, user_id: str) -> List[Dict[str, Any]]:
         """获取用户所有任务链（含进度统计）"""
@@ -2580,56 +3196,59 @@ class Database:
             conn.close()
 
     def delete_task_chain(self, chain_id: str, user_id: str) -> bool:
-        """删除任务链（同时把链中任务的 chain_id 置 NULL）"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "DELETE FROM tasks WHERE chain_id = ? AND user_id = ?",
-                (chain_id, user_id)
-            )
-            cursor.execute(
-                "DELETE FROM task_chains WHERE chain_id = ? AND user_id = ?",
-                (chain_id, user_id)
-            )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
+        """Compatibility facade for owner-scoped workflow deletion."""
+        return self._task_workspace_repository().delete_chain(user_id, chain_id)
 
     def add_task_to_chain(self, task_id: str, chain_id: str, chain_order: int) -> bool:
-        """将任务加入任务链"""
+        """Move a legacy task into a workflow without leaving a stale execution projection."""
+        from adapters.sqlite.task_execution_projection import (
+            delete_task_projection,
+            ensure_task_projection,
+        )
+
         conn = self.get_connection()
-        cursor = conn.cursor()
         now = datetime.now().isoformat()
         try:
-            cursor.execute(
-                "UPDATE tasks SET chain_id = ?, chain_order = ?, updated_at = ? WHERE task_id = ?",
-                (chain_id, chain_order, now, task_id)
+            conn.execute("BEGIN IMMEDIATE")
+            task = conn.execute(
+                "SELECT user_id FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if task is None:
+                conn.rollback()
+                return False
+            user_id = task["user_id"]
+            chain = conn.execute(
+                "SELECT 1 FROM task_chains WHERE chain_id = ? AND user_id = ?",
+                (chain_id, user_id),
+            ).fetchone()
+            if chain is None:
+                conn.rollback()
+                return False
+            delete_task_projection(conn, user_id, task_id, now)
+            cursor = conn.execute(
+                """UPDATE tasks SET chain_id = ?, chain_order = ?, updated_at = ?
+                   WHERE task_id = ? AND user_id = ?""",
+                (chain_id, chain_order, now, task_id, user_id),
             )
+            if cursor.rowcount > 0 and ensure_task_projection(
+                conn, user_id, task_id, now
+            ) is None:
+                raise RuntimeError("Moved task execution projection was not created")
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
     # ==================== 任务进度 & 完成配置 ====================
 
     def update_task_progress(self, task_id: str, user_id: str, progress: int) -> bool:
-        """更新任务当前进度（0-100），达到100时自动更新状态"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        now = datetime.now().isoformat()
-        progress = max(0, min(100, progress))
-        try:
-            # 更新进度
-            cursor.execute(
-                "UPDATE tasks SET current_progress = ?, updated_at = ? WHERE task_id = ? AND user_id = ?",
-                (progress, now, task_id, user_id)
-            )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
+        """Compatibility facade for task and canonical Step progress."""
+        return self._task_workspace_repository().update_task_progress(
+            user_id, task_id, progress
+        )
 
     def update_task_completion_config(
         self,
@@ -2637,45 +3256,73 @@ class Database:
         user_id: str,
         completion_type: str,
         completion_criteria: Optional[Dict[str, Any]] = None,
-        prerequisites: Optional[List[str]] = None
+        prerequisites: Optional[List[str]] = None,
     ) -> bool:
-        """更新任务完成类型和标准"""
+        """Update legacy completion settings and the canonical Step contract atomically."""
+        from adapters.sqlite.task_execution_projection import ensure_task_projection
+
         conn = self.get_connection()
-        cursor = conn.cursor()
         now = datetime.now().isoformat()
+        criteria = completion_criteria or {}
         try:
-            cursor.execute(
-                """UPDATE tasks SET completion_type = ?, completion_criteria = ?, prerequisites = ?, updated_at = ?
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """UPDATE tasks SET completion_type = ?, completion_criteria = ?,
+                          prerequisites = ?, updated_at = ?
                    WHERE task_id = ? AND user_id = ?""",
-                (completion_type, json.dumps(completion_criteria or {}), 
-                 json.dumps(prerequisites or []), now, task_id, user_id)
+                (
+                    completion_type,
+                    json.dumps(criteria),
+                    json.dumps(prerequisites or []),
+                    now,
+                    task_id,
+                    user_id,
+                ),
             )
+            if cursor.rowcount > 0:
+                link = ensure_task_projection(conn, user_id, task_id, now)
+                if link is not None:
+                    conn.execute(
+                        """UPDATE task_steps SET completion_criteria = ?, updated_at = ?
+                           WHERE step_id = ? AND user_id = ?""",
+                        (json.dumps(criteria), now, link["step_id"], user_id),
+                    )
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
     def save_ai_evaluation(
-        self, task_id: str, user_id: str,
-        ai_result: Dict[str, Any], passed: bool
+        self, task_id: str, user_id: str, ai_result: Dict[str, Any], passed: bool
     ) -> bool:
-        """保存AI评判结果，如果通过则标记任务为待完成"""
+        """Persist evaluation evidence and request canonical approval atomically."""
+        from adapters.sqlite.task_execution_projection import sync_task_status
+
         conn = self.get_connection()
-        cursor = conn.cursor()
         now = datetime.now().isoformat()
         try:
-            new_status = "pending_evaluation"  # 始终让用户或管理员最终确认
-            cursor.execute(
-                """UPDATE tasks SET ai_suggestion = ?, proof_data = ?, status = ?, updated_at = ?
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """UPDATE tasks SET ai_suggestion = ?, proof_data = ?,
+                          status = 'pending_evaluation', updated_at = ?
                    WHERE task_id = ? AND user_id = ?""",
                 (
                     json.dumps(ai_result),
                     json.dumps({"ai_evaluated": True, "passed": passed, "timestamp": now}),
-                    new_status, now,
-                    task_id, user_id
-                )
+                    now,
+                    task_id,
+                    user_id,
+                ),
             )
+            if cursor.rowcount > 0:
+                sync_task_status(conn, user_id, task_id, "pending_evaluation", now)
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()

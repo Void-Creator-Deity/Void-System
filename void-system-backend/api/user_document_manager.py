@@ -4,8 +4,9 @@ Void System - User Document Manager
 用户文档管理器，实现虚空系统统一文件上传和处理流程
 """
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Awaitable, Callable, Dict, Any, Optional, List
 import asyncio
+import hashlib
 import logging
 from datetime import datetime
 
@@ -20,24 +21,57 @@ from database import Database
 from .user_document_parser import document_parser
 
 logger = logging.getLogger("void-system-doc-manager")
+ImageKnowledgeDescriber = Callable[[bytes, str], Awaitable[str]]
+
+
+def _storage_safe_file_name(file_name: str) -> str:
+    """Keep client-provided names from influencing the managed storage path."""
+    raw_name = str(file_name or "").replace("\\", "/")
+    candidate = raw_name.rsplit("/", 1)[-1].strip().replace("\x00", "")
+    cleaned = "".join(
+        "_" if ord(character) < 32 or character in '<>:\"/\\|?*' else character
+        for character in candidate
+    ).strip(". ")
+    if not cleaned:
+        cleaned = "upload"
+    suffix = Path(cleaned).suffix[:20]
+    stem = Path(cleaned).stem or "upload"
+    max_stem_length = max(1, 180 - len(suffix))
+    return f"{stem[:max_stem_length]}{suffix}"
+
 
 class UserDocumentManager:
     """用户文档管理器"""
 
-    def __init__(self, db_path: str = "void_system.db", storage_path: str = "./user_documents"):
-        """
-        初始化文档管理器
-        Args:
-            db_path: 数据库路径
-            storage_path: 文件存储根目录
-        """
-        self.db = Database(db_path)
-        self.storage_path = Path(storage_path)
+    def __init__(
+        self,
+        db_path: str = "void_system.db",
+        storage_path: Optional[str] = None,
+        database: Optional[Database] = None,
+        vector_manager: Any = None,
+        lifecycle_repository: Any = None,
+        settings: Any = None,
+        image_describer: Optional[ImageKnowledgeDescriber] = None,
+    ):
+        """Create a manager over application-supplied persistence resources."""
+        self.db = database or Database(db_path)
+        default_storage = Path(__file__).resolve().parents[1] / "user_documents"
+        self.storage_path = Path(storage_path) if storage_path else default_storage
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        self._vector_manager = vector_manager
+        self._lifecycle_repository = lifecycle_repository
+        self._settings = settings
+        self._image_describer = image_describer
 
-        # 文件大小限制
-        self.max_file_size = 50 * 1024 * 1024  # 50MB
-        self.preview_length = 500  # 预览文本长度
+        self.max_file_size = 50 * 1024 * 1024
+        self.preview_length = 500
+
+    def _get_vector_manager(self):
+        if self._vector_manager is None:
+            from .user_vector_manager import UserVectorManager
+
+            self._vector_manager = UserVectorManager(database=self.db)
+        return self._vector_manager
 
     async def upload_and_process_document(
         self,
@@ -79,6 +113,7 @@ class UserDocumentManager:
             storage_path = self._get_storage_path(user_id, doc_id, file_name)
 
             doc_id = self.db.add_user_document(
+                doc_id=doc_id,
                 user_id=user_id,
                 title=doc_title,
                 original_name=file_name,
@@ -89,8 +124,15 @@ class UserDocumentManager:
                 tags=tags or []
             )
 
-            # 5. 异步处理文档内容
-            asyncio.create_task(self._process_document_async(user_id, doc_id, file_data, file_name))
+            # Record a processing job before background work begins.
+            lifecycle = self._start_ingestion_lifecycle(user_id, doc_id, file_data)
+
+            # Continue processing without keeping the upload request open.
+            asyncio.create_task(
+                self._process_document_async(
+                    user_id, doc_id, file_data, file_name, lifecycle.get("job_id")
+                )
+            )
 
             return {
                 "success": True,
@@ -126,6 +168,7 @@ class UserDocumentManager:
         """
         try:
             documents = self.db.get_user_documents(user_id, status, limit, offset)
+            self._attach_lifecycle(documents, user_id)
             stats = self.db.get_user_document_stats(user_id)
 
             return {
@@ -165,6 +208,7 @@ class UserDocumentManager:
                     "error_code": "DOCUMENT_NOT_FOUND"
                 }
 
+            self._attach_lifecycle([document], user_id)
             return {
                 "success": True,
                 "document": document
@@ -242,13 +286,16 @@ class UserDocumentManager:
                 # 记录chroma_ids用于删除向量索引
                 chroma_ids = document.get("chroma_ids", [])
             
-            # 3. 删除向量索引（忽略错误，确保流程继续）
-            try:
-                from .user_vector_manager import vector_manager
-                vector_manager.delete_document_vectors(user_id, doc_id)
-            except Exception as e:
-                logger.warning(f"删除向量索引失败，但继续执行文档删除: {str(e)}")
-            
+            # 3. Remove every indexed chunk before removing its source record.
+            # If the index is unavailable, preserve the source so the user can retry
+            # instead of leaving hidden, orphaned knowledge behind.
+            if not self._get_vector_manager().delete_document_vectors(user_id, doc_id):
+                return {
+                    "success": False,
+                    "message": "资料暂时无法从检索库移除，请稍后重试。",
+                    "error_code": "VECTOR_DELETE_FAILED",
+                }
+
             # 4. 执行数据库删除操作
             db_success = self.db.delete_user_document(doc_id, user_id)
             
@@ -289,6 +336,137 @@ class UserDocumentManager:
                 "success": False,
                 "message": f"删除文档失败: {str(e)}"
             }
+
+    async def rebuild_user_index(self, user_id: str) -> Dict[str, Any]:
+        """Reparse stored source files and replace the user's vector index."""
+        try:
+            documents = self.db.get_user_documents(user_id, limit=500)
+        except Exception as exc:
+            logger.error("Could not list knowledge documents for index rebuild %s: %s", user_id, exc)
+            return {
+                "success": False,
+                "message": "Unable to load documents for index rebuild",
+                "error_code": "DOCUMENT_LIST_FAILED",
+            }
+
+        processed_documents = 0
+        failed_documents = 0
+        skipped_documents = 0
+        total_vectors = 0
+        failures = []
+
+        for document in documents:
+            doc_id = str(document.get("doc_id") or "")
+            original_name = str(document.get("original_name") or "")
+            raw_storage_path = document.get("storage_path")
+            if not doc_id or not original_name or not raw_storage_path:
+                skipped_documents += 1
+                failures.append({"doc_id": doc_id or None, "reason": "Document metadata is incomplete"})
+                continue
+
+            storage_path = Path(str(raw_storage_path))
+            if not storage_path.is_file():
+                error_message = "Original file is missing and cannot be re-indexed"
+                self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                failed_documents += 1
+                failures.append({"doc_id": doc_id, "reason": error_message})
+                continue
+
+            try:
+                file_data = storage_path.read_bytes()
+                validation = self._validate_file(file_data, original_name)
+                if not validation.get("valid"):
+                    error_message = validation.get("message", "Source file validation failed")
+                    self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                    failed_documents += 1
+                    failures.append({"doc_id": doc_id, "reason": error_message})
+                    continue
+
+                if not self._get_vector_manager().delete_document_vectors(user_id, doc_id):
+                    error_message = "Existing index could not be cleared; the original material was kept unchanged"
+                    logger.error("Could not clear existing vectors before rebuilding %s", doc_id)
+                    failed_documents += 1
+                    failures.append({"doc_id": doc_id, "reason": error_message})
+                    continue
+
+                # Clear stale identifiers before parsing so failed rebuilds are never searchable.
+                self.db.update_user_document_status(doc_id, "processing", chroma_ids=[])
+                lifecycle = self._start_ingestion_lifecycle(user_id, doc_id, file_data)
+                await self._process_document_async(
+                    user_id, doc_id, file_data, original_name, lifecycle.get("job_id")
+                )
+                updated_document = self.db.get_user_document(user_id, doc_id) or {}
+                if updated_document.get("parse_status") == "completed":
+                    processed_documents += 1
+                    total_vectors += len(updated_document.get("chroma_ids") or [])
+                else:
+                    failed_documents += 1
+                    failures.append({
+                        "doc_id": doc_id,
+                        "reason": updated_document.get("error_message") or "Document indexing failed",
+                    })
+            except Exception as exc:
+                error_message = f"Index rebuild failed: {str(exc)}"
+                logger.exception("Knowledge index rebuild failed for %s", doc_id)
+                self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                failed_documents += 1
+                failures.append({"doc_id": doc_id, "reason": error_message})
+
+        success = failed_documents == 0
+        if success:
+            message = f"Rebuilt {processed_documents} knowledge documents"
+        else:
+            message = f"Rebuilt {processed_documents} documents; {failed_documents} failed"
+        return {
+            "success": success,
+            "message": message,
+            "processed_documents": processed_documents,
+            "failed_documents": failed_documents,
+            "skipped_documents": skipped_documents,
+            "total_vectors": total_vectors,
+            "failures": failures,
+        }
+
+    async def _enrich_image_for_knowledge(
+        self,
+        file_data: bytes,
+        file_name: str,
+        parse_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Turn an image into grounded knowledge text through the configured vision path."""
+        try:
+            if self._image_describer is not None:
+                content = await self._image_describer(file_data, file_name)
+            else:
+                from services.ai_services.vision_caption import describe_image_for_knowledge
+                from services.ai_services.llm_factory import runtime_settings_scope
+
+                if self._settings is None:
+                    content = await describe_image_for_knowledge(file_data, file_name)
+                else:
+                    with runtime_settings_scope(self._settings):
+                        content = await describe_image_for_knowledge(file_data, file_name)
+        except Exception:
+            logger.exception("Image knowledge extraction failed for %s", file_name)
+            return {
+                "success": False,
+                "error": "图片资料暂时无法识别。请启用支持看图的 AI 服务，或改用可复制文本的文档。",
+            }
+
+        content = str(content or "").strip()
+        if not content:
+            return {
+                "success": False,
+                "error": "图片资料没有提取到可用于检索的内容。请上传更清晰的图片，或改用文本资料。",
+            }
+        enriched = dict(parse_result)
+        enriched.update({
+            "success": True,
+            "content": content,
+            "extraction_method": "vision",
+        })
+        enriched.pop("requires_vision_enrichment", None)
+        return enriched
 
     def _validate_file(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """
@@ -343,7 +521,8 @@ class UserDocumentManager:
         user_dir.mkdir(exist_ok=True)
 
         # 保存文件
-        file_path = user_dir / f"{doc_id}_{file_name}"
+        safe_file_name = _storage_safe_file_name(file_name)
+        file_path = user_dir / f"{doc_id}_{safe_file_name}"
         with open(file_path, 'wb') as f:
             f.write(file_data)
 
@@ -359,7 +538,7 @@ class UserDocumentManager:
         Returns:
             存储路径
         """
-        return self.storage_path / user_id / f"{doc_id}_{file_name}"
+        return self.storage_path / user_id / f"{doc_id}_{_storage_safe_file_name(file_name)}"
 
     def _generate_title(self, file_name: str, metadata: Dict[str, Any]) -> str:
         """
@@ -376,41 +555,85 @@ class UserDocumentManager:
         # 标题化
         return name_without_ext.replace('_', ' ').replace('-', ' ').title()
 
-    async def _process_document_async(self, user_id: str, doc_id: str, file_data: bytes, file_name: str):
-        """
-        异步处理文档内容
-        Args:
-            user_id: 用户ID
-            doc_id: 文档ID
-            file_data: 文件数据
-            file_name: 文件名
-        """
+    def _start_ingestion_lifecycle(self, user_id: str, doc_id: str, file_data: bytes) -> Dict[str, Any]:
+        if self._lifecycle_repository is None:
+            return {}
         try:
-            # 1. 解析文档内容
-            parse_result = document_parser.parse_file(file_data, file_name)
+            return self._lifecycle_repository.start_ingestion(
+                document_id=doc_id,
+                owner_id=user_id,
+                content_fingerprint=hashlib.sha256(file_data).hexdigest(),
+                source_size=len(file_data),
+                index_version="legacy-chroma-v1",
+            )
+        except Exception as exc:
+            logger.warning("Could not create knowledge ingestion record for %s: %s", doc_id, exc)
+            return {}
 
-            if not parse_result.get("success", False):
-                # 解析失败，更新状态
-                self.db.update_user_document_status(
-                    doc_id,
-                    "failed",
-                    error_message=parse_result.get("error", "解析失败")
+    def _attach_lifecycle(self, documents: List[Dict[str, Any]], user_id: str) -> None:
+        if self._lifecycle_repository is None:
+            return
+        for document in documents:
+            try:
+                document["knowledge_status"] = self._lifecycle_repository.latest_ingestion(
+                    document_id=document["doc_id"], owner_id=user_id
                 )
+            except Exception:
+                document["knowledge_status"] = None
+
+    async def _process_document_async(
+        self,
+        user_id: str,
+        doc_id: str,
+        file_data: bytes,
+        file_name: str,
+        job_id: Optional[str] = None,
+    ) -> None:
+        """Parse, index, and record the outcome of one knowledge document."""
+        try:
+            if job_id and self._lifecycle_repository is not None:
+                self._lifecycle_repository.update_ingestion(
+                    job_id=job_id, owner_id=user_id, status="processing"
+                )
+
+            parse_result = document_parser.parse_file(file_data, file_name)
+            if not parse_result.get("success", False):
+                error_message = parse_result.get("error", "Document parsing failed")
+                self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                if job_id and self._lifecycle_repository is not None:
+                    self._lifecycle_repository.update_ingestion(
+                        job_id=job_id,
+                        owner_id=user_id,
+                        status="failed",
+                        error_message=error_message,
+                    )
                 return
 
-            content = parse_result.get("content", "")
-            content_preview = content[:self.preview_length] + "..." if len(content) > self.preview_length else content
+            if parse_result.get("requires_vision_enrichment"):
+                parse_result = await self._enrich_image_for_knowledge(file_data, file_name, parse_result)
+                if not parse_result.get("success", False):
+                    error_message = parse_result.get("error", "Image understanding failed")
+                    self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                    if job_id and self._lifecycle_repository is not None:
+                        self._lifecycle_repository.update_ingestion(
+                            job_id=job_id,
+                            owner_id=user_id,
+                            status="failed",
+                            error_message=error_message,
+                        )
+                    return
 
-            # 2. 更新预览内容及状态
+            content = parse_result.get("content", "")
+            content_preview = content[:self.preview_length]
+            if len(content) > self.preview_length:
+                content_preview += "..."
             self.db.update_user_document_status(
-                doc_id=doc_id, 
-                status="parsed", 
-                content_preview=content_preview
+                doc_id=doc_id,
+                status="parsed",
+                content_preview=content_preview,
             )
 
-            # 3. 创建向量嵌入
-            from .user_vector_manager import vector_manager
-            await vector_manager.process_and_store_document(
+            vector_result = await self._get_vector_manager().process_and_store_document(
                 user_id=user_id,
                 doc_id=doc_id,
                 content=content,
@@ -418,19 +641,42 @@ class UserDocumentManager:
                     "file_name": file_name,
                     "title": self.db.get_user_document(user_id, doc_id).get("title", file_name),
                     "created_at": datetime.now().isoformat(),
-                    "file_type": file_name.split('.')[-1].lower() if '.' in file_name else 'unknown'
-                }
+                    "file_type": file_name.split(".")[-1].lower() if "." in file_name else "unknown",
+                },
             )
 
-            logger.info(f"文档 {doc_id} 处理完成")
+            if not vector_result.get("success"):
+                error_message = vector_result.get("message", "Document indexing failed")
+                # Some adapters can write chunks but fail the final database update.
+                # The document must still be visibly retryable rather than remaining "parsed".
+                self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+                if job_id and self._lifecycle_repository is not None:
+                    self._lifecycle_repository.update_ingestion(
+                        job_id=job_id,
+                        owner_id=user_id,
+                        status="failed",
+                        error_message=error_message,
+                    )
+                return
 
-        except Exception as e:
-            logger.error(f"文档异步处理失败 {doc_id}: {str(e)}")
-            self.db.update_user_document_status(
-                doc_id,
-                "failed",
-                error_message=f"处理失败: {str(e)}"
-            )
+            if job_id and self._lifecycle_repository is not None:
+                self._lifecycle_repository.update_ingestion(
+                    job_id=job_id,
+                    owner_id=user_id,
+                    status="completed",
+                    chunk_count=int(vector_result.get("vector_count") or 0),
+                    index_version="legacy-chroma-v1",
+                )
 
-# 全局文档管理器实例
-document_manager = UserDocumentManager()
+            logger.info("Knowledge document %s processed", doc_id)
+        except Exception as exc:
+            logger.error("Knowledge document processing failed %s: %s", doc_id, exc)
+            error_message = f"Document processing failed: {str(exc)}"
+            self.db.update_user_document_status(doc_id, "failed", error_message=error_message)
+            if job_id and self._lifecycle_repository is not None:
+                self._lifecycle_repository.update_ingestion(
+                    job_id=job_id,
+                    owner_id=user_id,
+                    status="failed",
+                    error_message=error_message,
+                )

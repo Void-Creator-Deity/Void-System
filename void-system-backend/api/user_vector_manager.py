@@ -26,43 +26,35 @@ logger = logging.getLogger("void-system-vector-manager")
 class UserVectorManager:
     """用户向量管理器"""
 
-    def __init__(self, chroma_dir: Optional[str] = None, db_path: str = "void_system.db"):
-        """
-        初始化向量管理器
-        Args:
-            chroma_dir: ChromaDB存储目录（默认与虚空知识库相同：config.get_chroma_path()）
-            db_path: 数据库路径
-        """
+    def __init__(
+        self,
+        chroma_dir: Optional[str] = None,
+        db_path: str = "void_system.db",
+        database: Optional[Database] = None,
+        settings: Optional[RuntimeSettings] = None,
+    ):
+        """Create vector storage over the application-owned database."""
+        runtime = settings or config
         if chroma_dir is None:
-            chroma_dir = str(config.get_chroma_path())
+            chroma_dir = str(runtime.get_chroma_path())
         self.chroma_dir = Path(chroma_dir)
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
-        self.db = Database(db_path)
+        self.db = database or Database(db_path)
 
-        self.embeddings = get_embeddings()
-
-        # 基础文本分割器 (默认)
+        self.embeddings = get_embeddings(settings=runtime)
         self.default_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
+            chunk_size=1000, chunk_overlap=200, length_function=len
         )
-
-        # 代码专用分割器
         self.code_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1200,
             chunk_overlap=150,
             separators=["\ndef ", "\nclass ", "\nimport ", "\nfrom ", "\n\n", "\n", " ", ""],
         )
-
-        # Markdown 专用分割器
         self.md_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1200,
             chunk_overlap=200,
             separators=["\n# ", "\n## ", "\n### ", "\n#### ", "\n\n", "\n", " ", ""],
         )
-
-        # 用户集合缓存
         self._collection_cache = {}
 
     def _get_splitter_for_file(self, file_type: str):
@@ -217,31 +209,22 @@ class UserVectorManager:
             logger.error(f"文档搜索失败 {user_id}: {str(e)}")
             return []
 
+
     def delete_document_vectors(self, user_id: str, doc_id: str) -> bool:
-        """
-        删除文档向量
-        Args:
-            user_id: 用户ID
-            doc_id: 文档ID
-        Returns:
-            是否删除成功
-        """
+        """Remove all vectors for a document, including stale unrecorded chunk IDs."""
         try:
-            # 获取文档信息
             document = self.db.get_user_document(user_id, doc_id)
-            if not document or not document.get("chroma_ids"):
+            if not document:
                 return False
 
-            # 从向量数据库删除
+            # A metadata filter makes the operation idempotent and also clears
+            # vectors written before a database update failed.
             collection = self.get_user_collection(user_id)
-            chroma_ids = document["chroma_ids"]
-            collection.delete(ids=chroma_ids)
-
-            logger.info(f"删除文档 {doc_id} 的 {len(chroma_ids)} 个向量")
+            collection.delete(where={"doc_id": doc_id})
+            logger.info("Removed vectors for knowledge document %s", doc_id)
             return True
-
-        except Exception as e:
-            logger.error(f"删除文档向量失败 {doc_id}: {str(e)}")
+        except Exception as exc:
+            logger.error("Could not remove vectors for knowledge document %s: %s", doc_id, exc)
             return False
 
     def get_collection_stats(self, user_id: str) -> Dict[str, Any]:
@@ -276,39 +259,12 @@ class UserVectorManager:
                 "error": str(e)
             }
 
-    def rebuild_user_index(self, user_id: str) -> Dict[str, Any]:
-        """
-        重建用户向量索引
-        Args:
-            user_id: 用户ID
-        Returns:
-            重建结果
-        """
-        try:
-            # 获取用户所有已完成的文档
-            documents = self.db.get_user_documents(user_id, status="completed")
+    async def rebuild_user_index(self, user_id: str) -> Dict[str, Any]:
+        """Compatibility entry point for the document-owned rebuild workflow."""
+        from .user_document_manager import UserDocumentManager
 
-            total_processed = 0
-            total_vectors = 0
-
-            for doc in documents:
-                # 这里需要重新处理文档内容
-                # 暂时跳过，实际实现需要读取文档内容
-                pass
-
-            return {
-                "success": True,
-                "message": f"索引重建完成，处理了 {total_processed} 个文档，共生成 {total_vectors} 个向量",
-                "processed_docs": total_processed,
-                "total_vectors": total_vectors
-            }
-
-        except Exception as e:
-            logger.error(f"重建索引失败 {user_id}: {str(e)}")
-            return {
-                "success": False,
-                "message": f"索引重建失败: {str(e)}"
-            }
-
-# 全局向量管理器实例
-vector_manager = UserVectorManager()
+        logger.warning(
+            "UserVectorManager.rebuild_user_index is deprecated; use UserDocumentManager instead"
+        )
+        manager = UserDocumentManager(database=self.db, vector_manager=self)
+        return await manager.rebuild_user_index(user_id)

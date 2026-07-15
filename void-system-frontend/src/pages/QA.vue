@@ -1,283 +1,209 @@
 <template>
-  <div class="void-page-container qa-page">
-    <div class="void-content">
-      <header class="page-header">
-        <h1 class="logo-text"><span class="void-text-gradient">虚空</span> 知识库</h1>
-        <p class="subtitle">基于知识库进行检索问答，输出可追溯答案。</p>
-      </header>
-
-      <!-- Search Area -->
-      <section class="selection-box void-card animate-float">
-        <div class="mode-selector">
-          <el-radio-group v-model="searchMode" size="small" class="void-radio-group">
-            <el-radio-button label="vector">向量检索 (Vector)</el-radio-button>
-            <el-radio-button label="hybrid">混合检索 (Hybrid)</el-radio-button>
-          </el-radio-group>
-        </div>
-
-        <div class="input-group">
-          <div class="input-icon">🔍</div>
-          <el-input 
-            v-model="question" 
-            placeholder="输入问题内容... (Shift + Enter 换行)"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 6 }"
-            class="void-input"
-            @keydown.enter="handleEnter"
-            :disabled="isLoading"
-          />
-          <el-button 
-            type="primary" 
-            @click="ask"
-            class="void-btn primary big"
-            :loading="isLoading"
-            :disabled="isLoading || !question.trim()"
-          >
-            {{ isLoading ? '检索中' : '提交问题' }}
-          </el-button>
-        </div>
-      </section>
-
-      <!-- Synthesis State -->
-      <div v-if="isLoading" class="loading-state animate-fade-in">
-        <div class="void-loading-block">
-          <div class="void-loading-ring void-loading-ring--lg" aria-hidden="true"></div>
-          <p class="void-loading-block__msg">正在检索并生成答案（本地大模型 + 嵌入可能较慢，请稍候）…</p>
-        </div>
+  <section class="knowledge-page">
+    <header class="knowledge-page__header">
+      <div>
+        <p class="eyebrow">知识问答</p>
+        <h1>从你的资料里找到答案</h1>
+        <p>选择资料范围并提出问题，回答会同时列出参考来源。</p>
       </div>
+      <el-button :icon="DocumentAdd" plain @click="router.push('/documents')">管理我的资料</el-button>
+    </header>
 
-      <!-- Result Area -->
-      <div v-else-if="answer" class="result-area animate-slide-up">
-        <div class="answer-card void-card">
-          <header class="card-header">
-            <div class="header-info">
-              <h3><el-icon><Reading /></el-icon> 检索到的知识</h3>
-              <span class="timestamp">{{ formatTime(new Date()) }}</span>
+    <div class="knowledge-workspace">
+      <aside class="knowledge-scope" aria-label="知识范围">
+        <button
+          v-for="option in scopes"
+          :key="option.value"
+          class="scope-option"
+          :class="{ 'scope-option--active': scope === option.value }"
+          type="button"
+          @click="selectScope(option.value)"
+        >
+          <el-icon><component :is="option.icon" /></el-icon>
+          <span>
+            <strong>{{ option.label }}</strong>
+            <small>{{ option.description }}</small>
+          </span>
+        </button>
+      </aside>
+
+      <div class="knowledge-main">
+        <form class="ask-form" @submit.prevent="ask">
+          <label for="knowledge-question">你想弄清什么？</label>
+          <el-input
+            id="knowledge-question"
+            v-model="question"
+            :placeholder="scope === 'personal' ? '围绕自己的资料提问' : '围绕共享知识库提问'"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 7 }"
+            resize="none"
+            :disabled="isLoading"
+            @keydown.enter.exact.prevent="ask"
+          />
+          <div class="ask-form__footer">
+            <span>{{ scope === 'personal' ? '只会使用你上传的资料。' : '共享答案来自管理员维护的参考资料。' }}</span>
+            <el-button type="primary" native-type="submit" :icon="Promotion" :loading="isLoading" :disabled="!question.trim()">
+              开始提问
+            </el-button>
+          </div>
+        </form>
+
+        <div v-if="isLoading" class="answer-loading" aria-live="polite">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>正在查找相关依据并整理答案...</span>
+        </div>
+
+        <article v-else-if="result" class="answer-panel">
+          <header class="answer-panel__header">
+            <div>
+              <p class="eyebrow">{{ scope === 'personal' ? '我的资料' : '共享知识' }}</p>
+              <h2>回答</h2>
             </div>
-            <div class="header-actions">
-              <el-button circle class="void-btn ghost" :icon="Refresh" @click="clearAnswer" title="清空" />
-            </div>
+            <span class="support-status" :class="{ 'support-status--limited': needsMoreContext }">{{ supportLabel }}</span>
           </header>
 
-          <div class="card-body">
-            <div class="markdown-body void-markdown" v-html="answerHtml"></div>
-          </div>
+          <div class="answer-panel__body markdown-body" v-html="answerHtml"></div>
 
-          <footer class="card-footer">
-            <el-button type="info" plain @click="clearAnswer" class="void-btn ghost">清空终端</el-button>
-            <el-button type="primary" @click="askNewQuestion" class="void-btn primary">重置上下文</el-button>
+          <p v-if="needsMoreContext" class="answer-context-note">
+            当前资料还不足以支撑更具体的回答。补充相关资料，或换一种更明确的问法后再试。
+          </p>
+
+          <footer v-if="result.sources.length" class="sources">
+            <h3>来源</h3>
+            <ul>
+              <li v-for="source in result.sources" :key="sourceKey(source)">
+                <el-icon><Document /></el-icon>
+                <div>
+                  <strong>{{ source.title || '未命名资料' }}</strong>
+                  <small v-if="source.tags?.length">{{ source.tags.join(' / ') }}</small>
+                </div>
+              </li>
+            </ul>
           </footer>
-        </div>
-      </div>
+        </article>
 
-      <!-- Idle State -->
-      <div v-else class="empty-state animate-fade-in">
-        <div class="void-card subtle-placeholder">
-          <div class="icon">🔮</div>
-          <h3>系统就绪</h3>
-          <p>等待输入问题以执行知识检索。</p>
+        <div v-else class="knowledge-empty">
+          <el-icon><Reading /></el-icon>
+          <h2>{{ scope === 'personal' ? '从自己的资料中开始' : '共享知识，随时可查' }}</h2>
+          <p>{{ scope === 'personal' ? '上传参考资料后，就可以在这里得到有来源依据的回答。' : '提出一个明确的问题，检索并整合团队持续维护的参考内容。' }}</p>
         </div>
       </div>
     </div>
-  </div>
+  </section>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onUnmounted } from "vue"
-import { ElMessage } from "element-plus"
-import { Reading, Refresh } from "@element-plus/icons-vue"
-import { askQA } from "@/api/ai"
-import { getUserInfo } from "@/api/user"
-import { formatAxiosErrorMessage } from "@/utils/apiPayload"
-import { renderAssistantMarkdown } from "@/utils/markdownThink"
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Collection, Document, DocumentAdd, Loading, Promotion, Reading } from '@element-plus/icons-vue'
+import { documentApi } from '@/api/document'
+import { sharedKnowledgeApi } from '@/api/knowledge'
+import { formatAxiosErrorMessage } from '@/utils/apiPayload'
+import { renderAssistantMarkdown } from '@/utils/markdownThink'
 
-// ==================== State ====================
-const question = ref("")
-const answer = ref("")
+const router = useRouter()
+const question = ref('')
+const scope = ref('personal')
 const isLoading = ref(false)
-const searchMode = ref("vector")
+const result = ref(null)
 
-const answerHtml = computed(() => renderAssistantMarkdown(answer.value))
+const scopes = [
+  { value: 'personal', label: '我的资料', description: '你上传的文档', icon: Document },
+  { value: 'shared', label: '共享知识', description: '管理员维护的参考资料', icon: Collection }
+]
 
-// ==================== Logic ====================
 
-const handleEnter = (e) => {
-  if (!e.shiftKey) {
-    e.preventDefault()
-    ask()
-  }
+const answerHtml = computed(() => renderAssistantMarkdown(result.value?.answer || ''))
+const needsMoreContext = computed(() => result.value?.support?.status === 'needs_more_context')
+const supportLabel = computed(() => needsMoreContext.value ? '需要补充资料' : '已有资料支撑')
+
+function selectScope(nextScope) {
+  if (scope.value === nextScope) return
+  scope.value = nextScope
+  result.value = null
 }
 
-const ask = async () => {
-  const q = question.value.trim()
-  if (!q || isLoading.value) return
+function normalizeSources(sources = []) {
+  return sources.map((source) => ({
+    ...source,
+    title: source.title || source.file_name || source.document_name,
+    tags: Array.isArray(source.tags) ? source.tags : []
+  }))
+}
+
+async function ask() {
+  const text = question.value.trim()
+  if (!text || isLoading.value) return
 
   isLoading.value = true
+  result.value = null
   try {
-    const userInfo = getUserInfo()
-    const userId = userInfo?.user_id || userInfo?.user?.user_id
-    const result = await askQA(q, {
-      mode: searchMode.value,
-      userId: userId ?? null,
-    })
-    answer.value = result
-    ElMessage.success("检索完成")
+    const data = scope.value === 'personal'
+      ? await documentApi.ask(text)
+      : await sharedKnowledgeApi.ask(text)
+    result.value = {
+      answer: data.answer || data.content || '暂未得到可用回答。',
+      sources: normalizeSources(data.sources),
+      support: data.support || { status: data.sources?.length ? 'ready' : 'needs_more_context', source_count: data.sources?.length || 0 }
+    }
   } catch (error) {
-    console.error("知识库提问失败:", error)
-    const msg = formatAxiosErrorMessage(error, error?.message || "接口错误")
-    answer.value = `### 检索失败\n\n${msg}`
-    ElMessage.error(msg.length > 80 ? msg.slice(0, 80) + "…" : msg)
+    const message = formatAxiosErrorMessage(error, '知识服务暂时不可用。')
+    ElMessage.error(message)
   } finally {
     isLoading.value = false
   }
 }
 
-onUnmounted(() => {
-  isLoading.value = false
-})
-
-const clearAnswer = () => {
-  answer.value = ""
-  question.value = ""
+function sourceKey(source) {
+  return [source.doc_id || source.document_id || source.title, source.chunk_index || ''].join('-')
 }
-
-/** 与 main 分支一致：结果区时间戳（此前未定义会导致渲染报错、界面卡住） */
-const formatTime = (date) => {
-  return new Date(date).toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })
-}
-
-const askNewQuestion = async () => {
-  question.value = ""
-  answer.value = ""
-  await nextTick()
-  const input = document.querySelector(".el-textarea__inner")
-  input?.focus()
-}
-
 </script>
 
 <style scoped>
-/* Search Area */
-.selection-box {
-  padding: var(--spacing-xl);
-  margin-bottom: var(--spacing-xxl);
-}
-
-.mode-selector {
-  display: flex;
-  justify-content: center;
-  margin-bottom: var(--spacing-md);
-}
-
-.input-group {
-  display: flex;
-  gap: var(--spacing-md);
-  align-items: flex-end;
-}
-
-.input-icon {
-  font-size: 1.5rem;
-  margin-bottom: var(--spacing-xs);
-  filter: drop-shadow(0 0 5px var(--color-primary-transparent));
-}
-
-.big {
-  height: 52px;
-  padding: 0 var(--spacing-xl);
-}
-
-/* Synthesis State */
-.loading-state {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: var(--spacing-xxl);
-  min-height: 200px;
-}
-
-/* Result Area */
-.answer-card {
-  padding: var(--spacing-xl);
-  margin-bottom: var(--spacing-xxl);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-lg);
-  padding-bottom: var(--spacing-md);
-  border-bottom: 2px solid var(--border-color-light);
-}
-
-.header-info h3 {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  margin: 0;
-}
-
-.timestamp {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-family: var(--font-family-mono);
-}
-
-.card-body {
-  margin-bottom: var(--spacing-xl);
-}
-
-.card-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-md);
-  padding-top: var(--spacing-lg);
-  border-top: 1px solid var(--border-color-light);
-}
-
-/* Empty State */
-.empty-state {
-  padding: var(--spacing-xxl) 0;
-  text-align: center;
-}
-
-.subtle-placeholder {
-  display: inline-block;
-  padding: var(--spacing-xxl);
-  max-width: 400px;
-  background: var(--bg-card);
-}
-
-.subtle-placeholder .icon {
-  font-size: 3rem;
-  margin-bottom: var(--spacing-md);
-  opacity: 0.5;
-}
-
-.subtle-placeholder h3 {
-  margin-bottom: var(--spacing-sm);
-  color: var(--text-main);
-}
-
-.subtle-placeholder p {
-  color: var(--text-muted);
-}
-
-@media (max-width: 768px) {
-  .input-group {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .card-footer {
-    flex-direction: column;
-  }
-}
+.knowledge-page { width: min(1180px, 100%); margin: 0 auto; padding: 42px 0 64px; }
+.knowledge-page__header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; padding-bottom: 30px; border-bottom: 1px solid var(--border-color); }
+.knowledge-page__header > div { max-width: 640px; }
+.eyebrow { margin-bottom: 7px; color: var(--color-primary-dark); font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: uppercase; }
+h1 { font-size: 42px; line-height: 1.08; }
+h2 { font-size: 21px; }
+.knowledge-page__header p:not(.eyebrow) { margin-top: 11px; color: var(--text-secondary); font-size: 15px; }
+.knowledge-workspace { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 48px; padding-top: 32px; }
+.knowledge-scope { display: grid; align-content: start; gap: 6px; }
+.scope-option { display: flex; gap: 11px; width: 100%; padding: 12px; border: 1px solid transparent; border-radius: 7px; color: var(--text-secondary); background: transparent; text-align: left; cursor: pointer; transition: .18s ease; }
+.scope-option:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.scope-option--active { border-color: color-mix(in srgb, var(--color-primary) 24%, var(--border-color)); color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); }
+.scope-option > .el-icon { flex: 0 0 auto; margin-top: 2px; font-size: 18px; }
+.scope-option span { display: grid; gap: 2px; min-width: 0; }
+.scope-option strong { font-size: 14px; }
+.scope-option small { color: var(--text-muted); font-size: 12px; line-height: 1.35; }
+.knowledge-main { min-width: 0; }
+.ask-form { padding: 20px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); box-shadow: var(--shadow-sm); }
+.ask-form > label { display: block; margin-bottom: 10px; color: var(--text-primary); font-size: 14px; font-weight: 700; }
+.ask-form :deep(.el-textarea__inner) { min-height: 98px !important; border-radius: 6px; font: inherit; line-height: 1.6; }
+.ask-form__footer { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-top: 14px; }
+.ask-form__footer > span { color: var(--text-muted); font-size: 12px; }
+.answer-loading, .knowledge-empty { display: grid; justify-items: center; gap: 12px; padding: 76px 22px; color: var(--text-muted); text-align: center; }
+.answer-loading { grid-template-columns: auto auto; justify-content: center; }
+.answer-loading .el-icon { color: var(--color-primary); font-size: 19px; }
+.answer-panel { margin-top: 26px; border-top: 2px solid var(--color-primary); }
+.answer-panel__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 22px 0; border-bottom: 1px solid var(--border-color-light); }
+.answer-panel__header .eyebrow { margin-bottom: 4px; }
+.support-status { flex: 0 0 auto; padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--color-success) 34%, var(--border-color)); border-radius: 999px; color: var(--color-success); background: color-mix(in srgb, var(--color-success) 8%, var(--bg-secondary)); font-size: 12px; font-weight: 700; }.support-status--limited { border-color: color-mix(in srgb, var(--color-warning) 38%, var(--border-color)); color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-secondary)); }
+.answer-panel__body { padding: 28px 0; color: var(--text-primary); }
+.answer-context-note { margin: -8px 0 24px; padding: 11px 13px; border-left: 2px solid var(--color-warning); color: var(--text-secondary); background: color-mix(in srgb, var(--color-warning) 8%, var(--bg-secondary)); font-size: 13px; line-height: 1.6; }
+.sources { padding: 22px 0 0; border-top: 1px solid var(--border-color-light); }
+.sources h3 { margin-bottom: 12px; font-size: 14px; }
+.sources ul { display: grid; gap: 8px; padding: 0; list-style: none; }
+.sources li { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 8px 10px; border-left: 2px solid color-mix(in srgb, var(--color-primary) 36%, transparent); background: var(--bg-tertiary); }
+.sources li > .el-icon { color: var(--color-primary-dark); }
+.sources li > div { display: grid; gap: 1px; min-width: 0; }
+.sources strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.sources small { color: var(--text-muted); font-size: 11px; }
+.knowledge-empty { padding-top: 86px; }
+.knowledge-empty > .el-icon { color: var(--color-primary); font-size: 34px; }
+.knowledge-empty h2 { color: var(--text-primary); }
+.knowledge-empty p { max-width: 440px; color: var(--text-secondary); font-size: 14px; }
+@media (max-width: 820px) { .knowledge-page { padding-top: 28px; } .knowledge-page__header { align-items: flex-start; flex-direction: column; } .knowledge-workspace { grid-template-columns: 1fr; gap: 20px; } .knowledge-scope { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { h1 { font-size: 32px; } .knowledge-page { padding-bottom: 36px; } .knowledge-page__header { padding-bottom: 22px; } .knowledge-page__header > .el-button { width: 100%; } .knowledge-scope { grid-template-columns: 1fr; } .ask-form { padding: 14px; } .ask-form__footer { align-items: stretch; flex-direction: column; } .ask-form__footer .el-button { width: 100%; } .sources li { align-items: flex-start; } }
 </style>

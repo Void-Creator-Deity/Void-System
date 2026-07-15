@@ -1,474 +1,227 @@
 <template>
-  <div id="app">
-    <!-- 系统初始化遮罩 (虚空觉醒) -->
-    <div v-if="isLoading" class="system-initializer">
-      <div class="initializer-core">
-        <div class="core-orbit"></div>
-        <div class="core-glow"></div>
+  <div id="app" class="app-shell" :class="{ 'app-shell--workspace': isWorkspaceRoute }">
+    <aside v-if="isWorkspaceRoute" class="workspace-sidebar">
+      <button class="brand" type="button" aria-label="前往工作台" @click="router.push('/')">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <span class="brand-copy"><strong>虚空系统</strong><small>个人工作区</small></span>
+      </button>
+
+      <nav class="workspace-nav" aria-label="主要导航">
+        <p class="nav-label">工作</p>
+        <RouterLink v-for="item in workspaceNavigation" :key="item.to" :to="item.to" class="workspace-nav__item">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+        </RouterLink>
+
+        <p class="nav-label nav-label--secondary">智能协作</p>
+        <RouterLink v-for="item in assistantNavigation" :key="item.to" :to="item.to" class="workspace-nav__item">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+        </RouterLink>
+
+        <template v-if="isAdmin">
+          <p class="nav-label nav-label--secondary">管理</p>
+          <RouterLink to="/admin/rag" class="workspace-nav__item">
+            <el-icon><Files /></el-icon>
+            <span>共享知识维护</span>
+          </RouterLink>
+          <RouterLink to="/admin/ai" class="workspace-nav__item">
+            <el-icon><Cpu /></el-icon>
+            <span>AI 服务</span>
+          </RouterLink>
+        </template>
+      </nav>
+
+      <div class="sidebar-account">
+        <el-dropdown v-if="isAuthenticated" trigger="click" placement="top-start" @command="handleAccountCommand">
+          <button class="account-trigger" type="button" aria-label="打开账号菜单">
+            <span class="account-avatar">{{ userAvatar }}</span>
+            <span class="account-copy"><strong>{{ userName }}</strong><small>账号与偏好</small></span>
+            <el-icon class="account-caret"><MoreFilled /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu class="account-menu">
+              <el-dropdown-item command="profile"><el-icon><User /></el-icon>个人资料</el-dropdown-item>
+              <el-dropdown-item command="settings"><el-icon><Setting /></el-icon>偏好设置</el-dropdown-item>
+              <el-dropdown-item divided command="logout"><el-icon><SwitchButton /></el-icon>退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
-      <div class="initializer-text">
-        <span class="glitch-text" data-text="INITIALIZING_VOID_CORE...">INITIALIZING_VOID_CORE...</span>
-      </div>
-    </div>
-    
-    <!-- 系统顶栏 -->
-    <header class="system-header">
-      <div class="header-glass-backdrop"></div>
-      <div class="container header-content">
-        <div class="brand-area" @click="router.push('/')">
-          <div class="brand-v-icon">
-            <div class="v-inner"></div>
-          </div>
-          <div class="brand-label">
-            <span class="brand-name">VOID</span>
-            <span class="brand-suffix">CORE 2.0</span>
-          </div>
-        </div>
-        <!-- 桌面端导航 -->
-        <nav class="nav-links flex gap-md">
-          <NavItem to="/" icon="🏠">系统终端</NavItem>
-          <NavItem to="/ai" icon="⌨️">系统精灵</NavItem>
-          <NavItem to="/advisor" icon="🧠">任务系统</NavItem>
-          <NavItem to="/qa" icon="❓">虚空知识库</NavItem>
-          <NavItem to="/documents" icon="📄">文档管理</NavItem>
-          <!-- 仅管理员可见 -->
-          <NavItem v-if="isAdmin" to="/admin/rag" icon="🔧">RAG管理</NavItem>
-        </nav>
-        
-        <!-- 操作中枢 (用户交互区) -->
-        <div class="central-ops">
-          <div v-if="isAuthenticated" class="user-node card-glass" @click="toggleUserMenu">
-            <div class="user-info-text">
-              <span class="user-label">{{ userName }}</span>
-              <span class="user-rank">等级: {{ userLevel }}</span>
-            </div>
-            <div class="user-hex-avatar">
-              <span class="avatar-char">{{ userAvatar }}</span>
-            </div>
-            
-            <transition name="dropdown">
-              <div v-if="showUserMenu" class="user-ops-menu card-glass">
-                <div class="menu-item" @click="goToProfile">
-                  <el-icon><User /></el-icon> 个人资料
-                </div>
-                <div class="menu-item" @click="goToSettings">
-                  <el-icon><Setting /></el-icon> 系统设置
-                </div>
-                <div class="menu-divider"></div>
-                <div class="menu-item logout" @click="logout">
-                  <el-icon><SwitchButton /></el-icon> 断开连接
-                </div>
-              </div>
-            </transition>
-          </div>
-          
-          <div v-else-if="!isLoading" class="auth-gate flex gap-sm">
-            <el-button class="void-btn" @click="router.push('/login')">接入连接</el-button>
-            <el-button class="void-btn primary" @click="router.push('/register')">创建序列</el-button>
-          </div>
-        </div>
+    </aside>
+
+    <header v-if="isWorkspaceRoute" class="mobile-header">
+      <button class="brand" type="button" aria-label="前往工作台" @click="router.push('/')">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <span class="brand-copy"><strong>虚空系统</strong><small>{{ route.meta.title || '工作区' }}</small></span>
+      </button>
+      <el-button text circle aria-label="打开导航" @click="mobileNavOpen = true"><el-icon><Menu /></el-icon></el-button>
+    </header>
+
+    <header v-else class="public-header">
+      <button class="brand" type="button" aria-label="前往首页" @click="router.push('/login')">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <span class="brand-copy"><strong>虚空系统</strong><small>成长工作台</small></span>
+      </button>
+      <div class="public-header__actions">
+        <el-button text @click="router.push('/login')">登录</el-button>
+        <el-button type="primary" @click="router.push('/register')">创建账号</el-button>
       </div>
     </header>
 
-    <!-- 主界面内容区（系统精灵等页全宽，避免与 calc 视高叠加裁切） -->
-    <main class="main" :class="{ 'main--fullbleed': route.meta.fullBleed }">
+    <el-drawer v-model="mobileNavOpen" direction="ltr" size="min(84vw, 340px)" :with-header="false" class="mobile-navigation">
+      <div class="mobile-navigation__header">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <div><strong>虚空系统</strong><small>个人工作区</small></div>
+      </div>
+      <nav class="mobile-navigation__links" aria-label="移动端导航">
+        <RouterLink v-for="item in workspaceNavigation" :key="item.to" :to="item.to" @click="mobileNavOpen = false">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+        </RouterLink>
+        <p class="mobile-navigation__label">智能协作</p>
+        <RouterLink v-for="item in assistantNavigation" :key="item.to" :to="item.to" @click="mobileNavOpen = false">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+        </RouterLink>
+        <RouterLink v-if="isAdmin" to="/admin/rag" @click="mobileNavOpen = false">
+          <el-icon><Files /></el-icon>
+          <span>共享知识维护</span>
+        </RouterLink>
+        <RouterLink v-if="isAdmin" to="/admin/ai" @click="mobileNavOpen = false">
+          <el-icon><Cpu /></el-icon>
+          <span>AI 服务</span>
+        </RouterLink>
+      </nav>
+      <button v-if="isAuthenticated" class="mobile-account" type="button" @click="openSettings">
+        <span class="account-avatar">{{ userAvatar }}</span>
+        <span><strong>{{ userName }}</strong><small>账号与偏好</small></span>
+        <el-icon><ArrowRight /></el-icon>
+      </button>
+    </el-drawer>
+
+    <main class="main" :class="{ 'main--fullbleed': route.meta.fullBleed, 'main--public': !isWorkspaceRoute }">
       <div :class="route.meta.fullBleed ? 'main-inner--fullbleed' : 'container'">
         <RouterView />
       </div>
     </main>
-
-    <!-- 底部系统信息栏 -->
-    <footer class="footer">
-      <div class="container">
-        <div class="system-info">
-          <div class="copyright text-center text-sm text-muted">
-            © {{ new Date().getFullYear() }} VOID SYSTEM — 虚空系统架构
-          </div>
-        </div>
-      </div>
-    </footer>
   </div>
 </template>
 
 <script setup>
-/**
- * App Component - Main Application Container
- * ------------------------------------------
- * 主应用组件，包含导航栏、用户认证状态管理和全局布局
- */
-
-import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
-import { ref, onMounted, computed } from 'vue'
-import { User, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import {
+  ArrowRight,
+  ChatDotRound,
+  Collection,
+  Document,
+  Files,
+  House,
+  List,
+  MagicStick,
+  Menu,
+  MoreFilled,
+  Setting,
+  SwitchButton,
+  TrendCharts,
+  User
+} from '@element-plus/icons-vue'
 import { authState, logout as logoutApi } from '@/api/user'
-import NavItem from '@/components/NavItem.vue'
 
 const router = useRouter()
 const route = useRoute()
+const mobileNavOpen = ref(false)
+const workspaceNavigation = [
+  { to: '/', label: '工作台', icon: House },
+  { to: '/tasks', label: '行动', icon: List },
+  { to: '/documents', label: '资料库', icon: Document },
+  { to: '/growth', label: '成长', icon: TrendCharts }
+]
 
-// ==================== 响应式状态 ====================
-const isLoading = ref(false)
-const showUserMenu = ref(false)
-
-// 使用计算属性连接全局状态
+const assistantNavigation = [
+  { to: '/ai', label: '对话', icon: ChatDotRound },
+  { to: '/advisor', label: '行动规划', icon: MagicStick },
+  { to: '/qa', label: '知识问答', icon: Collection }
+]
+const isWorkspaceRoute = computed(() => route.meta.requiresAuth !== false)
 const isAuthenticated = computed(() => authState.isLoggedIn)
 const userName = computed(() => {
   const info = authState.userInfo
-  if (!info) return '用户'
-  // 优先显示昵称 (档案代号)
-  return info.username || info.user?.username || info.username || info.userName || info.user?.username || '用户'
+  return info?.username || info?.user?.username || info?.userName || '用户'
 })
-const userLevel = computed(() => {
-  const info = authState.userInfo
-  if (!info) return 1
-  return info.level || info.userLevel || info.user?.level || 1
-})
-const userAvatar = computed(() => userName.value.charAt(0).toUpperCase())
+const userAvatar = computed(() => userName.value.trim().charAt(0).toUpperCase() || 'V')
 const isAdmin = computed(() => {
   const info = authState.userInfo
   return info?.user?.role === 'admin' || info?.role === 'admin'
 })
 
-// ==================== 业务逻辑 ====================
-
-/**
- * 加载用户信息（初次挂载）
- */
-const loadUserInfo = async () => {
-  // 如果已经通过 reactive 初始化了，这里主要是为了处理可能的 loading 状态
-  isLoading.value = true
-  try {
-    // 可以在这里调用 getCurrentUser 同步最新的用户信息
-  } catch (error) {
-    console.error('获取用户信息失败:', error)
-  } finally {
-    isLoading.value = false
+async function handleAccountCommand(command) {
+  if (command === 'profile') return router.push('/profile')
+  if (command === 'settings') return router.push('/settings')
+  if (command === 'logout') {
+    try { await logoutApi() } catch { /* The API client clears local state as a fallback. */ }
+    router.push('/login')
   }
 }
 
-/**
- * 切换用户下拉菜单
- */
-const toggleUserMenu = () => {
-  showUserMenu.value = !showUserMenu.value
-}
-
-/**
- * 跳转到个人资料页面
- */
-const goToProfile = () => {
-  showUserMenu.value = false
-  router.push('/profile')
-}
-
-/**
- * 跳转到系统设置页面
- */
-const goToSettings = () => {
-  showUserMenu.value = false
+function openSettings() {
+  mobileNavOpen.value = false
   router.push('/settings')
 }
 
-/**
- * 用户登出
- */
-const logout = async () => {
-  showUserMenu.value = false
-  try {
-    // 调用登出 API（内部会处理状态更新）
-    await logoutApi()
-    
-    // 跳转到登录页
-    router.push('/login')
-  } catch (error) {
-    console.error('退出登录失败:', error)
-    router.push('/login')
-  }
-}
-
-// ==================== 生命周期 ====================
-
-// 组件挂载时加载用户信息及本地主题配置
 onMounted(() => {
-  loadUserInfo()
-
-  // 读取本地缓存的系统设置，应用主题模式
   try {
-    const savedSettings = localStorage.getItem('settings_cache')
-    if (savedSettings) {
-      const parsed = JSON.parse(savedSettings)
-      const themeMode = parsed?.systemConfig?.themeMode || 'light'
-      document.documentElement.setAttribute('data-theme', themeMode)
-    } else {
-      // 与 style.css :root（Gemini 浅色）一致
-      document.documentElement.setAttribute('data-theme', 'light')
-    }
-  } catch(e) {
-    console.warn('Failed to load local theme settings', e)
+    const saved = JSON.parse(localStorage.getItem('settings_cache') || '{}')
+    document.documentElement.setAttribute('data-theme', saved?.preferences?.themeMode || 'light')
+  } catch {
     document.documentElement.setAttribute('data-theme', 'light')
   }
 })
 </script>
 
 <style scoped>
-/* Initializer Overlay */
-.system-initializer {
-  position: fixed;
-  inset: 0;
-  background: var(--bg-primary);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
+.app-shell { min-height: 100vh; background: var(--bg-primary); }
+.app-shell--workspace { display: grid; grid-template-columns: 244px minmax(0, 1fr); }
+.workspace-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; width: 244px; height: 100vh; padding: 22px 14px 14px; border-right: 1px solid var(--border-color); background: var(--bg-secondary); }
+.brand { display: inline-flex; align-items: center; gap: 10px; width: fit-content; border: 0; padding: 0 8px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; color: #fff; background: var(--color-primary); font-size: 14px; font-weight: 800; box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 22%, transparent); }
+.brand-copy { display: grid; gap: 1px; line-height: 1.15; }
+.brand-copy strong { font-size: 15px; letter-spacing: 0; }
+.brand-copy small { color: var(--text-muted); font-size: 11px; }
+.workspace-nav { display: grid; align-content: start; gap: 3px; margin-top: 34px; }
+.nav-label { margin: 0 10px 7px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
+.nav-label--secondary { margin-top: 20px; }
+.workspace-nav__item { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 1px solid transparent; border-radius: 7px; color: var(--text-secondary); font-size: 14px; text-decoration: none; transition: color .16s ease, background .16s ease, border-color .16s ease; }
+.workspace-nav__item:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.workspace-nav__item.router-link-exact-active { border-color: color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); font-weight: 700; }
+.workspace-nav__item .el-icon { font-size: 17px; }
+.sidebar-account { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border-color-light); }
+.account-trigger, .mobile-account { display: flex; align-items: center; gap: 9px; width: 100%; border: 1px solid transparent; border-radius: 7px; padding: 7px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.account-trigger:hover, .mobile-account:hover { border-color: var(--border-color-light); background: var(--bg-tertiary); }
+.account-avatar { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 15%, var(--bg-secondary)); font-size: 12px; font-weight: 800; }
+.account-copy, .mobile-account > span:nth-child(2) { display: grid; gap: 1px; min-width: 0; }
+.account-copy strong, .mobile-account strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.account-copy small, .mobile-account small { color: var(--text-muted); font-size: 11px; }
+.account-caret { margin-left: auto; color: var(--text-muted); }
+.main { min-width: 0; min-height: 100vh; }
+.main--fullbleed { width: 100%; }
+.main-inner--fullbleed { width: 100%; }
+.mobile-header { display: none; }
+.public-header { display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 0 clamp(14px, 4vw, 28px); border-bottom: 1px solid var(--border-color-light); }
+.public-header .brand { padding-left: 0; }
+.public-header__actions { display: flex; align-items: center; gap: 4px; }
+.mobile-navigation__header { display: flex; align-items: center; gap: 10px; padding: 4px 0 21px; border-bottom: 1px solid var(--border-color); }
+.mobile-navigation__header > div { display: grid; gap: 1px; }
+.mobile-navigation__header strong { font-size: 15px; }
+.mobile-navigation__header small { color: var(--text-muted); font-size: 11px; }
+.mobile-navigation__links { display: grid; gap: 4px; padding: 18px 0; }.mobile-navigation__label { margin: 14px 12px 4px; color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.mobile-navigation__links a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px; border-radius: 7px; color: var(--text-secondary); text-decoration: none; font-size: 14px; }
+.mobile-navigation__links a.router-link-exact-active { color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); font-weight: 700; }
+.mobile-account { margin-top: auto; }
+.mobile-account > .el-icon { margin-left: auto; color: var(--text-muted); }
+@media (max-width: 900px) { .app-shell--workspace { display: block; } .workspace-sidebar { display: none; } .mobile-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 14px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--bg-primary) 94%, transparent); backdrop-filter: blur(14px); } .mobile-header .brand { padding-left: 0; } .main { min-height: calc(100vh - 60px); } }
+@media (min-width: 901px) { .app-shell--workspace .main { grid-column: 2; } }
 
-.initializer-core {
-  position: relative;
-  width: 80px;
-  height: 80px;
-  margin-bottom: var(--spacing-xl);
-}
-
-.core-orbit {
-  position: absolute;
-  inset: -10px;
-  border: 2px solid var(--color-primary);
-  border-radius: 50%;
-  border-top-color: transparent;
-  animation: spin 2s linear infinite;
-}
-
-.core-glow {
-  width: 100%;
-  height: 100%;
-  background: radial-gradient(circle, var(--color-primary), transparent 70%);
-  border-radius: 50%;
-  opacity: 0.3;
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.initializer-text {
-  font-family: var(--font-family-mono);
-  color: var(--color-primary);
-  letter-spacing: 4px;
-}
-
-/* Header */
-.system-header {
-  height: 64px;
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-}
-
-.header-content {
-  width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0 var(--spacing-lg);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-  min-height: 64px;
-}
-
-.brand-area {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.brand-label {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
-  gap: 2px;
-}
-
-.brand-name {
-  font-weight: 800;
-  font-size: 1.15rem;
-  letter-spacing: 0.06em;
-  color: var(--text-primary);
-}
-
-.brand-suffix {
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--text-muted);
-  text-transform: uppercase;
-}
-
-/* Nav */
-.nav-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0 var(--spacing-xs);
-}
-
-.central-ops {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  flex-shrink: 0;
-}
-
-/* User Menu */
-.user-node {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px 6px 14px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all var(--transition-normal);
-  max-width: min(260px, 42vw);
-}
-
-.user-info-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  flex: 1 1 auto;
-  text-align: right;
-  line-height: 1.2;
-}
-
-.user-label {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.user-rank {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.user-hex-avatar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.user-node:hover {
-  border-color: var(--color-primary);
-}
-
-.avatar-char {
-  width: 32px;
-  height: 32px;
-  background: var(--color-primary);
-  color: #fff;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 0.9rem;
-}
-
-.user-ops-menu {
-  position: absolute;
-  top: 50px;
-  right: 0;
-  width: 180px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--spacing-xs);
-  z-index: 1001;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.menu-item:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.menu-divider {
-  height: 1px;
-  background: var(--border-color-light);
-  margin: 4px 0;
-}
-
-/* Main & Footer */
-.main {
-  min-height: calc(100vh - 120px);
-  padding: var(--spacing-xl) 0;
-}
-
-.main--fullbleed {
-  padding-top: var(--spacing-md);
-  padding-bottom: var(--spacing-md);
-  min-height: calc(100vh - 120px);
-}
-
-.main-inner--fullbleed {
-  width: 100%;
-  max-width: none;
-  margin: 0 auto;
-  padding: 0 clamp(12px, 2vw, 24px);
-  box-sizing: border-box;
-}
-
-.footer {
-  height: 56px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.copyright {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.6; } }
-
-@media (max-width: 900px) {
-  .nav-links { display: none; }
-}
+@media (max-width: 520px) { .brand-copy small { display: none; } .public-header__actions .el-button:first-child { display: none; } }
 </style>

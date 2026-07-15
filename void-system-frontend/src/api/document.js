@@ -1,88 +1,61 @@
-/**
- * Void System Frontend - User Document API
- * ----------------------------------------
- * 用户个人文档管理 API 服务
- */
-
-import api from './index'
+import api, { apiRequest } from './index'
 
 export const documentApi = {
-    /**
-     * 上传文档
-     * @param {FormData} formData - 包含 files, title, tags 的 FormData
-     * @param {Function} onUploadProgress - 上传进度回调
-     */
-    upload(formData, onUploadProgress) {
-        return api.post('/api/user/documents/upload', formData, {
-            headers: {
-                'Content-Type': 'multipart/form-data'
-            },
-            onUploadProgress
-        })
-    },
+  upload(formData, onUploadProgress) {
+    return apiRequest(api.post('/api/user/documents/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress
+    }))
+  },
 
-    /**
-     * 获取文档列表
-     * @param {Object} params - status, limit, offset
-     */
-    list(params = {}) {
-        return api.get('/api/user/documents', { params })
-    },
+  list(params = {}) {
+    return apiRequest(api.get('/api/user/documents', { params }))
+  },
 
-    /**
-     * 获取文档详情
-     * @param {string} docId 
-     */
-    get(docId) {
-        return api.get(`/api/user/documents/${docId}`)
-    },
+  get(documentId, { includeArchived = false } = {}) {
+    return apiRequest(api.get(
+      `/api/user/documents/${documentId}`,
+      { params: includeArchived ? { include_archived: true } : undefined }
+    ))
+  },
 
-    /**
-     * 更新文档信息
-     * @param {string} docId 
-     * @param {Object} data - title, tags
-     */
-    update(docId, data) {
-        return api.put(`/api/user/documents/${docId}`, data)
-    },
+  update(documentId, updates) {
+    return apiRequest(api.put(`/api/user/documents/${documentId}`, updates))
+  },
 
-    /**
-     * 删除文档
-     * @param {string} docId 
-     */
-    delete(docId) {
-        return api.delete(`/api/user/documents/${docId}`)
-    },
+  archive(documentId) {
+    return apiRequest(api.delete(`/api/user/documents/${documentId}`))
+  },
 
-    /**
-     * 获取统计信息
-     */
-    getStats() {
-        return api.get('/api/user/documents/stats')
-    },
+  restore(documentId) {
+    return apiRequest(api.post(`/api/user/documents/${documentId}/restore`))
+  },
 
-    /**
-     * 向量搜索
-     * @param {string} query 
-     * @param {number} topK 
-     */
-    search(query, topK = 5) {
-        return api.post('/api/vector/search', { query, top_k: topK })
-    },
+  purge(documentId) {
+    return apiRequest(api.delete(`/api/user/documents/${documentId}/purge`))
+  },
 
-    /**
-     * 基于文档提问
-     * @param {string} question 
-     * @param {string[]} documentIds 
-     */
-    ask(question, documentIds = [], options = {}) {
-        return api.post(
-            '/api/user/qa/ask',
-            {
-                question,
-                document_ids: documentIds
-            },
-            { timeout: options.timeoutMs ?? 300000 }
-        )
-    }
+  getStats() {
+    return apiRequest(api.get('/api/user/documents/stats'))
+  },
+
+  rebuildIndex() {
+    return apiRequest(api.post('/api/user/documents/rebuild-index'))
+  },
+
+  getActivity(limit = 10) {
+    return apiRequest(api.get('/api/user/knowledge/activity', { params: { limit } }))
+  },
+
+  search(query, topK = 5) {
+    return apiRequest(api.post('/api/knowledge/search', { query, top_k: topK }))
+  },
+
+  ask(question, documentIds = [], options = {}) {
+    return apiRequest(api.post(
+      '/api/user/qa/ask',
+      { question, document_ids: documentIds },
+      { timeout: options.timeoutMs ?? 300000 }
+    ))
+  }
 }

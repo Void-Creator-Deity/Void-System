@@ -1,31 +1,29 @@
 # Docs
 
-此目录存放面向外部读者和协作者的补充文档。
+此目录保存当前架构、接口合同、产品方向和历史资料。运行行为以代码、OpenAPI 和 ACTIVE 文档为准。
 
-## 文档列表
+## 当前文档
 
-- `project-concept.md`：项目创意来源、问题定义、产品定位与规划方向
-- `archive/README.md`：历史报告与归档资料入口（非运行必需）
+- `../CONTEXT.md`：领域语言、架构不变量和迁移方向
+- `api-contract.md`：前端可依赖的 HTTP 合同与兼容接口规则
+- `adr/`：已确认的架构决策
+- `next-iteration-product-loop.md`：商城、系统伙伴、上下文工程、长期记忆和用户画像的下一迭代范围
+- `project-concept.md`：项目创意来源与产品定位
+- `archive/README.md`：历史报告入口，内容可能过时
 
-## 阅读顺序建议
+## 建议阅读顺序
 
-1. 先看仓库根目录 `README.md`（项目总览与快速开始）
-2. 再看 `project-concept.md`（为什么做、面向谁、后续方向）
-3. 需要追溯历史资料时，再进入 `archive/`
+1. 根目录 `README.md`
+2. `CONTEXT.md`
+3. `api-contract.md`
+4. 与当前改动相关的 `adr/`
+5. 需要规划下一轮产品闭环时再看 `next-iteration-product-loop.md`
 
-## 文件落位规范
+## 状态约定
 
-- 运行必需文件放在对应子项目目录（`void-system-backend/`、`void-system-frontend/`）
-- 报告、清单、对比记录统一放在 `docs/archive/`
-- 不将临时调试输出（如 `*.log`、路由快照、临时脚本）放在仓库根目录
+- `ACTIVE`：当前维护，可作为实现依据
+- `INTERNAL`：团队内部材料
+- `ARCHIVED`：历史资料，可能过时
+- `DEPRECATED`：不再建议使用
 
-## 内部文件状态标记规范
-
-为避免历史文件被误用，内部文件建议使用以下状态标记：
-
-- `ACTIVE`：当前仍维护并可直接使用
-- `INTERNAL`：仅团队内部使用，不作为对外说明依据
-- `ARCHIVED`：归档保留，可能过时
-- `DEPRECATED`：已废弃，不再建议使用
-
-建议在内部脚本或归档文档开头增加状态说明行，例如：`状态：ARCHIVED`。
+临时日志、截图、数据库、路由快照和测试缓存不应进入此目录或仓库提交。

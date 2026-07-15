@@ -3,11 +3,12 @@ Void System - User Document Parser
 ----------------------------------
 多格式文档解析器，支持虚空系统统一文档处理流程
 """
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 from abc import ABC, abstractmethod
-import pandas as pd
 import io
 import re
 
@@ -235,6 +236,7 @@ class ExcelDocumentParser(DocumentParser):
     def parse_content(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """解析Excel内容"""
         try:
+            import pandas as pd
             if file_name.lower().endswith('.csv'):
                 # CSV处理 - 使用pandas优化
                 try:
@@ -305,6 +307,7 @@ class ExcelDocumentParser(DocumentParser):
     def extract_metadata(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """提取Excel元数据"""
         try:
+            import pandas as pd
             # 尝试读取Excel文件获取更多元数据
             excel_data = pd.ExcelFile(io.BytesIO(file_data))
 
@@ -335,7 +338,8 @@ class ExcelDocumentParser(DocumentParser):
                 "error": f"元数据提取失败: {str(e)}"
             }
 
-    def _dataframe_to_text(self, df: pd.DataFrame, title: str) -> str:
+    def _dataframe_to_text(self, df: Any, title: str) -> str:
+        import pandas as pd
         """
         将pandas DataFrame转换为适合向量化处理的文本格式
         增强语义描述，使每一行数据在向量空间中更具辨识度
@@ -377,12 +381,22 @@ class ImageDocumentParser(DocumentParser):
         return file_type.lower() in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff']
 
     def parse_content(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
-        """解析图片内容（OCR）"""
+        """Extract locally available OCR text or defer to the vision stage."""
         try:
-            # 这里需要安装pytesseract和PIL
+            text = self._extract_local_ocr(file_data)
+            if text:
+                return {
+                    "success": True,
+                    "content": text,
+                    "format": file_name.split('.')[-1].lower(),
+                    "extraction_method": "local_ocr",
+                }
             return {
-                "success": False,
-                "error": "OCR解析器暂未实现，请安装pytesseract和Pillow库"
+                "success": True,
+                "content": "",
+                "format": file_name.split('.')[-1].lower(),
+                "requires_vision_enrichment": True,
+                "extraction_method": "vision_pending",
             }
         except Exception as e:
             return {
@@ -390,13 +404,40 @@ class ImageDocumentParser(DocumentParser):
                 "error": f"图片解析失败: {str(e)}"
             }
 
+    @staticmethod
+    def _extract_local_ocr(file_data: bytes) -> str:
+        """Use local Tesseract only when its optional runtime is available."""
+        try:
+            import pytesseract
+            from PIL import Image, ImageOps
+        except ImportError:
+            return ""
+
+        try:
+            image = Image.open(io.BytesIO(file_data))
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            return str(pytesseract.image_to_string(image, lang="chi_sim+eng")).strip()
+        except (pytesseract.TesseractNotFoundError, OSError, ValueError):
+            return ""
+
     def extract_metadata(self, file_data: bytes, file_name: str) -> Dict[str, Any]:
         """提取图片元数据"""
-        return {
+        metadata = {
             "file_size": len(file_data),
-            "has_ocr": False,  # 暂不支持OCR
-            "image_type": file_name.split('.')[-1].lower()
+            "image_type": file_name.split('.')[-1].lower(),
         }
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(file_data)) as image:
+                metadata.update({
+                    "width": image.width,
+                    "height": image.height,
+                    "image_mode": image.mode,
+                })
+        except (ImportError, OSError, ValueError):
+            pass
+        return metadata
 
 class UniversalDocumentParser:
     """通用文档解析器"""
@@ -462,13 +503,12 @@ class UniversalDocumentParser:
         return base_metadata
 
     def get_supported_types(self) -> List[str]:
-        """获取支持的文件类型"""
-        supported = []
-        for parser in self.parsers:
-            # 这里需要实现一个方法来获取每个解析器支持的类型
-            # 暂时返回常用类型
-            pass
-        return ['txt', 'md', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'png']
+        """Return the extensions accepted by the configured parser set."""
+        return [
+            "txt", "md", "csv", "json", "py", "js", "html", "css", "xml",
+            "pdf", "doc", "docx", "xls", "xlsx",
+            "jpg", "jpeg", "png", "gif", "bmp", "tiff",
+        ]
 
     def _get_file_type(self, file_name: str) -> str:
         """从文件名获取文件类型"""

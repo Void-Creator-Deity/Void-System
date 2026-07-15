@@ -41,16 +41,38 @@ api.interceptors.request.use(
 // 添加响应拦截器，统一处理错误
 api.interceptors.response.use(
   (response) => {
-    // 直接返回响应数据，不再包装一层
     return response
   },
   (error) => {
-    // 处理响应错误
     console.error('API 请求失败:', error)
     console.error('错误详情:', error.response?.data || error.message)
     
     return Promise.reject(error)
   }
 )
+
+export const unwrapData = (response) => {
+  const body = response?.data
+  if (body && Object.prototype.hasOwnProperty.call(body, 'data')) {
+    return body.data
+  }
+  return body
+}
+
+export const getApiErrorMessage = (error, fallback = '操作失败，请稍后重试') => {
+  const data = error?.response?.data
+  if (typeof data === 'string') return data
+  return data?.message || data?.detail || data?.error || error?.message || fallback
+}
+
+export const apiRequest = async (requestPromise) => {
+  const response = await requestPromise
+  if (response?.data?.success === false) {
+    const error = new Error(response.data.message || '操作失败，请稍后重试')
+    error.response = response
+    throw error
+  }
+  return unwrapData(response)
+}
 
 export default api

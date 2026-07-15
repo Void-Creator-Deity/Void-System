@@ -1,374 +1,364 @@
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
 import * as chatApi from '@/api/chat'
 
+const ACTIVE_GROUP_KEY = 'void_active_group_id'
+const ACTIVE_SESSION_KEY = 'void_active_session_id'
+
+function readableError(error, fallback) {
+  return error?.response?.data?.message || error?.response?.data?.detail || error?.message || fallback
+}
+
 export const useChatStore = defineStore('chat', () => {
-    // 核心状态：分组与会话
-    const groups = ref([])
-    const activeGroupId = ref(null)
-    const activeSessionId = ref(null)
-    const isLoading = ref(false)
+  const groups = ref([])
+  const activeGroupId = ref(null)
+  const activeSessionId = ref(null)
+  const messages = ref([])
+  const isLoading = ref(false)
+  const lastError = ref('')
 
-    // --- Getters ---
+  const activeGroup = computed(() => groups.value.find((group) => group.group_id === activeGroupId.value) || null)
+  const activeSession = computed(() => activeGroup.value?.sessions?.find((session) => session.session_id === activeSessionId.value) || null)
 
-    const activeGroup = computed(() => groups.value.find(g => g.group_id === activeGroupId.value))
+  function clearError() {
+    lastError.value = ''
+  }
 
-    const activeSession = computed(() => {
-        if (!activeGroup.value) return null
-        return activeGroup.value.sessions?.find(s => s.session_id === activeSessionId.value)
-    })
+  function rememberSelection(groupId, sessionId) {
+    activeGroupId.value = groupId || null
+    activeSessionId.value = sessionId || null
 
-    const messages = ref([]) // 当前活跃会话的消息列表
+    if (groupId) localStorage.setItem(ACTIVE_GROUP_KEY, groupId)
+    else localStorage.removeItem(ACTIVE_GROUP_KEY)
 
-    // --- Actions ---
+    if (sessionId) localStorage.setItem(ACTIVE_SESSION_KEY, sessionId)
+    else localStorage.removeItem(ACTIVE_SESSION_KEY)
+  }
 
-    /**
-     * 初始化数据，从后端加载所有历史
-     */
-    const initStore = async () => {
-        isLoading.value = true
-        try {
-            const history = await chatApi.getChatHistory()
-            groups.value = history
+  function groupForSession(sessionId) {
+    return groups.value.find((group) => group.sessions?.some((session) => session.session_id === sessionId)) || null
+  }
 
-            // 恢复最后的活跃状态或设为默认
-            if (groups.value.length > 0) {
-                activeGroupId.value = localStorage.getItem('void_active_group_id') || groups.value[0].group_id
-                const group = groups.value.find(g => g.group_id === activeGroupId.value) || groups.value[0]
-                activeGroupId.value = group.group_id
+  async function refreshHistory() {
+    groups.value = await chatApi.getChatHistory()
+    return groups.value
+  }
 
-                if (group.sessions?.length > 0) {
-                    activeSessionId.value = localStorage.getItem('void_active_session_id') || group.sessions[0].session_id
-                    const session = group.sessions.find(s => s.session_id === activeSessionId.value) || group.sessions[0]
-                    activeSessionId.value = session.session_id
+  async function loadMessages(sessionId) {
+    try {
+      const loaded = await chatApi.getChatMessages(sessionId)
+      if (activeSessionId.value !== sessionId) return []
 
-                    // 加载消息
-                    await loadMessages(activeSessionId.value)
-                }
-            } else {
-                // 如果后端完全没数据，创建一个默认的分组
-                await createGroup('默认分组')
-            }
-        } catch (error) {
-            console.error('初始化聊天存储失败:', error)
-        } finally {
-            isLoading.value = false
+      messages.value = loaded.map((message) => ({
+        id: message.message_id,
+        role: message.role,
+        text: message.content,
+        timestamp: message.created_at,
+        tokens: message.tokens,
+        replyToId: message.reply_to_id,
+        reply_content: message.reply_content
+      }))
+      return messages.value
+    } catch (error) {
+      lastError.value = readableError(error, '加载对话失败')
+      if (activeSessionId.value === sessionId) messages.value = []
+      throw error
+    }
+  }
+
+  async function switchSession(sessionId, explicitGroupId = null) {
+    const group = explicitGroupId
+      ? groups.value.find((item) => item.group_id === explicitGroupId)
+      : groupForSession(sessionId)
+
+    if (!group || !group.sessions?.some((session) => session.session_id === sessionId)) return false
+
+    clearError()
+    rememberSelection(group.group_id, sessionId)
+    await loadMessages(sessionId)
+    return true
+  }
+
+  async function switchGroup(groupId) {
+    const group = groups.value.find((item) => item.group_id === groupId)
+    if (!group) return false
+
+    if (!group.sessions?.length) {
+      clearError()
+      rememberSelection(group.group_id, null)
+      messages.value = []
+      return true
+    }
+
+    return switchSession(group.sessions[0].session_id, group.group_id)
+  }
+
+  async function createGroup(name = '新分组') {
+    try {
+      clearError()
+      let finalName = name.trim() || '新分组'
+      let count = 1
+      while (groups.value.some((group) => group.group_name === finalName)) {
+        finalName = `${name.trim() || '新分组'} ${count++}`
+      }
+
+      const groupId = await chatApi.createChatGroup(finalName)
+      const sessionId = await chatApi.createChatSession(groupId, '新对话')
+      await refreshHistory()
+      rememberSelection(groupId, sessionId)
+      messages.value = []
+      return { groupId, sessionId }
+    } catch (error) {
+      lastError.value = readableError(error, '创建分组失败')
+      throw error
+    }
+  }
+
+  async function createSession(name = '新对话') {
+    if (!activeGroupId.value) return createGroup()
+
+    try {
+      clearError()
+      const group = groups.value.find((item) => item.group_id === activeGroupId.value)
+      const baseName = name.trim() || '新对话'
+      let finalName = baseName
+      let count = 1
+      while (group?.sessions?.some((session) => session.session_name === finalName)) {
+        finalName = `${baseName} ${count++}`
+      }
+
+      const sessionId = await chatApi.createChatSession(activeGroupId.value, finalName)
+      await refreshHistory()
+      rememberSelection(activeGroupId.value, sessionId)
+      messages.value = []
+      return sessionId
+    } catch (error) {
+      lastError.value = readableError(error, '创建对话失败')
+      throw error
+    }
+  }
+
+  async function addMessage(message, save = true, sessionId = activeSessionId.value) {
+    if (!sessionId) throw new Error('请先创建对话')
+
+    const temporaryId = `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const newMessage = {
+      id: temporaryId,
+      ...message,
+      timestamp: message.timestamp || new Date().toISOString()
+    }
+
+    if (activeSessionId.value === sessionId) messages.value.push(newMessage)
+    if (!save) return newMessage
+
+    try {
+      const realId = await chatApi.addChatMessage(sessionId, {
+        role: message.role,
+        content: message.text,
+        tokens: message.tokens || 0,
+        replyToId: message.replyToId || null
+      })
+      newMessage.id = realId || temporaryId
+      return newMessage
+    } catch (error) {
+      if (activeSessionId.value === sessionId) {
+        messages.value = messages.value.filter((item) => item.id !== temporaryId)
+      }
+      lastError.value = readableError(error, '保存消息失败')
+      throw error
+    }
+  }
+
+  async function saveLastMessage(content, tokens = 0, sessionId = activeSessionId.value) {
+    if (!sessionId) return null
+
+    const lastMessage = activeSessionId.value === sessionId ? messages.value.at(-1) : null
+    if (lastMessage && (lastMessage.role === 'assistant' || lastMessage.role === 'system')) {
+      lastMessage.text = content
+      lastMessage.tokens = tokens
+    }
+
+    try {
+      const messageId = await chatApi.addChatMessage(sessionId, {
+        role: lastMessage?.role || 'assistant',
+        content,
+        tokens
+      })
+      if (lastMessage && messageId) lastMessage.id = messageId
+      return messageId
+    } catch (error) {
+      lastError.value = readableError(error, '保存回复失败')
+      throw error
+    }
+  }
+
+  async function duplicateSession(sessionId) {
+    try {
+      clearError()
+      const newSessionId = await chatApi.duplicateChatSession(sessionId)
+      await refreshHistory()
+      await switchSession(newSessionId)
+      return newSessionId
+    } catch (error) {
+      lastError.value = readableError(error, '复制对话失败')
+      throw error
+    }
+  }
+
+  async function renameGroup(groupId, name) {
+    try {
+      const finalName = name.trim()
+      if (!finalName) return false
+      clearError()
+      await chatApi.updateChatGroup(groupId, finalName)
+      const group = groups.value.find((item) => item.group_id === groupId)
+      if (group) group.group_name = finalName
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '重命名分组失败')
+      throw error
+    }
+  }
+
+  async function renameSession(sessionId, name) {
+    try {
+      const finalName = name.trim()
+      if (!finalName) return false
+      clearError()
+      await chatApi.updateChatSession(sessionId, { sessionName: finalName })
+      const group = groupForSession(sessionId)
+      const session = group?.sessions?.find((item) => item.session_id === sessionId)
+      if (session) session.session_name = finalName
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '重命名对话失败')
+      throw error
+    }
+  }
+
+  async function moveSession(sessionId, targetGroupId) {
+    try {
+      clearError()
+      await chatApi.updateChatSession(sessionId, { groupId: targetGroupId })
+      await refreshHistory()
+      if (activeSessionId.value === sessionId) await switchSession(sessionId, targetGroupId)
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '移动对话失败')
+      throw error
+    }
+  }
+
+  async function clearActiveSession() {
+    if (!activeSessionId.value) return false
+    try {
+      clearError()
+      await chatApi.clearChatMessages(activeSessionId.value)
+      messages.value = []
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '清空对话失败')
+      throw error
+    }
+  }
+
+  async function deleteSession(sessionId) {
+    try {
+      clearError()
+      await chatApi.deleteChatSession(sessionId)
+      await refreshHistory()
+
+      if (activeSessionId.value === sessionId) {
+        const nextGroup = groups.value.find((group) => group.sessions?.length)
+        if (nextGroup) await switchSession(nextGroup.sessions[0].session_id, nextGroup.group_id)
+        else {
+          rememberSelection(null, null)
+          messages.value = []
         }
+      }
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '删除对话失败')
+      throw error
     }
+  }
 
-    /**
-     * 加载特定会话的消息
-     */
-    const loadMessages = async (sessionId) => {
-        try {
-            const msgs = await chatApi.getChatMessages(sessionId)
-            // 转换后端消息格式到前端格式
-            messages.value = msgs.map(m => ({
-                id: m.message_id,
-                role: m.role,
-                text: m.content,
-                timestamp: m.created_at,
-                tokens: m.tokens,
-                replyToId: m.reply_to_id,
-                reply_content: m.reply_content
-            }))
-        } catch (error) {
-            console.error('加载消息失败:', error)
-            messages.value = []
+  async function deleteGroup(groupId) {
+    try {
+      clearError()
+      await chatApi.deleteChatGroup(groupId)
+      await refreshHistory()
+
+      if (activeGroupId.value === groupId) {
+        const nextGroup = groups.value.find((group) => group.sessions?.length)
+        if (nextGroup) await switchSession(nextGroup.sessions[0].session_id, nextGroup.group_id)
+        else {
+          rememberSelection(null, null)
+          messages.value = []
         }
+      }
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '删除分组失败')
+      throw error
     }
+  }
 
-    /**
-     * 切换分组
-     */
-    const switchGroup = async (groupId) => {
-        activeGroupId.value = groupId
-        localStorage.setItem('void_active_group_id', groupId)
+  async function initStore() {
+    isLoading.value = true
+    try {
+      clearError()
+      await refreshHistory()
+      if (!groups.value.length) {
+        await createGroup('默认分组')
+        return true
+      }
 
-        const group = groups.value.find(g => g.group_id === groupId)
-        if (group && group.sessions?.length > 0) {
-            await switchSession(group.sessions[0].session_id)
-        } else {
-            activeSessionId.value = null
-            messages.value = []
-        }
+      const savedGroupId = localStorage.getItem(ACTIVE_GROUP_KEY)
+      const preferredGroup = groups.value.find((group) => group.group_id === savedGroupId && group.sessions?.length)
+        || groups.value.find((group) => group.sessions?.length)
+
+      if (!preferredGroup) {
+        await createGroup('默认分组')
+        return true
+      }
+
+      const savedSessionId = localStorage.getItem(ACTIVE_SESSION_KEY)
+      const preferredSession = preferredGroup.sessions.find((session) => session.session_id === savedSessionId)
+        || preferredGroup.sessions[0]
+      await switchSession(preferredSession.session_id, preferredGroup.group_id)
+      return true
+    } catch (error) {
+      lastError.value = readableError(error, '初始化对话失败')
+      throw error
+    } finally {
+      isLoading.value = false
     }
+  }
 
-    /**
-     * 切换会话
-     */
-    const switchSession = async (sessionId) => {
-        activeSessionId.value = sessionId
-        localStorage.setItem('void_active_session_id', sessionId)
-        await loadMessages(sessionId)
-    }
-
-    /**
-     * 创建新分组
-     */
-    const createGroup = async (name = '新任务组') => {
-        try {
-            // 确保名称唯一
-            let finalName = name
-            let counter = 1
-            while (groups.value.some(g => g.group_name === finalName)) {
-                finalName = `${name} ${counter++}`
-            }
-
-            const groupId = await chatApi.createChatGroup(finalName)
-            const sessionId = await chatApi.createChatSession(groupId, '初始对话')
-
-            // 重新刷新数据以确保同步
-            const history = await chatApi.getChatHistory()
-            groups.value = history
-
-            activeGroupId.value = groupId
-            activeSessionId.value = sessionId
-            messages.value = []
-
-            localStorage.setItem('void_active_group_id', groupId)
-            localStorage.setItem('void_active_session_id', sessionId)
-        } catch (error) {
-            console.error('创建分组失败:', error)
-        }
-    }
-
-    /**
-     * 在当前分组创建新会话
-     */
-    const createSession = async (name = '新对话') => {
-        if (!activeGroupId.value) return
-        try {
-            // 确保会话名称在当前组内唯一
-            const group = groups.value.find(g => g.group_id === activeGroupId.value)
-            let finalName = name
-            if (group && group.sessions) {
-                let counter = 1
-                while (group.sessions.some(s => s.session_name === finalName)) {
-                    finalName = `${name} ${counter++}`
-                }
-            }
-
-            const sessionId = await chatApi.createChatSession(activeGroupId.value, finalName)
-
-            // 更新本地状态
-            if (group) {
-                if (!group.sessions) group.sessions = []
-                group.sessions.unshift({
-                    session_id: sessionId,
-                    session_name: finalName,
-                    created_at: new Date().toISOString()
-                })
-            }
-
-            activeSessionId.value = sessionId
-            messages.value = []
-            localStorage.setItem('void_active_session_id', sessionId)
-        } catch (error) {
-            console.error('创建会话失败:', error)
-        }
-    }
-
-    /**
-     * 添加消息到活跃会话
-     */
-    const addMessage = async (message, save = true) => {
-        if (!activeSessionId.value) return
-
-        // 乐观更新：先生成临时 ID 并加入列表
-        const tempId = `temp-${Date.now()}`
-        const newMessage = {
-            id: tempId,
-            ...message,
-            timestamp: new Date().toISOString()
-        }
-        messages.value.push(newMessage)
-
-        // 如果需要保存，则异步调用后端
-        if (save) {
-            try {
-                const realId = await chatApi.addChatMessage(activeSessionId.value, {
-                    role: message.role,
-                    content: message.text,
-                    tokens: message.tokens || 0,
-                    replyToId: message.replyToId
-                })
-                // 如果后端返回了真实 ID，则更新对应的消息对象
-                if (realId) {
-                    const msgInList = messages.value.find(m => m.id === tempId)
-                    if (msgInList) msgInList.id = realId
-                }
-                return realId
-            } catch (error) {
-                console.error('添加消息失败:', error)
-                return null
-            }
-        }
-
-        return tempId
-    }
-
-    /**
-     * 拷贝（克隆）会话及其消息
-     */
-    const duplicateSession = async (sessionId) => {
-        try {
-            const newSessionId = await chatApi.duplicateChatSession(sessionId)
-            if (newSessionId) {
-                // 刷新数据以获取最新列表
-                const history = await chatApi.getChatHistory()
-                groups.value = history
-                // 切换到新克隆的会话
-                await switchSession(newSessionId)
-                return newSessionId
-            }
-        } catch (error) {
-            console.error('克隆会话失败:', error)
-        }
-    }
-
-    /**
-     * 更新最后一条回复（流式传输时使用，通常也是后端持久化）
-     * 注意：对于流式传输，我们通常在流结束时保存一次
-     */
-    const saveLastMessage = async (content, tokens = 0) => {
-        if (!activeSessionId.value) return
-        const lastMsg = messages.value[messages.value.length - 1]
-        // 注意：AIConsole 中系统回复的 role 为 'system'
-        if (lastMsg && (lastMsg.role === 'system' || lastMsg.role === 'assistant')) {
-            lastMsg.text = content
-            lastMsg.tokens = tokens
-            // 正式保存到后端并获取真实 ID
-            const realId = await chatApi.addChatMessage(activeSessionId.value, {
-                role: lastMsg.role,
-                content: content,
-                tokens: tokens
-            })
-            if (realId) lastMsg.id = realId
-        }
-    }
-
-    /**
-     * 重命名分组
-     */
-    const renameGroup = async (groupId, newName) => {
-        try {
-            await chatApi.updateChatGroup(groupId, newName)
-            const group = groups.value.find(g => g.group_id === groupId)
-            if (group) group.group_name = newName
-        } catch (error) {
-            console.error('重命名分组失败:', error)
-        }
-    }
-
-    /**
-     * 重命名会话
-     */
-    const renameSession = async (sessionId, newName) => {
-        try {
-            await chatApi.updateChatSession(sessionId, { sessionName: newName })
-            const group = groups.value.find(g => g.sessions?.some(s => s.session_id === sessionId))
-            if (group) {
-                const session = group.sessions.find(s => s.session_id === sessionId)
-                if (session) session.session_name = newName
-            }
-        } catch (error) {
-            console.error('重命名会话失败:', error)
-        }
-    }
-
-    /**
-     * 移动会话到其他分组
-     */
-    const moveSession = async (sessionId, targetGroupId) => {
-        try {
-            await chatApi.updateChatSession(sessionId, { groupId: targetGroupId })
-            // 刷新全部数据以反映变化
-            const history = await chatApi.getChatHistory()
-            groups.value = history
-        } catch (error) {
-            console.error('移动会话失败:', error)
-        }
-    }
-
-    /**
-     * 清除当前会话历史
-     */
-    const clearActiveSession = async () => {
-        if (!activeSessionId.value) return
-        try {
-            await chatApi.clearChatMessages(activeSessionId.value)
-            messages.value = []
-        } catch (error) {
-            console.error('清空会话失败:', error)
-        }
-    }
-
-    /**
-     * 删除会话
-     */
-    const deleteSession = async (sessionId) => {
-        try {
-            await chatApi.deleteChatSession(sessionId)
-            const history = await chatApi.getChatHistory()
-            groups.value = history
-
-            if (activeSessionId.value === sessionId) {
-                if (groups.value.length > 0 && groups.value[0].sessions?.length > 0) {
-                    await switchSession(groups.value[0].sessions[0].session_id)
-                } else {
-                    activeSessionId.value = null
-                    messages.value = []
-                }
-            }
-        } catch (error) {
-            console.error('删除会话失败:', error)
-        }
-    }
-
-    /**
-     * 删除分组
-     */
-    const deleteGroup = async (groupId) => {
-        try {
-            await chatApi.deleteChatGroup(groupId)
-            const history = await chatApi.getChatHistory()
-            groups.value = history
-
-            if (activeGroupId.value === groupId) {
-                if (groups.value.length > 0) {
-                    await switchGroup(groups.value[0].group_id)
-                } else {
-                    activeGroupId.value = null
-                    activeSessionId.value = null
-                    messages.value = []
-                }
-            }
-        } catch (error) {
-            console.error('删除分组失败:', error)
-        }
-    }
-
-    return {
-        groups,
-        activeGroupId,
-        activeSessionId,
-        activeGroup,
-        activeSession,
-        messages,
-        isLoading,
-        initStore,
-        switchGroup,
-        switchSession,
-        createGroup,
-        createSession,
-        addMessage,
-        saveLastMessage,
-        clearActiveSession,
-        deleteSession,
-        deleteGroup,
-        renameGroup,
-        renameSession,
-        moveSession
-    }
+  return {
+    groups,
+    activeGroupId,
+    activeSessionId,
+    activeGroup,
+    activeSession,
+    messages,
+    isLoading,
+    lastError,
+    clearError,
+    initStore,
+    switchGroup,
+    switchSession,
+    createGroup,
+    createSession,
+    addMessage,
+    saveLastMessage,
+    clearActiveSession,
+    deleteSession,
+    deleteGroup,
+    duplicateSession,
+    renameGroup,
+    renameSession,
+    moveSession
+  }
 })

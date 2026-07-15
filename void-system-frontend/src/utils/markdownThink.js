@@ -1,5 +1,5 @@
 /**
- * 助手回复 Markdown → HTML（含思考链折叠），与系统精灵一致：默认折叠，点击 summary 展开。
+ * 助手回复 Markdown → HTML（含思考过程折叠），默认折叠，点击 summary 展开。
  * 兼容 Qwen 系 `</redacted_thinking>` / `</redacted_thinking>` 与 `</redacted_thinking>` / `</redacted_thinking>`。
  */
 import { marked } from "marked"
@@ -31,7 +31,7 @@ function normalizeThinkTagNames(s) {
  */
 export function markdownToHtmlWithThink(text, opts = {}) {
   const thinkMode = opts.thinkMode ?? "collapse"
-  const summaryLabel = opts.summaryLabel ?? "✨ 虚空模型思维逻辑"
+  const summaryLabel = opts.summaryLabel ?? "思考过程"
 
   if (!text) return ""
 
@@ -87,7 +87,7 @@ function escapeRe(s) {
 }
 
 /**
- * 系统精灵 / 知识库 / 文档问答共用：默认折叠思考链。
+ * AI 助手 / 知识库 / 文档问答共用：默认折叠思考过程。
  * @param {string} text
  * @returns {string}
  */

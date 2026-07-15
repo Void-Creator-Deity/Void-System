@@ -2,15 +2,16 @@
   <div class="void-page-container register-page">
     <div class="register-card void-card animate-float">
       <div class="register-header">
-        <h1 class="logo-text"><span class="void-text-gradient">虚空</span> 系统</h1>
-        <p class="subtitle">正在初始化新神经档案...</p>
+        <p class="auth-eyebrow">Get Started</p>
+        <h1 class="logo-text">创建账号</h1>
+        <p class="subtitle">用一个账号保存你的目标、资料和成长记录。</p>
       </div>
       
       <el-form :model="registerForm" :rules="rules" ref="registerFormRef" class="void-form">
         <el-form-item prop="username">
           <el-input
             v-model="registerForm.username"
-            placeholder="唯一身份标识"
+            placeholder="昵称"
             prefix-icon="User"
             class="void-input"
             :disabled="isLoading"
@@ -20,7 +21,7 @@
         <el-form-item prop="email">
           <el-input
             v-model="registerForm.email"
-            placeholder="神经同步地址 (邮箱)"
+            placeholder="邮箱"
             prefix-icon="Message"
             class="void-input"
             :disabled="isLoading"
@@ -31,7 +32,7 @@
           <el-input
             v-model="registerForm.password"
             type="password"
-            placeholder="设置接入密钥"
+            placeholder="设置密码"
             prefix-icon="Lock"
             class="void-input"
             show-password
@@ -40,7 +41,7 @@
         </el-form-item>
         
         <div class="form-options">
-          <router-link to="/login" class="link-text">返回授权页面</router-link>
+          <router-link to="/login" class="link-text">已有账号，去登录</router-link>
         </div>
         
         <div class="form-actions">
@@ -50,13 +51,13 @@
             class="void-btn primary w-full"
             :loading="isLoading"
           >
-            凝聚档案
+            创建账号
           </el-button>
         </div>
       </el-form>
       
       <div class="register-footer">
-        <span class="version-tag">Core v1.0.0</span>
+        <span class="version-tag">Void System</span>
       </div>
     </div>
   </div>
@@ -67,6 +68,7 @@ import { ref, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { register } from '@/api/user'
+import { getApiErrorMessage } from '@/api/index.js'
 
 const router = useRouter()
 const registerFormRef = ref()
@@ -80,20 +82,20 @@ const registerForm = reactive({
 
 const rules = {
   email: [
-    { required: true, message: '需要神经同步地址', trigger: 'blur' },
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
     { 
       pattern: /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,7}$/, 
-      message: '地址格式无效', 
+      message: '邮箱格式不正确',
       trigger: 'blur' 
     }
   ],
   username: [
-    { required: true, message: '需要身份标识', trigger: 'blur' },
-    { min: 1, max: 20, message: '标识长度需在 1-20 字符之间', trigger: 'blur' }
+    { required: true, message: '请输入昵称', trigger: 'blur' },
+    { min: 1, max: 20, message: '昵称长度需在 1-20 字符之间', trigger: 'blur' }
   ],
   password: [
-    { required: true, message: '需要接入密钥', trigger: 'blur' },
-    { min: 6, message: '密钥长度至少为 6 位', trigger: 'blur' }
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码至少 6 位', trigger: 'blur' }
   ]
 }
 
@@ -106,11 +108,10 @@ const handleRegister = async () => {
     isLoading.value = true
     try {
       await register(registerForm)
-      ElMessage.success('神经档案已同步')
+      ElMessage.success('账号已创建，请登录')
       router.push('/login')
     } catch (error) {
-      const msg = error.response?.data?.detail || '档案凝聚失败'
-      ElMessage.error(msg)
+      ElMessage.error(getApiErrorMessage(error, '注册失败，请稍后重试'))
     } finally {
       isLoading.value = false
     }
@@ -124,9 +125,10 @@ const handleRegister = async () => {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: var(--bg-page);
-  background-image: 
-    radial-gradient(circle at 50% 50%, var(--color-primary-transparent) 0%, transparent 70%);
+  padding: clamp(24px, 5vw, 48px);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 55%, transparent), transparent 320px),
+    var(--bg-page);
 }
 
 .register-card {
@@ -134,23 +136,37 @@ const handleRegister = async () => {
   max-width: 420px;
   padding: var(--spacing-xxl) var(--spacing-xl);
   text-align: center;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .register-header {
   margin-bottom: var(--spacing-xl);
 }
 
-.logo-text {
-  font-size: 2.5rem;
+.auth-eyebrow {
+  margin: 0 0 8px;
+  color: var(--color-primary);
+  font-family: var(--font-family-mono);
+  font-size: 0.76rem;
   font-weight: 800;
-  letter-spacing: -1px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.logo-text {
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: 0;
   margin-bottom: var(--spacing-xs);
 }
 
 .subtitle {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  letter-spacing: 1px;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  letter-spacing: 0;
+  line-height: 1.6;
 }
 
 .void-form {

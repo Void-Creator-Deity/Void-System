@@ -2,7 +2,7 @@
 Void System - Error Codes and Exceptions
 统一错误码管理，实现更好的错误处理解耦
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from enum import Enum
 
 
@@ -165,7 +165,7 @@ class VoidSystemException(Exception):
         """转换为字典格式"""
         return {
             "message": self.message,
-            "error_code": self.error_code.value,
+            "error_code": self.error_code,
             "status_code": self.status_code,
             "details": self.details
         }

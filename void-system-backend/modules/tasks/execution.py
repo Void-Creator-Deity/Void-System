@@ -1,0 +1,593 @@
+"""Durable Goal and Run orchestration for user and agent work."""
+from __future__ import annotations
+
+from typing import Any, Dict, Mapping, Optional, Sequence
+
+from core.task_execution_contracts import (
+    GOAL_STATUSES,
+    RUN_MODES,
+    RUN_STATUSES,
+    SATISFIED_STEP_STATUSES,
+    STEP_KINDS,
+    STEP_STATUSES,
+    TaskExecutionError,
+    TaskExecutionRepository,
+)
+
+
+class TaskExecution:
+    """Own execution policy behind a compact command and query Interface."""
+
+    def __init__(self, repository: TaskExecutionRepository) -> None:
+        self._repository = repository
+
+    def create_goal(self, user_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
+        title = self._required_text(values.get("title"), "Goal title", 160)
+        return self._repository.create_goal(
+            user_id,
+            {
+                "title": title,
+                "description": self._text(values.get("description"), 2000),
+                "desired_outcome": self._text(values.get("desired_outcome"), 2000),
+                "priority": self._choice(values.get("priority") or "medium", {"low", "medium", "high"}, "priority"),
+                "metadata": self._mapping(values.get("metadata")),
+            },
+        )
+
+    def list_goals(self, user_id: str, status: Optional[str] = None) -> Sequence[Dict[str, Any]]:
+        if status is not None and status not in GOAL_STATUSES:
+            raise TaskExecutionError("Invalid goal status.", "INVALID_GOAL_STATUS")
+        return self._repository.list_goals(user_id, status)
+
+    def get_goal(self, user_id: str, goal_id: str) -> Dict[str, Any]:
+        goal = self._repository.get_goal(user_id, goal_id)
+        if goal is None:
+            raise TaskExecutionError("Goal not found.", "GOAL_NOT_FOUND", 404)
+        return goal
+
+    def update_goal(
+        self, user_id: str, goal_id: str, values: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        goal = self.get_goal(user_id, goal_id)
+        updates: Dict[str, Any] = {}
+        if "title" in values:
+            updates["title"] = self._required_text(values.get("title"), "Goal title", 160)
+        if "description" in values:
+            updates["description"] = self._text(values.get("description"), 2000)
+        if "desired_outcome" in values:
+            updates["desired_outcome"] = self._text(values.get("desired_outcome"), 2000)
+        if "priority" in values:
+            updates["priority"] = self._choice(values.get("priority"), {"low", "medium", "high"}, "priority")
+        if "metadata" in values:
+            updates["metadata"] = self._mapping(values.get("metadata"))
+        if "status" in values:
+            status = self._choice(values.get("status"), GOAL_STATUSES, "goal status")
+            allowed = {
+                "active": {"active", "completed", "archived"},
+                "completed": {"completed", "active", "archived"},
+                "archived": {"archived", "active"},
+            }
+            if status not in allowed[goal["status"]]:
+                raise TaskExecutionError("Invalid goal status transition.", "GOAL_STATE_CONFLICT", 409)
+            updates["status"] = status
+        if not updates:
+            return goal
+        if not self._repository.update_goal(user_id, goal_id, updates):
+            raise TaskExecutionError("Goal changed before it could be updated.", "GOAL_STATE_CONFLICT", 409)
+        return self.get_goal(user_id, goal_id)
+
+    def validate_run_template(
+        self,
+        user_id: str,
+        goal_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Normalize a reusable Run template without creating persistence records."""
+        goal = self.get_goal(user_id, goal_id)
+        if goal["status"] != "active":
+            raise TaskExecutionError("Only active goals can start a new run.", "GOAL_NOT_ACTIVE", 409)
+        mode = self._choice(values.get("mode") or "manual", RUN_MODES, "run mode")
+        raw_steps = values.get("steps") or [
+            {
+                "client_key": "work",
+                "title": values.get("title") or goal["title"],
+                "description": values.get("objective") or goal.get("desired_outcome") or goal.get("description", ""),
+                "kind": "agent" if mode == "agent" else "manual",
+            }
+        ]
+        steps = self._normalize_steps(raw_steps)
+        self._validate_graph(steps)
+        return {
+            "title": self._required_text(values.get("title") or goal["title"], "Run title", 160),
+            "objective": self._text(values.get("objective") or goal.get("desired_outcome"), 2000),
+            "mode": mode,
+            "idempotency_key": self._optional_text(values.get("idempotency_key"), 200),
+            "metadata": self._mapping(values.get("metadata")),
+            "steps": steps,
+        }
+
+    def create_run(
+        self,
+        user_id: str,
+        goal_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        template = self.validate_run_template(user_id, goal_id, values)
+        steps = template.pop("steps")
+        try:
+            return self._repository.create_run(user_id, goal_id, template, steps)
+        except ValueError as exc:
+            raise TaskExecutionError(str(exc), "RUN_SPEC_INVALID") from exc
+
+    def list_runs(
+        self,
+        user_id: str,
+        *,
+        goal_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Sequence[Dict[str, Any]]:
+        if status is not None and status not in RUN_STATUSES:
+            raise TaskExecutionError("Invalid run status.", "INVALID_RUN_STATUS")
+        if goal_id is not None:
+            self.get_goal(user_id, goal_id)
+        return self._repository.list_runs(user_id, goal_id=goal_id, status=status)
+
+    def get_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        run = self._repository.get_run(user_id, run_id)
+        if run is None:
+            raise TaskExecutionError("Run not found.", "RUN_NOT_FOUND", 404)
+        return run
+
+    def start_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        self._require_run_status(user_id, run_id, {"queued"})
+        if not self._repository.apply_run_transition(
+            user_id, run_id, ["queued"], "running", "run.started",
+            publish_ready_steps=True,
+        ):
+            raise TaskExecutionError(
+                "Run changed before it could start.", "RUN_STATE_CONFLICT", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def pause_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        self._require_run_status(user_id, run_id, {"running"})
+        if not self._repository.apply_run_transition(
+            user_id, run_id, ["running"], "paused", "run.paused"
+        ):
+            raise TaskExecutionError(
+                "Run changed before it could pause.", "RUN_STATE_CONFLICT", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def resume_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        self._require_run_status(user_id, run_id, {"paused"})
+        if not self._repository.apply_run_transition(
+            user_id, run_id, ["paused"], "running", "run.resumed",
+            publish_ready_steps=True,
+        ):
+            raise TaskExecutionError(
+                "Run changed before it could resume.", "RUN_STATE_CONFLICT", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def cancel_run(self, user_id: str, run_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        run = self.get_run(user_id, run_id)
+        if run["status"] in {"completed", "failed", "cancelled"}:
+            if run["status"] == "cancelled":
+                return run
+            raise TaskExecutionError("A finished run cannot be cancelled.", "RUN_ALREADY_FINISHED", 409)
+        if not self._repository.apply_run_transition(
+            user_id, run_id, [run["status"]], "cancelled", "run.cancelled",
+            payload={"reason": reason}, cancel_open_steps=True,
+        ):
+            raise TaskExecutionError(
+                "Run changed before it could be cancelled.", "RUN_STATE_CONFLICT", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def start_step(self, user_id: str, run_id: str, step_id: str) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        step = self._find_step(run, step_id)
+        if step["status"] != "ready":
+            raise TaskExecutionError("Only a ready step can start.", "STEP_NOT_READY", 409)
+        if int(step["attempt_count"]) >= int(step["max_attempts"]):
+            raise TaskExecutionError("This step has no retry attempts remaining.", "STEP_ATTEMPTS_EXHAUSTED", 409)
+        if step.get("requires_approval") and not self._has_approved_decision(run, step_id):
+            return self.request_approval(
+                user_id,
+                run_id,
+                step_id,
+                {"summary": "Approval is required before this step can run."},
+            )["run"]
+        result = self._repository.apply_step_transition(
+            user_id, run_id, step_id, ["ready"], "running", "step.started",
+            payload={"attempt": int(step["attempt_count"]) + 1},
+            increment_attempt=True,
+        )
+        if not result.get("changed"):
+            raise TaskExecutionError("Step changed before it could start.", "STEP_STATE_CONFLICT", 409)
+        return self.get_run(user_id, run_id)
+
+    def skip_step(self, user_id: str, run_id: str, step_id: str) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        step = self._find_step(run, step_id)
+        if step["status"] in SATISFIED_STEP_STATUSES:
+            return run
+        if step["status"] not in {"pending", "ready", "failed"}:
+            raise TaskExecutionError("This step cannot be skipped now.", "STEP_NOT_SKIPPABLE", 409)
+        result = self._repository.apply_step_transition(
+            user_id, run_id, step_id, [step["status"]], "skipped", "step.skipped",
+            publish_ready_steps=True, complete_run_if_satisfied=True,
+        )
+        if not result.get("changed"):
+            raise TaskExecutionError("Step changed before it could be skipped.", "STEP_STATE_CONFLICT", 409)
+        return self.get_run(user_id, run_id)
+
+    def complete_step(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        *,
+        output_data: Optional[Mapping[str, Any]] = None,
+        artifacts: Optional[Sequence[Mapping[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        step = self._find_step(run, step_id)
+        if step["status"] != "running":
+            raise TaskExecutionError("Only a running step can complete.", "STEP_NOT_RUNNING", 409)
+        normalized_artifacts = []
+        for artifact in artifacts or []:
+            normalized_artifacts.append({
+                "title": self._required_text(artifact.get("title"), "Artifact title", 200),
+                "kind": self._optional_text(artifact.get("kind"), 60) or "result",
+                "uri": self._optional_text(artifact.get("uri"), 2000),
+                "content_type": self._optional_text(artifact.get("content_type"), 200),
+                "metadata": self._mapping(artifact.get("metadata")),
+            })
+        result = self._repository.apply_step_transition(
+            user_id, run_id, step_id, ["running"], "completed", "step.completed",
+            output_data=output_data or {}, artifacts=normalized_artifacts,
+            publish_ready_steps=True, complete_run_if_satisfied=True,
+        )
+        if not result.get("changed"):
+            raise TaskExecutionError(
+                "Step changed before completion was saved.", "STEP_STATE_CONFLICT", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def fail_step(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        error_summary: str,
+    ) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running", "waiting_approval"})
+        step = self._find_step(run, step_id)
+        if step["status"] not in {"running", "waiting_approval"}:
+            raise TaskExecutionError("Only active work can fail.", "STEP_NOT_ACTIVE", 409)
+        error = self._required_text(error_summary, "Error summary", 2000)
+        result = self._repository.apply_step_transition(
+            user_id, run_id, step_id, [step["status"]], "failed", "step.failed",
+            payload={"error": error}, error_summary=error,
+            run_expected=[run["status"]], run_target="failed",
+            run_event_type="run.failed",
+            run_payload={"step_id": step_id, "error": error},
+            run_error_summary=error,
+        )
+        if not result.get("changed"):
+            code = "RUN_STATE_CONFLICT" if result.get("run_conflict") else "STEP_STATE_CONFLICT"
+            raise TaskExecutionError("Execution changed before failure was saved.", code, 409)
+        return self.get_run(user_id, run_id)
+
+    def retry_step(self, user_id: str, run_id: str, step_id: str) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"failed"})
+        step = self._find_step(run, step_id)
+        if step["status"] != "failed":
+            raise TaskExecutionError("Only a failed step can be retried.", "STEP_NOT_FAILED", 409)
+        if int(step["attempt_count"]) >= int(step["max_attempts"]):
+            raise TaskExecutionError("This step has no retry attempts remaining.", "STEP_ATTEMPTS_EXHAUSTED", 409)
+        result = self._repository.apply_step_transition(
+            user_id, run_id, step_id, ["failed"], "ready", "step.retry_scheduled",
+            error_summary="", run_expected=["failed"], run_target="running",
+            run_event_type="run.resumed_after_retry", run_error_summary="",
+        )
+        if not result.get("changed"):
+            code = "RUN_STATE_CONFLICT" if result.get("run_conflict") else "STEP_STATE_CONFLICT"
+            raise TaskExecutionError("Execution changed before retry was saved.", code, 409)
+        return self.get_run(user_id, run_id)
+
+    def request_approval(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        request: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        step = self._find_step(run, step_id)
+        if step["status"] not in {"ready", "running"}:
+            raise TaskExecutionError(
+                "Approval can only pause ready or running work.", "STEP_APPROVAL_NOT_ALLOWED", 409
+            )
+        approval = self._repository.request_approval_transition(
+            user_id, run_id, step_id, step["status"], self._mapping(request)
+        )
+        if approval is None:
+            raise TaskExecutionError(
+                "Execution changed before approval was requested.", "STEP_STATE_CONFLICT", 409
+            )
+        return {"approval": approval, "run": self.get_run(user_id, run_id)}
+
+    def resolve_approval(
+        self,
+        user_id: str,
+        approval_id: str,
+        decision: str,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if decision not in {"approved", "rejected"}:
+            raise TaskExecutionError("Decision must be approved or rejected.", "INVALID_APPROVAL_DECISION")
+        approval = self._repository.get_approval(user_id, approval_id)
+        if approval is None:
+            raise TaskExecutionError("Approval not found.", "APPROVAL_NOT_FOUND", 404)
+        if approval["status"] != "pending":
+            raise TaskExecutionError("Approval has already been resolved.", "APPROVAL_ALREADY_RESOLVED", 409)
+        run_id = self._repository.resolve_approval_transition(
+            user_id, approval_id, decision, note
+        )
+        if run_id is None:
+            raise TaskExecutionError(
+                "Approval or execution state changed before the decision was saved.",
+                "APPROVAL_STATE_CONFLICT",
+                409,
+            )
+        return self.get_run(user_id, run_id)
+
+    def claim_agent_run(
+        self,
+        user_id: str,
+        run_id: str,
+        worker_id: str,
+        lease_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        if run["mode"] != "agent":
+            raise TaskExecutionError(
+                "Only agent-mode runs can be claimed by a worker.", "RUN_NOT_AGENT_MODE", 409
+            )
+        worker = self._required_text(worker_id, "Worker id", 200)
+        duration = self._integer(lease_seconds, default=60, minimum=10, maximum=3600)
+        lease = self._repository.claim_run_lease(user_id, run_id, worker, duration)
+        if lease is None:
+            raise TaskExecutionError(
+                "Run is already claimed by another active worker.", "RUN_LEASE_CONFLICT", 409
+            )
+        return lease
+
+    def heartbeat_agent_run(
+        self,
+        user_id: str,
+        run_id: str,
+        lease_token: str,
+        *,
+        lease_seconds: int = 60,
+        checkpoint_data: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        token = self._required_text(lease_token, "Lease token", 200)
+        duration = self._integer(lease_seconds, default=60, minimum=10, maximum=3600)
+        lease = self._repository.heartbeat_run_lease(
+            user_id, run_id, token, duration,
+            checkpoint_data=self._mapping(checkpoint_data) if checkpoint_data is not None else None,
+        )
+        if lease is None:
+            raise TaskExecutionError(
+                "Lease is missing, expired, or owned by another worker.", "RUN_LEASE_INVALID", 409
+            )
+        return lease
+
+    def release_agent_run(
+        self,
+        user_id: str,
+        run_id: str,
+        lease_token: str,
+        *,
+        checkpoint_data: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        self.get_run(user_id, run_id)
+        token = self._required_text(lease_token, "Lease token", 200)
+        if not self._repository.release_run_lease(
+            user_id, run_id, token,
+            checkpoint_data=self._mapping(checkpoint_data) if checkpoint_data is not None else None,
+        ):
+            raise TaskExecutionError(
+                "Lease is missing or already released.", "RUN_LEASE_INVALID", 409
+            )
+        return self.get_run(user_id, run_id)
+
+    def start_action(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"running"})
+        step = self._find_step(run, step_id)
+        if step["status"] != "running":
+            raise TaskExecutionError("Actions can only run inside a running step.", "STEP_NOT_RUNNING", 409)
+        action = self._repository.create_action(
+            user_id,
+            run_id,
+            step_id,
+            {
+                "action_type": self._optional_text(values.get("action_type"), 60) or step["kind"],
+                "tool_name": self._optional_text(values.get("tool_name"), 200),
+                "input_data": self._mapping(values.get("input_data")),
+                "idempotency_key": self._optional_text(values.get("idempotency_key"), 200),
+            },
+        )
+        action.pop("_created", None)
+        return action
+
+    def complete_action(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        action_id: str,
+        *,
+        status: str,
+        output_data: Optional[Mapping[str, Any]] = None,
+        error_summary: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._find_step(self.get_run(user_id, run_id), step_id)
+        if status not in {"completed", "failed", "cancelled"}:
+            raise TaskExecutionError("Invalid action result status.", "INVALID_ACTION_STATUS")
+        if not self._repository.complete_action(
+            user_id, run_id, step_id, action_id, status,
+            output_data=output_data, error_summary=error_summary
+        ):
+            raise TaskExecutionError("Action not found or already finished.", "ACTION_STATE_CONFLICT", 409)
+        return self.get_run(user_id, run_id)
+
+    def list_events(self, user_id: str, run_id: str) -> Sequence[Dict[str, Any]]:
+        self.get_run(user_id, run_id)
+        return self._repository.list_events(user_id, run_id)
+
+    def _require_run_status(
+        self, user_id: str, run_id: str, allowed: set[str]
+    ) -> Dict[str, Any]:
+        run = self.get_run(user_id, run_id)
+        if run["status"] not in allowed:
+            raise TaskExecutionError(
+                f"Run status {run['status']} does not allow this command.",
+                "RUN_STATUS_CONFLICT",
+                409,
+            )
+        return run
+
+    @staticmethod
+    def _find_step(run: Mapping[str, Any], step_id: str) -> Dict[str, Any]:
+        for step in run.get("steps", []):
+            if step.get("step_id") == step_id:
+                return dict(step)
+        raise TaskExecutionError("Step not found.", "STEP_NOT_FOUND", 404)
+
+    @staticmethod
+    def _has_approved_decision(run: Mapping[str, Any], step_id: str) -> bool:
+        return any(
+            approval.get("step_id") == step_id and approval.get("status") == "approved"
+            for approval in run.get("approvals", [])
+        )
+
+    def _normalize_steps(self, raw_steps: Any) -> list[Dict[str, Any]]:
+        if not isinstance(raw_steps, Sequence) or isinstance(raw_steps, (str, bytes)):
+            raise TaskExecutionError("Run steps must be a list.", "RUN_STEPS_INVALID")
+        if not raw_steps or len(raw_steps) > 100:
+            raise TaskExecutionError("A run needs between 1 and 100 steps.", "RUN_STEP_COUNT_INVALID")
+        normalized = []
+        for position, raw in enumerate(raw_steps):
+            if not isinstance(raw, Mapping):
+                raise TaskExecutionError("Each step must be an object.", "RUN_STEP_INVALID")
+            key = self._optional_text(raw.get("client_key"), 100) or f"step-{position + 1}"
+            kind = self._choice(raw.get("kind") or "manual", STEP_KINDS, "step kind")
+            max_attempts = self._integer(raw.get("max_attempts"), default=1, minimum=1, maximum=10)
+            depends_on = raw.get("depends_on") or []
+            if not isinstance(depends_on, Sequence) or isinstance(depends_on, (str, bytes)):
+                raise TaskExecutionError("Step dependencies must be a list of step keys.", "STEP_DEPENDENCIES_INVALID")
+            normalized.append({
+                "client_key": key,
+                "title": self._required_text(raw.get("title"), "Step title", 160),
+                "description": self._text(raw.get("description"), 2000),
+                "kind": kind,
+                "depends_on": [str(item) for item in depends_on],
+                "parallel_group": self._optional_text(raw.get("parallel_group"), 100),
+                "max_attempts": max_attempts,
+                "requires_approval": bool(raw.get("requires_approval")),
+                "completion_criteria": self._mapping(raw.get("completion_criteria")),
+                "input_data": self._mapping(raw.get("input_data")),
+            })
+        return normalized
+
+    @staticmethod
+    def _validate_graph(steps: Sequence[Mapping[str, Any]]) -> None:
+        keys = [str(step["client_key"]) for step in steps]
+        if len(keys) != len(set(keys)):
+            raise TaskExecutionError("Step keys must be unique within a run.", "DUPLICATE_STEP_KEY")
+        graph = {str(step["client_key"]): [str(item) for item in step["depends_on"]] for step in steps}
+        for key, dependencies in graph.items():
+            for dependency in dependencies:
+                if dependency not in graph:
+                    raise TaskExecutionError(
+                        f"Step {key} depends on unknown step {dependency}.", "UNKNOWN_STEP_DEPENDENCY"
+                    )
+                if dependency == key:
+                    raise TaskExecutionError("A step cannot depend on itself.", "CYCLIC_STEP_DEPENDENCY")
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(key: str) -> None:
+            if key in visiting:
+                raise TaskExecutionError("Step dependency graph contains a cycle.", "CYCLIC_STEP_DEPENDENCY")
+            if key in visited:
+                return
+            visiting.add(key)
+            for dependency in graph[key]:
+                visit(dependency)
+            visiting.remove(key)
+            visited.add(key)
+
+        for key in graph:
+            visit(key)
+
+    @staticmethod
+    def _mapping(value: Any) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise TaskExecutionError("Expected an object value.", "INVALID_OBJECT_VALUE")
+        return dict(value)
+
+    @staticmethod
+    def _required_text(value: Any, label: str, maximum: int) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise TaskExecutionError(f"{label} is required.", "REQUIRED_VALUE_MISSING")
+        if len(text) > maximum:
+            raise TaskExecutionError(f"{label} is too long.", "VALUE_TOO_LONG")
+        return text
+
+    @staticmethod
+    def _text(value: Any, maximum: int) -> str:
+        text = str(value or "").strip()
+        if len(text) > maximum:
+            raise TaskExecutionError("Text value is too long.", "VALUE_TOO_LONG")
+        return text
+
+    @staticmethod
+    def _optional_text(value: Any, maximum: int) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if len(text) > maximum:
+            raise TaskExecutionError("Text value is too long.", "VALUE_TOO_LONG")
+        return text
+
+    @staticmethod
+    def _choice(value: Any, allowed: Sequence[str], label: str) -> str:
+        text = str(value)
+        if text not in allowed:
+            raise TaskExecutionError(f"Invalid {label}.", "INVALID_CHOICE")
+        return text
+
+    @staticmethod
+    def _integer(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+        try:
+            number = int(value if value is not None else default)
+        except (TypeError, ValueError) as exc:
+            raise TaskExecutionError("Expected an integer value.", "INVALID_INTEGER") from exc
+        if number < minimum or number > maximum:
+            raise TaskExecutionError("Integer value is outside the allowed range.", "INTEGER_OUT_OF_RANGE")
+        return number
