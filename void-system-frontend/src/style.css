@@ -924,6 +924,40 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(4px);
 }
 
+/* --- Product surface refinements ---
+   Pages share the same quiet, editorial rhythm. The app uses Element Plus for
+   behavior, but keeps the visual language owned by Void System. */
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.el-button {
+  min-height: 36px;
+  border-radius: 7px;
+  font-weight: 650;
+  letter-spacing: 0;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+.el-button:not(.is-text):not(.is-link):hover { transform: translateY(-1px); }
+.el-button--primary { box-shadow: 0 6px 14px color-mix(in srgb, var(--color-primary) 16%, transparent); }
+.el-button--primary:hover { box-shadow: 0 9px 18px color-mix(in srgb, var(--color-primary) 22%, transparent); }
+.el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
+  border-radius: 7px !important;
+  box-shadow: 0 0 0 1px var(--border-color) inset !important;
+  transition: box-shadow var(--transition-fast), background var(--transition-fast);
+}
+.el-input__wrapper:hover, .el-textarea__inner:hover, .el-select__wrapper:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 38%, var(--border-color)) inset !important; }
+.el-input__wrapper.is-focus, .el-textarea__inner:focus, .el-select__wrapper.is-focused { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent), 0 0 0 1px var(--color-primary) inset !important; }
+.el-card { border-radius: 8px !important; box-shadow: var(--shadow-sm) !important; }
+.el-tag { border-radius: 999px !important; font-weight: 650; }
+.el-message { border-radius: 8px !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
 /* --- AI 控制台：亮色主题下减轻侧栏/主区玻璃浑浊感 --- */
 [data-theme="light"] .ai-console-layout .console-sidebar {
   background: rgba(255, 255, 255, 0.72);

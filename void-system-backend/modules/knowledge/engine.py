@@ -20,6 +20,7 @@ from core.knowledge_contracts import (
     KnowledgeQuery,
     KnowledgeResponder,
     KnowledgeTraceRecorder,
+    KnowledgeUseEventRecorder,
     NullReranker,
     Reranker,
 )
@@ -38,6 +39,7 @@ class KnowledgeEngine:
         reranker: Optional[Reranker] = None,
         evidence_policy: Optional[EvidenceQualityPolicy] = None,
         trace_recorder: Optional[KnowledgeTraceRecorder] = None,
+        use_recorder: Optional[KnowledgeUseEventRecorder] = None,
     ) -> None:
         self._index = index
         self._responder = responder
@@ -45,6 +47,7 @@ class KnowledgeEngine:
         self._reranker = reranker or NullReranker()
         self._evidence_policy = evidence_policy or DeterministicEvidenceQualityPolicy()
         self._trace_recorder = trace_recorder
+        self._use_recorder = use_recorder
 
     async def ask(self, query: KnowledgeQuery) -> KnowledgeAnswer:
         """Search, rank, assess support, and synthesize only when evidence is adequate."""
@@ -101,6 +104,20 @@ class KnowledgeEngine:
             except Exception:
                 # Answering remains available when observability storage is degraded.
                 metadata["trace_recorded"] = False
+        if self._use_recorder is not None and query.owner_id:
+            try:
+                metadata["knowledge_use_event_id"] = self._use_recorder.record_knowledge_use(
+                    owner_id=query.owner_id,
+                    mode=query.mode,
+                    candidate_count=len(chunks),
+                    ranked_count=len(ranked),
+                    source_count=len({citation.document_id for citation in citations}),
+                    citation_count=len(citations),
+                    answerable=assessment.answerable,
+                )
+            except Exception:
+                # Behavioral telemetry is optional and never changes the answer path.
+                metadata["knowledge_use_recorded"] = False
 
         return KnowledgeAnswer(
             answer=answer.answer,

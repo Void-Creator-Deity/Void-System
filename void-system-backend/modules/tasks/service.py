@@ -35,8 +35,21 @@ def get_task_workspace(
 
 
 def get_task_execution(database: Database) -> TaskExecution:
-    """Compose the durable Goal and Run execution Module."""
-    return TaskExecution(SQLiteTaskExecutionRepository(database.get_connection))
+    """Compose durable execution with optional, conservative review evidence."""
+    from adapters.sqlite.personal_context_repository import SQLitePersonalContextRepository
+    from modules.personal_context.observation_adapters import (
+        TaskReviewMemoryCandidateAdapter,
+        TaskReviewObservationAdapter,
+    )
+    from modules.personal_context.profile import ProfileCognition
+
+    context_repository = SQLitePersonalContextRepository(database.get_connection)
+    profile = ProfileCognition(context_repository)
+    return TaskExecution(
+        SQLiteTaskExecutionRepository(database.get_connection),
+        run_review_observation_sink=TaskReviewObservationAdapter(profile),
+        run_review_memory_candidate_sink=TaskReviewMemoryCandidateAdapter(context_repository),
+    )
 
 
 def get_task_automation(database: Database) -> TaskAutomation:

@@ -72,7 +72,118 @@ class Database:
                 Migration(10, "legacy_task_execution_projection", self._add_legacy_task_execution_projection),
                 Migration(11, "canonical_reward_settlement_links", self._add_canonical_reward_settlement_links),
                 Migration(12, "task_triggers_and_run_commands", self._add_task_triggers_and_run_commands),
+                Migration(13, "personal_context_and_memories", self._add_personal_context_and_memories),
+                Migration(14, "profile_cognition", self._add_profile_cognition),
+                Migration(15, "goal_creation_idempotency", self._add_goal_creation_idempotency),
+                Migration(16, "run_review_reflections", self._add_run_review_reflections),
+                Migration(17, "context_access_explanations", self._add_context_access_explanations),
+                Migration(18, "profile_observation_source_lookup", self._add_profile_observation_source_lookup),
+                Migration(19, "goal_change_history", self._add_goal_change_history),
+                Migration(20, "knowledge_use_events", self._add_knowledge_use_events),
+                Migration(21, "memory_review_lifecycle", self._add_memory_review_lifecycle),
             ],
+        )
+
+    def _add_memory_review_lifecycle(self, conn: sqlite3.Connection) -> None:
+        """Add review, evidence, and expiry state to personal memories."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(personal_memories)").fetchall()
+        }
+        additions = {
+            "review_status": "TEXT NOT NULL DEFAULT 'confirmed'",
+            "evidence_refs": "TEXT NOT NULL DEFAULT '[]'",
+            "review_note": "TEXT NOT NULL DEFAULT ''",
+            "reviewed_at": "TEXT",
+            "expires_at": "TEXT",
+        }
+        for column, definition in additions.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE personal_memories ADD COLUMN {column} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_personal_memories_owner_review "
+            "ON personal_memories(owner_id, review_status, status, updated_at DESC)"
+        )
+
+    def _add_knowledge_use_events(self, conn: sqlite3.Connection) -> None:
+        """Store privacy-minimized knowledge-use outcomes for opt-in profile review."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS knowledge_use_events (
+                   event_id TEXT PRIMARY KEY,
+                   owner_id TEXT NOT NULL,
+                   mode TEXT NOT NULL,
+                   candidate_count INTEGER NOT NULL DEFAULT 0,
+                   ranked_count INTEGER NOT NULL DEFAULT 0,
+                   source_count INTEGER NOT NULL DEFAULT 0,
+                   citation_count INTEGER NOT NULL DEFAULT 0,
+                   answerable INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL,
+                   FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_knowledge_use_events_owner_created
+               ON knowledge_use_events(owner_id, created_at DESC)"""
+        )
+
+    def _add_goal_change_history(self, conn: sqlite3.Connection) -> None:
+        """Record non-content Goal change categories for first-party behavior summaries."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS task_goal_changes (
+                change_id TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                change_kind TEXT NOT NULL,
+                changed_fields TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (goal_id) REFERENCES task_goals(goal_id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_goal_changes_owner_kind_created
+                ON task_goal_changes(user_id, change_kind, created_at DESC);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+    def _add_profile_observation_source_lookup(self, conn: sqlite3.Connection) -> None:
+        """Speed idempotent evidence updates without deleting existing history."""
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_profile_observations_source_ref
+               ON profile_observations(owner_id, source_type, source_ref, updated_at DESC)
+               WHERE source_ref IS NOT NULL"""
+        )
+
+    def _add_run_review_reflections(self, conn: sqlite3.Connection) -> None:
+        """Store user reflection separately from immutable Run evidence."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS task_run_reviews (
+                   run_id TEXT NOT NULL,
+                   user_id TEXT NOT NULL,
+                   outcome TEXT,
+                   rating INTEGER,
+                   notes TEXT NOT NULL DEFAULT '',
+                   next_action TEXT NOT NULL DEFAULT '',
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (run_id, user_id),
+                   FOREIGN KEY (run_id) REFERENCES task_runs(run_id) ON DELETE CASCADE,
+                   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_task_run_reviews_owner_updated
+               ON task_run_reviews(user_id, updated_at DESC)"""
+        )
+
+    def _add_goal_creation_idempotency(self, conn: sqlite3.Connection) -> None:
+        """Make Goal publication retryable without creating duplicate owner records."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(task_goals)").fetchall()
+        }
+        if "idempotency_key" not in columns:
+            conn.execute("ALTER TABLE task_goals ADD COLUMN idempotency_key TEXT")
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_task_goals_owner_idempotency
+               ON task_goals(user_id, idempotency_key)"""
         )
 
     def _add_task_execution_model(self, conn: sqlite3.Connection) -> None:
@@ -381,6 +492,140 @@ class Database:
         for statement in schema.split(";"):
             if statement.strip():
                 conn.execute(statement)
+
+    def _add_context_access_explanations(self, conn: sqlite3.Connection) -> None:
+        """Persist non-content receipts explaining how personal context was selected."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(context_access_audit)").fetchall()
+        }
+        additions = {
+            "source_decisions": "TEXT NOT NULL DEFAULT '[]'",
+            "selected_references": "TEXT NOT NULL DEFAULT '[]'",
+            "omitted_sections": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for column, definition in additions.items():
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE context_access_audit ADD COLUMN {column} {definition}"
+                )
+
+
+    def _add_personal_context_and_memories(self, conn: sqlite3.Connection) -> None:
+        """Add permissioned companion settings, categorized memories, and access audit."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS companion_settings (
+                owner_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                tone TEXT NOT NULL DEFAULT 'calm',
+                initiative TEXT NOT NULL DEFAULT 'balanced',
+                permissions TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS personal_memories (
+                memory_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'manual',
+                source_ref TEXT,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                use_in_context INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS context_access_audit (
+                audit_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                requested_sections TEXT NOT NULL DEFAULT '[]',
+                included_sections TEXT NOT NULL DEFAULT '[]',
+                item_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_personal_memories_owner_status
+                ON personal_memories(owner_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_personal_memories_owner_type
+                ON personal_memories(owner_id, memory_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_context_access_owner_created
+                ON context_access_audit(owner_id, created_at DESC);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+
+    def _add_profile_cognition(self, conn: sqlite3.Connection) -> None:
+        """Add explainable profile observations, claims, and user overrides."""
+        schema = """
+            CREATE TABLE IF NOT EXISTS profile_observations (
+                observation_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'manual',
+                source_ref TEXT,
+                attributes TEXT NOT NULL DEFAULT '{}',
+                weight REAL NOT NULL DEFAULT 1.0,
+                observed_at TEXT NOT NULL,
+                sensitivity TEXT NOT NULL DEFAULT 'private',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS profile_claims (
+                claim_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                profile_key TEXT NOT NULL,
+                value TEXT,
+                summary TEXT NOT NULL,
+                rationale TEXT NOT NULL DEFAULT '',
+                confidence REAL NOT NULL DEFAULT 0.5,
+                review_status TEXT NOT NULL DEFAULT 'pending',
+                evidence_refs TEXT NOT NULL DEFAULT '[]',
+                first_observed_at TEXT,
+                last_observed_at TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (owner_id, domain, profile_key)
+            );
+            CREATE TABLE IF NOT EXISTS profile_overrides (
+                override_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                profile_key TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                value TEXT,
+                reason TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE (owner_id, domain, profile_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_observations_owner_status
+                ON profile_observations(owner_id, status, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_profile_claims_owner_review
+                ON profile_claims(owner_id, status, review_status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_profile_claims_owner_domain
+                ON profile_claims(owner_id, domain, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_profile_overrides_owner_status
+                ON profile_overrides(owner_id, status, updated_at DESC);
+        """
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
 
     def _add_knowledge_document_retention(self, conn: sqlite3.Connection) -> None:
         """Add reversible retention state for personal knowledge sources."""
@@ -3200,10 +3445,14 @@ class Database:
         return self._task_workspace_repository().delete_chain(user_id, chain_id)
 
     def add_task_to_chain(self, task_id: str, chain_id: str, chain_order: int) -> bool:
-        """Move a legacy task into a workflow without leaving a stale execution projection."""
+        """Move a compatibility task only after its target canonical Step is durable."""
         from adapters.sqlite.task_execution_projection import (
+            append_chain_task_execution,
+            create_chain_task_execution,
             delete_task_projection,
-            ensure_task_projection,
+            link_legacy_chain_execution,
+            link_legacy_task_execution,
+            project_chain,
         )
 
         conn = self.get_connection()
@@ -3211,37 +3460,125 @@ class Database:
         try:
             conn.execute("BEGIN IMMEDIATE")
             task = conn.execute(
-                "SELECT user_id FROM tasks WHERE task_id = ?", (task_id,)
+                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
             ).fetchone()
             if task is None:
                 conn.rollback()
                 return False
-            user_id = task["user_id"]
+            task_data = dict(task)
+            user_id = str(task_data["user_id"])
             chain = conn.execute(
-                "SELECT 1 FROM task_chains WHERE chain_id = ? AND user_id = ?",
+                "SELECT * FROM task_chains WHERE chain_id = ? AND user_id = ?",
                 (chain_id, user_id),
             ).fetchone()
             if chain is None:
                 conn.rollback()
                 return False
+            if task_data.get("chain_id") == chain_id:
+                conn.commit()
+                return True
+
+            existing_tasks = conn.execute(
+                """SELECT * FROM tasks WHERE chain_id = ? AND user_id = ?
+                   ORDER BY chain_order, created_at""",
+                (chain_id, user_id),
+            ).fetchall()
+            normalized_order = int(chain_order) if int(chain_order) > 0 else (
+                max((int(row["chain_order"] or 0) for row in existing_tasks), default=0) + 1
+            )
+            prior_task_id = str(existing_tasks[-1]["task_id"]) if existing_tasks else None
+            raw_prerequisites = task_data.get("prerequisites")
+            try:
+                parsed_prerequisites = json.loads(raw_prerequisites) if raw_prerequisites else []
+            except (TypeError, json.JSONDecodeError):
+                parsed_prerequisites = []
+            prerequisites = (
+                [str(item) for item in parsed_prerequisites]
+                if isinstance(parsed_prerequisites, list) and parsed_prerequisites
+                else ([prior_task_id] if prior_task_id else [])
+            )
+            planned_task = {
+                **task_data,
+                "chain_id": chain_id,
+                "chain_order": normalized_order,
+                "prerequisites": prerequisites,
+                "created_at": now,
+            }
+            existing_link = conn.execute(
+                """SELECT goal_id, run_id FROM legacy_chain_execution_links
+                   WHERE legacy_chain_id = ? AND user_id = ?""",
+                (chain_id, user_id),
+            ).fetchone()
+            if existing_link is None and existing_tasks:
+                # Legacy rows may predate the canonical migration; convert them once.
+                if project_chain(
+                    conn, user_id, dict(chain), [dict(row) for row in existing_tasks], now
+                ) is None:
+                    raise RuntimeError("Historical task chain migration was not created")
+                existing_link = conn.execute(
+                    """SELECT goal_id, run_id FROM legacy_chain_execution_links
+                       WHERE legacy_chain_id = ? AND user_id = ?""",
+                    (chain_id, user_id),
+                ).fetchone()
+
+            created_chain_execution = existing_link is None
+            if created_chain_execution:
+                execution = create_chain_task_execution(
+                    conn, user_id, dict(chain), [planned_task], now
+                )
+            else:
+                execution = append_chain_task_execution(
+                    conn, user_id, chain_id, [planned_task], now
+                )
+            if execution is None:
+                raise RuntimeError("Moved task canonical execution was not created")
+
+            # The target Step now exists, so the old standalone/chain projection can retire.
             delete_task_projection(conn, user_id, task_id, now)
             cursor = conn.execute(
-                """UPDATE tasks SET chain_id = ?, chain_order = ?, updated_at = ?
+                """UPDATE tasks SET chain_id = ?, chain_order = ?,
+                              prerequisites = ?, updated_at = ?
                    WHERE task_id = ? AND user_id = ?""",
-                (chain_id, chain_order, now, task_id, user_id),
+                (
+                    chain_id,
+                    normalized_order,
+                    json.dumps(planned_task["prerequisites"]),
+                    now,
+                    task_id,
+                    user_id,
+                ),
             )
-            if cursor.rowcount > 0 and ensure_task_projection(
-                conn, user_id, task_id, now
-            ) is None:
-                raise RuntimeError("Moved task execution projection was not created")
+            if cursor.rowcount <= 0:
+                raise RuntimeError("Task disappeared during workflow move")
+            if created_chain_execution:
+                link_legacy_chain_execution(conn, user_id, chain_id, execution, now)
+            link_legacy_task_execution(
+                conn,
+                user_id,
+                task_id,
+                chain_id,
+                {
+                    "goal_id": str(execution["goal_id"]),
+                    "run_id": str(execution["run_id"]),
+                    "step_id": str(execution["steps"][task_id]),
+                },
+                now,
+            )
+            conn.execute(
+                """UPDATE task_chains
+                   SET total_tasks = (
+                       SELECT COUNT(*) FROM tasks WHERE chain_id = ? AND user_id = ?
+                   ), updated_at = ?
+                   WHERE chain_id = ? AND user_id = ?""",
+                (chain_id, user_id, now, chain_id, user_id),
+            )
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
-
     # ==================== 任务进度 & 完成配置 ====================
 
     def update_task_progress(self, task_id: str, user_id: str, progress: int) -> bool:

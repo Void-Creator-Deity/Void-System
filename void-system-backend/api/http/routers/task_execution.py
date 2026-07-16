@@ -17,6 +17,7 @@ from api.http.schemas.task_execution import (
     RunLeaseClaimRequest,
     RunLeaseHeartbeatRequest,
     RunLeaseReleaseRequest,
+    RunReviewUpdate,
     StepCompleteRequest,
     StepFailRequest,
 )
@@ -133,6 +134,35 @@ async def get_run(
     except TaskExecutionError as exc:
         raise _translate_error(exc) from exc
     return create_success_response("执行详情已更新", {"run": run})
+
+
+@router.get("/api/runs/{run_id}/review", summary="查看行动复盘", response_model=APIResponse)
+async def get_run_review(
+    run_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    execution: TaskExecution = Depends(get_task_execution),
+) -> APIResponse:
+    try:
+        review = execution.get_run_review(current_user["user_id"], run_id)
+    except TaskExecutionError as exc:
+        raise _translate_error(exc) from exc
+    return create_success_response("行动复盘已更新", {"review": review})
+
+
+@router.put("/api/runs/{run_id}/review", summary="记录行动复盘", response_model=APIResponse)
+async def update_run_review(
+    run_id: str,
+    request: RunReviewUpdate,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    execution: TaskExecution = Depends(get_task_execution),
+) -> APIResponse:
+    try:
+        review = execution.update_run_review(
+            current_user["user_id"], run_id, request.model_dump(exclude_unset=True)
+        )
+    except TaskExecutionError as exc:
+        raise _translate_error(exc) from exc
+    return create_success_response("行动复盘已保存", {"review": review})
 
 
 @router.get("/api/runs/{run_id}/events", summary="获取执行时间线", response_model=APIResponse)
@@ -260,6 +290,19 @@ async def cancel_run(
     except TaskExecutionError as exc:
         raise _translate_error(exc) from exc
     return create_success_response("执行已取消", {"run": run})
+
+
+@router.post("/api/runs/{run_id}/retry", summary="重新开始执行", response_model=APIResponse)
+async def retry_run(
+    run_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    execution: TaskExecution = Depends(get_task_execution),
+) -> APIResponse:
+    try:
+        run = execution.retry_run(current_user["user_id"], run_id)
+    except TaskExecutionError as exc:
+        raise _translate_error(exc) from exc
+    return create_success_response("执行已重新开始", {"run": run})
 
 
 @router.post("/api/runs/{run_id}/steps/{step_id}/start", summary="开始步骤", response_model=APIResponse)

@@ -8,9 +8,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from adapters.sqlite.task_execution_projection import (
+    append_chain_task_execution,
+    create_chain_task_execution,
+    create_standalone_task_execution,
     delete_chain_projection,
     delete_task_projection,
-    ensure_task_projection,
+    link_legacy_chain_execution,
+    link_legacy_task_execution,
     project_chain,
     sync_task_progress,
 )
@@ -39,24 +43,37 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
             conn.close()
 
     def create_task(self, user_id: str, values: Mapping[str, Any]) -> str:
+        chain_id = values.get("chain_id")
+        if chain_id:
+            # Route all workflow membership through the canonical chain builder.
+            return self.create_chain_steps(
+                user_id,
+                str(chain_id),
+                [{**values, "title": str(values["task_name"])}],
+            )[0]
+
         task_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
         conn = self._connection_factory()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            execution = create_standalone_task_execution(
+                conn,
+                user_id,
+                {**values, "task_id": task_id},
+                now,
+            )
             conn.execute(
                 """INSERT INTO tasks
                    (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
                     related_attrs, estimated_time, reward_coins, priority, attribute_points,
                     prerequisites, completion_type, completion_criteria, task_type, is_optional,
                     is_daily, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task_id,
                     user_id,
                     values.get("category_id"),
-                    values.get("chain_id"),
-                    int(values.get("chain_order") or 0),
                     str(values["task_name"]),
                     str(values.get("description") or ""),
                     json.dumps(values.get("related_attrs") or {}),
@@ -74,8 +91,7 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
                     now,
                 ),
             )
-            if ensure_task_projection(conn, user_id, task_id, now) is None:
-                raise RuntimeError("Task execution projection was not created")
+            link_legacy_task_execution(conn, user_id, task_id, None, execution, now)
             conn.commit()
             return task_id
         except Exception:
@@ -83,7 +99,6 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
             raise
         finally:
             conn.close()
-
     def list_workspace_tasks(
         self,
         user_id: str,
@@ -124,6 +139,81 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
         finally:
             conn.close()
 
+    def get_execution_link(
+        self, user_id: str, task_id: str
+    ) -> Optional[Dict[str, Any]]:
+        conn = self._connection_factory()
+        try:
+            row = conn.execute(
+                """SELECT goal_id, run_id, step_id FROM legacy_task_execution_links
+                   WHERE legacy_task_id = ? AND user_id = ?""",
+                (task_id, user_id),
+            ).fetchone()
+            return dict(row) if row is not None else None
+        finally:
+            conn.close()
+
+    def legacy_execution_audit(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        clauses = []
+        params: List[Any] = []
+        if user_id is not None:
+            clauses.append("l.user_id = ?")
+            params.append(user_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        conn = self._connection_factory()
+        try:
+            task_rows = conn.execute(
+                """SELECT l.user_id, l.legacy_task_id, l.legacy_chain_id, l.goal_id, l.run_id,
+                          l.step_id, t.status AS legacy_status, s.status AS step_status
+                   FROM legacy_task_execution_links l
+                   LEFT JOIN tasks t ON t.task_id = l.legacy_task_id AND t.user_id = l.user_id
+                   LEFT JOIN task_steps s ON s.step_id = l.step_id AND s.user_id = l.user_id"""
+                + where
+                + " ORDER BY l.user_id, l.legacy_chain_id, l.legacy_task_id",
+                params,
+            ).fetchall()
+            chain_rows = conn.execute(
+                """SELECT l.user_id, l.legacy_chain_id, l.goal_id, l.run_id, c.status AS legacy_status
+                   FROM legacy_chain_execution_links l
+                   LEFT JOIN task_chains c ON c.chain_id = l.legacy_chain_id AND c.user_id = l.user_id"""
+                + where
+                + " ORDER BY l.user_id, l.legacy_chain_id",
+                params,
+            ).fetchall()
+            tasks = [dict(row) for row in task_rows]
+            chains = [dict(row) for row in chain_rows]
+            owners = sorted({str(row["user_id"]) for row in tasks + chains})
+            status_counts: Dict[str, int] = {}
+            for row in tasks:
+                status = str(row.get("legacy_status") or "missing")
+                status_counts[status] = status_counts.get(status, 0) + 1
+            return {
+                "summary": {
+                    "owner_count": len(owners),
+                    "task_link_count": len(tasks),
+                    "chain_link_count": len(chains),
+                    "task_status_counts": status_counts,
+                },
+                "tasks": tasks,
+                "chains": chains,
+            }
+        finally:
+            conn.close()
+
+    def get_chain_execution_link(
+        self, user_id: str, chain_id: str
+    ) -> Optional[Dict[str, Any]]:
+        conn = self._connection_factory()
+        try:
+            row = conn.execute(
+                """SELECT goal_id, run_id FROM legacy_chain_execution_links
+                   WHERE legacy_chain_id = ? AND user_id = ?""",
+                (chain_id, user_id),
+            ).fetchone()
+            return dict(row) if row is not None else None
+        finally:
+            conn.close()
+
     def delete_workspace_task(self, user_id: str, task_id: str) -> bool:
         conn = self._connection_factory()
         now = datetime.now().isoformat()
@@ -153,21 +243,27 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
         normalized = max(0, min(100, int(progress)))
         try:
             conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute(
+            task = conn.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ? AND user_id = ?",
+                (task_id, user_id),
+            ).fetchone()
+            if task is None:
+                conn.rollback()
+                return False
+            if not sync_task_progress(conn, user_id, task_id, normalized, now):
+                raise RuntimeError("Task is missing its canonical execution Step")
+            conn.execute(
                 """UPDATE tasks SET current_progress = ?, updated_at = ?
                    WHERE task_id = ? AND user_id = ?""",
                 (normalized, now, task_id, user_id),
             )
-            if cursor.rowcount > 0:
-                sync_task_progress(conn, user_id, task_id, normalized, now)
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
-
     def task_statistics(self, user_id: str) -> Dict[str, Any]:
         conn = self._connection_factory()
         try:
@@ -360,13 +456,78 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
         now = datetime.now().isoformat()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            if conn.execute(
-                "SELECT 1 FROM task_chains WHERE chain_id = ? AND user_id = ?", (chain_id, user_id)
-            ).fetchone() is None:
+            chain = conn.execute(
+                "SELECT * FROM task_chains WHERE chain_id = ? AND user_id = ?",
+                (chain_id, user_id),
+            ).fetchone()
+            if chain is None:
                 raise ValueError("Task chain does not exist or is not owned by the user")
-            for order, step in enumerate(steps, start=1):
+
+            existing_tasks = conn.execute(
+                """SELECT task_id, chain_order, created_at FROM tasks
+                   WHERE chain_id = ? AND user_id = ? ORDER BY chain_order, created_at""",
+                (chain_id, user_id),
+            ).fetchall()
+            next_order = max((int(row["chain_order"] or 0) for row in existing_tasks), default=0) + 1
+            previous_task_id = str(existing_tasks[-1]["task_id"]) if existing_tasks else None
+            planned_steps: List[Dict[str, Any]] = []
+            for offset, step in enumerate(steps):
                 task_id = str(uuid.uuid4())
-                prerequisites = [created[-1]] if created else []
+                raw_prerequisites = step.get("prerequisites")
+                prerequisites = (
+                    [str(item) for item in raw_prerequisites]
+                    if isinstance(raw_prerequisites, list)
+                    else ([previous_task_id] if previous_task_id else [])
+                )
+                planned_steps.append(
+                    {
+                        **step,
+                        "task_id": task_id,
+                        "task_name": str(step["title"]),
+                        "chain_id": chain_id,
+                        "chain_order": next_order + offset,
+                        "prerequisites": prerequisites,
+                        "created_at": now,
+                    }
+                )
+                created.append(task_id)
+                previous_task_id = task_id
+
+            existing_link = conn.execute(
+                """SELECT goal_id, run_id FROM legacy_chain_execution_links
+                   WHERE legacy_chain_id = ? AND user_id = ?""",
+                (chain_id, user_id),
+            ).fetchone()
+            if existing_link is None and existing_tasks:
+                # This bridge is only for task chains that predate canonical execution.
+                legacy_rows = conn.execute(
+                    """SELECT * FROM tasks WHERE chain_id = ? AND user_id = ?
+                       ORDER BY chain_order, created_at""",
+                    (chain_id, user_id),
+                ).fetchall()
+                if project_chain(
+                    conn, user_id, dict(chain), [dict(row) for row in legacy_rows], now
+                ) is None:
+                    raise RuntimeError("Historical task chain migration was not created")
+                existing_link = conn.execute(
+                    """SELECT goal_id, run_id FROM legacy_chain_execution_links
+                       WHERE legacy_chain_id = ? AND user_id = ?""",
+                    (chain_id, user_id),
+                ).fetchone()
+
+            created_chain_execution = existing_link is None
+            if created_chain_execution:
+                execution = create_chain_task_execution(
+                    conn, user_id, dict(chain), planned_steps, now
+                )
+            else:
+                execution = append_chain_task_execution(
+                    conn, user_id, chain_id, planned_steps, now
+                )
+            if execution is None:
+                raise RuntimeError("Task chain canonical execution was not created")
+
+            for step in planned_steps:
                 conn.execute(
                     """INSERT INTO tasks
                        (task_id, user_id, category_id, chain_id, chain_order, task_name, description,
@@ -375,35 +536,38 @@ class SQLiteTaskWorkspaceRepository(TaskWorkspaceRepository):
                         is_daily, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        task_id, user_id, step.get("category_id"), chain_id, order,
-                        str(step["title"]), str(step["description"]), json.dumps(step.get("related_attrs") or {}),
-                        int(step["estimated_time"]), int(step["reward_coins"]), str(step["priority"]),
-                        int(step["attribute_points"]), json.dumps(prerequisites), str(step["completion_type"]),
+                        step["task_id"], user_id, step.get("category_id"), chain_id,
+                        int(step["chain_order"]), str(step["task_name"]), str(step["description"]),
+                        json.dumps(step.get("related_attrs") or {}), int(step["estimated_time"]),
+                        int(step["reward_coins"]), str(step["priority"]), int(step["attribute_points"]),
+                        json.dumps(step["prerequisites"]), str(step["completion_type"]),
                         json.dumps(step.get("completion_criteria") or {}), str(step["task_type"]),
                         1 if step.get("is_optional") else 0, 1 if step.get("is_daily") else 0, now, now,
                     ),
                 )
-                created.append(task_id)
+
             conn.execute(
                 """UPDATE task_chains
                    SET total_tasks = ?, status = 'active', generation_status = 'ready',
                        generation_error = NULL, updated_at = ?
                    WHERE chain_id = ? AND user_id = ?""",
-                (len(created), now, chain_id, user_id),
+                (len(existing_tasks) + len(created), now, chain_id, user_id),
             )
-            chain = conn.execute(
-                "SELECT * FROM task_chains WHERE chain_id = ? AND user_id = ?",
-                (chain_id, user_id),
-            ).fetchone()
-            chain_tasks = conn.execute(
-                """SELECT * FROM tasks WHERE chain_id = ? AND user_id = ?
-                   ORDER BY chain_order, created_at""",
-                (chain_id, user_id),
-            ).fetchall()
-            if chain is None or project_chain(
-                conn, user_id, dict(chain), [dict(row) for row in chain_tasks], now
-            ) is None:
-                raise RuntimeError("Task chain execution projection was not created")
+            if created_chain_execution:
+                link_legacy_chain_execution(conn, user_id, chain_id, execution, now)
+            for task_id in created:
+                link_legacy_task_execution(
+                    conn,
+                    user_id,
+                    task_id,
+                    chain_id,
+                    {
+                        "goal_id": str(execution["goal_id"]),
+                        "run_id": str(execution["run_id"]),
+                        "step_id": str(execution["steps"][task_id]),
+                    },
+                    now,
+                )
             conn.commit()
             return created
         except Exception:

@@ -1,6 +1,7 @@
 """Durable Goal and Run orchestration for user and agent work."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from core.task_execution_contracts import (
@@ -10,16 +11,29 @@ from core.task_execution_contracts import (
     SATISFIED_STEP_STATUSES,
     STEP_KINDS,
     STEP_STATUSES,
+    TERMINAL_RUN_STATUSES,
+    RunReviewMemoryCandidateSink,
+    RunReviewObservationSink,
     TaskExecutionError,
     TaskExecutionRepository,
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class TaskExecution:
     """Own execution policy behind a compact command and query Interface."""
 
-    def __init__(self, repository: TaskExecutionRepository) -> None:
+    def __init__(
+        self,
+        repository: TaskExecutionRepository,
+        run_review_observation_sink: RunReviewObservationSink | None = None,
+        run_review_memory_candidate_sink: RunReviewMemoryCandidateSink | None = None,
+    ) -> None:
         self._repository = repository
+        self._run_review_observation_sink = run_review_observation_sink
+        self._run_review_memory_candidate_sink = run_review_memory_candidate_sink
 
     def create_goal(self, user_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
         title = self._required_text(values.get("title"), "Goal title", 160)
@@ -30,6 +44,7 @@ class TaskExecution:
                 "description": self._text(values.get("description"), 2000),
                 "desired_outcome": self._text(values.get("desired_outcome"), 2000),
                 "priority": self._choice(values.get("priority") or "medium", {"low", "medium", "high"}, "priority"),
+                "idempotency_key": self._optional_text(values.get("idempotency_key"), 200),
                 "metadata": self._mapping(values.get("metadata")),
             },
         )
@@ -132,6 +147,10 @@ class TaskExecution:
             self.get_goal(user_id, goal_id)
         return self._repository.list_runs(user_id, goal_id=goal_id, status=status)
 
+    def summarize_profile_behavior(self, user_id: str) -> Dict[str, Any]:
+        """Expose conservative aggregate history to Personal Context without raw content."""
+        return self._repository.summarize_profile_behavior(user_id)
+
     def get_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
         run = self._repository.get_run(user_id, run_id)
         if run is None:
@@ -185,6 +204,20 @@ class TaskExecution:
             )
         return self.get_run(user_id, run_id)
 
+    def retry_run(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        run = self._require_run_status(user_id, run_id, {"failed"})
+        retryable_steps = [
+            step for step in run.get("steps", [])
+            if step["status"] == "failed" and int(step["attempt_count"]) < int(step["max_attempts"])
+        ]
+        if not retryable_steps:
+            raise TaskExecutionError(
+                "This action has no failed step with retries remaining.",
+                "RUN_RETRY_NOT_AVAILABLE",
+                409,
+            )
+        return self.retry_step(user_id, run_id, retryable_steps[0]["step_id"])
+
     def start_step(self, user_id: str, run_id: str, step_id: str) -> Dict[str, Any]:
         run = self._require_run_status(user_id, run_id, {"running"})
         step = self._find_step(run, step_id)
@@ -197,7 +230,7 @@ class TaskExecution:
                 user_id,
                 run_id,
                 step_id,
-                {"summary": "Approval is required before this step can run."},
+                {"summary": "开始这一步前，需要你先确认。"},
             )["run"]
         result = self._repository.apply_step_transition(
             user_id, run_id, step_id, ["ready"], "running", "step.started",
@@ -455,6 +488,222 @@ class TaskExecution:
     def list_events(self, user_id: str, run_id: str) -> Sequence[Dict[str, Any]]:
         self.get_run(user_id, run_id)
         return self._repository.list_events(user_id, run_id)
+
+    def get_run_review(self, user_id: str, run_id: str) -> Dict[str, Any]:
+        """Build a durable, read-only result view from canonical execution records."""
+        run = self.get_run(user_id, run_id)
+        events = list(self._repository.list_events(user_id, run_id))
+        reflection = self._repository.get_run_review(user_id, run_id)
+        rewards = list(self._repository.list_run_reward_settlements(user_id, run_id))
+        artifacts = list(run.get("artifacts", []))
+        steps = list(run.get("steps", []))
+        approvals = list(run.get("approvals", []))
+        artifact_titles = {
+            title.casefold()
+            for artifact in artifacts
+            if (title := self._text(artifact.get("title"), 200))
+        }
+        expected_deliverables = []
+        for step in steps:
+            criteria = self._mapping(step.get("completion_criteria"))
+            deliverables = criteria.get("deliverables", [])
+            if not isinstance(deliverables, list):
+                continue
+            for raw_deliverable in deliverables:
+                if isinstance(raw_deliverable, Mapping):
+                    title = self._optional_text(
+                        raw_deliverable.get("title") or raw_deliverable.get("name"), 200
+                    )
+                else:
+                    title = self._optional_text(raw_deliverable, 200)
+                if not title:
+                    continue
+                expected_deliverables.append({
+                    "title": title,
+                    "step_id": step.get("step_id"),
+                    "step_title": step.get("title", ""),
+                    "step_status": step.get("status", "pending"),
+                    "recorded": title.casefold() in artifact_titles,
+                })
+        missing_deliverables = [
+            item for item in expected_deliverables if not item["recorded"]
+        ]
+        incomplete_steps = [
+            {"step_id": step.get("step_id"), "title": step.get("title", ""), "status": step.get("status", "pending")}
+            for step in steps
+            if step.get("status") not in SATISFIED_STEP_STATUSES
+        ]
+        pending_approvals = [
+            approval for approval in approvals if approval.get("status") == "pending"
+        ]
+        resolved_approvals = [
+            approval for approval in approvals if approval.get("status") != "pending"
+        ]
+        reward_totals = {
+            "coins": sum(int(item.get("coins") or 0) for item in rewards),
+            "experience": sum(int(item.get("experience") or 0) for item in rewards),
+            "settlements": len(rewards),
+        }
+        completion = {
+            "ready": not incomplete_steps and not pending_approvals and not missing_deliverables,
+            "step_count": len(steps),
+            "satisfied_steps": len(steps) - len(incomplete_steps),
+            "incomplete_steps": incomplete_steps,
+            "pending_approvals": [
+                {"approval_id": item.get("approval_id"), "step_id": item.get("step_id"), "summary": self._approval_summary(item)}
+                for item in pending_approvals
+            ],
+            "deliverables": {
+                "declared": expected_deliverables,
+                "recorded": len(expected_deliverables) - len(missing_deliverables),
+                "missing": missing_deliverables,
+                "status": "not_declared" if not expected_deliverables else ("complete" if not missing_deliverables else "incomplete"),
+            },
+        }
+        return {
+            "run_id": run_id,
+            "status": run.get("status"),
+            "summary": {
+                "objective": run.get("objective") or run.get("title") or "",
+                "step_count": len(steps),
+                "completed_steps": len([step for step in steps if step.get("status") in SATISFIED_STEP_STATUSES]),
+                "artifact_count": len(artifacts),
+                "approval_count": len(approvals),
+                "resolved_approvals": len(resolved_approvals),
+                "event_count": len(events),
+            },
+            "completion": completion,
+            "artifacts": artifacts,
+            "outputs": [
+                {
+                    "step_id": step.get("step_id"),
+                    "step_title": step.get("title", ""),
+                    "data": self._mapping(step.get("output_data")),
+                }
+                for step in steps
+                if self._mapping(step.get("output_data"))
+            ],
+            "approvals": [
+                {
+                    "approval_id": item.get("approval_id"),
+                    "step_id": item.get("step_id"),
+                    "status": item.get("status"),
+                    "summary": self._approval_summary(item),
+                    "decision": self._mapping(item.get("decision_data")),
+                    "resolved_at": item.get("resolved_at"),
+                }
+                for item in approvals
+            ],
+            "rewards": {"items": rewards, "totals": reward_totals},
+            "reflection": reflection,
+            "next_action": self._review_next_action(run, completion, reflection),
+        }
+
+    def update_run_review(
+        self,
+        user_id: str,
+        run_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        run = self.get_run(user_id, run_id)
+        if run.get("status") not in TERMINAL_RUN_STATUSES:
+            raise TaskExecutionError(
+                "Finish, cancel, or stop this action before writing its review.",
+                "RUN_REVIEW_NOT_AVAILABLE",
+                409,
+            )
+        existing = self._repository.get_run_review(user_id, run_id) or {}
+        merged = {
+            "outcome": existing.get("outcome"),
+            "rating": existing.get("rating"),
+            "notes": existing.get("notes", ""),
+            "next_action": existing.get("next_action", ""),
+        }
+        for field, maximum in (("outcome", 30), ("notes", 4000), ("next_action", 1000)):
+            if field in values:
+                value = values.get(field)
+                merged[field] = None if field == "outcome" and value is None else self._optional_text(value, maximum)
+        if "rating" in values:
+            rating = values.get("rating")
+            merged["rating"] = None if rating is None else self._integer(rating, default=1, minimum=1, maximum=5)
+        reflection = self._repository.upsert_run_review(user_id, run_id, merged)
+        self._repository.append_event(
+            user_id,
+            run_id,
+            "run.review_updated",
+            payload={
+                "outcome": reflection.get("outcome"),
+                "rating": reflection.get("rating"),
+                "has_notes": bool(reflection.get("notes")),
+                "has_next_action": bool(reflection.get("next_action")),
+            },
+        )
+        self._record_run_review_observation(user_id, run, reflection)
+        self._propose_run_review_memory(user_id, run, reflection)
+        return self.get_run_review(user_id, run_id)
+
+    def _propose_run_review_memory(
+        self,
+        user_id: str,
+        run: Mapping[str, Any],
+        reflection: Mapping[str, Any],
+    ) -> None:
+        sink = self._run_review_memory_candidate_sink
+        if sink is None:
+            return
+        try:
+            sink.propose_run_review_memory(user_id, run, reflection)
+        except Exception:
+            # A saved review remains valid if optional memory suggestion capture fails.
+            logger.exception("Unable to propose review memory for run_id=%s", run.get("run_id"))
+
+    def _record_run_review_observation(
+        self,
+        user_id: str,
+        run: Mapping[str, Any],
+        reflection: Mapping[str, Any],
+    ) -> None:
+        sink = self._run_review_observation_sink
+        if sink is None:
+            return
+        try:
+            sink.record_run_review(user_id, run, reflection)
+        except Exception:
+            # A saved review remains valid even if optional evidence capture is unavailable.
+            logger.exception("Unable to record run review evidence for run_id=%s", run.get("run_id"))
+
+    @staticmethod
+    def _approval_summary(approval: Mapping[str, Any]) -> str:
+        request = approval.get("request_data")
+        if isinstance(request, Mapping):
+            value = request.get("summary")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        value = approval.get("summary")
+        return value.strip() if isinstance(value, str) and value.strip() else "需要确认的事项"
+
+    @staticmethod
+    def _review_next_action(
+        run: Mapping[str, Any],
+        completion: Mapping[str, Any],
+        reflection: Optional[Mapping[str, Any]],
+    ) -> Dict[str, str]:
+        if reflection and isinstance(reflection.get("next_action"), str) and reflection["next_action"].strip():
+            return {"kind": "user_defined", "text": reflection["next_action"].strip()}
+        if completion.get("pending_approvals"):
+            return {"kind": "approval", "text": "先处理仍在等待的确认。"}
+        deliverables = completion.get("deliverables") if isinstance(completion.get("deliverables"), Mapping) else {}
+        if deliverables.get("missing"):
+            return {"kind": "deliverable", "text": "补齐尚未记录的成果，再结束这次行动。"}
+        if completion.get("incomplete_steps"):
+            return {"kind": "step", "text": "完成或处理未结束的步骤。"}
+        if run.get("status") == "completed":
+            return {"kind": "follow_up", "text": "基于这次成果创建下一项行动。"}
+        if run.get("status") == "failed":
+            return {"kind": "recover", "text": "调整方案后，创建一次新的行动继续推进。"}
+        if run.get("status") == "cancelled":
+            return {"kind": "restart", "text": "保留这次记录，按新的条件重新开始。"}
+        return {"kind": "continue", "text": "继续推进当前行动。"}
 
     def _require_run_status(
         self, user_id: str, run_id: str, allowed: set[str]

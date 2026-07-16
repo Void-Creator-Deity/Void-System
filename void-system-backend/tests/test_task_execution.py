@@ -188,6 +188,64 @@ class TaskExecutionTests(unittest.TestCase):
         self.assertIn("run.resumed", [event["event_type"] for event in events])
         self.assertIn("action.completed", [event["event_type"] for event in events])
 
+    def test_profile_behavior_summary_uses_only_aggregate_goal_and_approval_signals(self) -> None:
+        first_goal = self.create_goal()
+        second_goal = self.execution.create_goal(
+            "user-1", {"title": "Improve the workspace", "desired_outcome": "A clearer flow"}
+        )
+        self.execution.update_goal(
+            "user-1", first_goal["goal_id"], {"desired_outcome": "A verified public release"}
+        )
+        self.execution.update_goal(
+            "user-1", first_goal["goal_id"], {"priority": "high"}
+        )
+        self.execution.update_goal(
+            "user-1", second_goal["goal_id"], {"title": "Improve the daily workspace"}
+        )
+        for index, decision in enumerate(("approved", "approved", "rejected")):
+            goal = first_goal if index < 2 else second_goal
+            run = self.execution.create_run(
+                "user-1",
+                goal["goal_id"],
+                {"title": f"Approval {index}", "steps": [{"title": "Review", "requires_approval": True}]},
+            )
+            run = self.execution.start_run("user-1", run["run_id"])
+            step_id = run["steps"][0]["step_id"]
+            run = self.execution.start_step("user-1", run["run_id"], step_id)
+            self.execution.resolve_approval("user-1", run["approvals"][0]["approval_id"], decision)
+
+        self.execution.update_goal("user-1", first_goal["goal_id"], {"status": "completed"})
+
+        summary = self.execution.summarize_profile_behavior("user-1")
+        self.assertEqual(summary["approval_count"], 3)
+        self.assertEqual(summary["approved_approval_count"], 2)
+        self.assertEqual(summary["rejected_approval_count"], 1)
+        self.assertEqual(summary["goal_plan_refinement_count"], 3)
+        self.assertEqual(summary["refined_goal_count"], 2)
+        self.assertEqual(summary["goal_change_count"], 4)
+    def test_profile_behavior_summary_has_safe_observation_ranges_and_ignores_pending_approvals(self) -> None:
+        goal = self.create_goal()
+        run = self.execution.create_run(
+            "user-1",
+            goal["goal_id"],
+            {"steps": [{"title": "Needs a decision", "requires_approval": True}]},
+        )
+        run = self.execution.start_run("user-1", run["run_id"])
+        self.execution.start_step("user-1", run["run_id"], run["steps"][0]["step_id"])
+
+        summary = self.execution.summarize_profile_behavior("user-1")
+
+        self.assertEqual(summary["approval_count"], 0)
+        self.assertEqual(summary["approved_approval_count"], 0)
+        self.assertEqual(summary["observation_ranges"]["approvals"], {
+            "observed_from": None,
+            "observed_to": None,
+        })
+        self.assertIsNotNone(summary["observation_ranges"]["runs"]["observed_from"])
+        self.assertIsNotNone(summary["observation_ranges"]["runs"]["observed_to"])
+        self.assertNotIn("Release the workspace", str(summary))
+        self.assertNotIn("Needs a decision", str(summary))
+
     def test_run_creation_is_idempotent_and_owner_scoped(self) -> None:
         goal = self.create_goal()
         values = {"idempotency_key": "launch-2026", "steps": [{"title": "Launch"}]}

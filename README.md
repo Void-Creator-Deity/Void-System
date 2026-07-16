@@ -83,10 +83,13 @@ LM Studio 仅用于显式集成测试。需要测试时加载 `google/gemma-4-12
 cd void-system-backend
 uv run python -m unittest discover -s tests -v
 
-# 前端生产构建
+# 前端测试与生产构建
 cd ..\void-system-frontend
-npm run build
+node --test tests/*.test.js
+& .\node_modules\.bin\vite.cmd build
 ```
+
+测试必须使用按 pyproject.toml 和 uv.lock 同步过依赖的 Python 环境；不要用未安装项目依赖的全局 Python 判断回归结果。当前 Windows 工作区可直接使用 void-system-backend\.venv313\Scripts\python.exe。
 
 显式 LM Studio 冒烟测试：
 

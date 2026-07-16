@@ -271,6 +271,7 @@ def _insert_step(
     *,
     position: int,
     chain_id: Optional[str],
+    link_legacy_task: bool = True,
 ) -> str:
     task_id = str(task["task_id"])
     status = _legacy_step_status(str(task.get("status") or "pending"))
@@ -304,16 +305,328 @@ def _insert_step(
             completed_at,
         ),
     )
+    if link_legacy_task:
+        _link_legacy_task_execution(
+            conn,
+            user_id,
+            task_id,
+            chain_id,
+            goal_id,
+            run_id,
+            step_id,
+            now,
+        )
+    if status == "waiting_approval":
+        _ensure_pending_approval(conn, user_id, run_id, step_id, task_id, now)
+    return step_id
+
+
+def _link_legacy_task_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    task_id: str,
+    chain_id: Optional[str],
+    goal_id: str,
+    run_id: str,
+    step_id: str,
+    now: str,
+) -> None:
     conn.execute(
         """INSERT INTO legacy_task_execution_links
            (legacy_task_id, user_id, legacy_chain_id, goal_id, run_id, step_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (task_id, user_id, chain_id, goal_id, run_id, step_id, now),
     )
-    if status == "waiting_approval":
-        _ensure_pending_approval(conn, user_id, run_id, step_id, task_id, now)
-    return step_id
 
+
+def link_legacy_task_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    task_id: str,
+    chain_id: Optional[str],
+    execution: Mapping[str, str],
+    now: str,
+) -> None:
+    """Attach a legacy read record after its canonical execution is durable."""
+    _link_legacy_task_execution(
+        conn,
+        user_id,
+        task_id,
+        chain_id,
+        str(execution["goal_id"]),
+        str(execution["run_id"]),
+        str(execution["step_id"]),
+        now,
+    )
+
+
+def link_legacy_chain_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    chain_id: str,
+    execution: Mapping[str, str],
+    now: str,
+) -> None:
+    """Attach a legacy workflow record after the Goal and Run have been created."""
+    conn.execute(
+        """INSERT INTO legacy_chain_execution_links
+           (legacy_chain_id, user_id, goal_id, run_id, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (chain_id, user_id, str(execution["goal_id"]), str(execution["run_id"]), now),
+    )
+
+
+def create_standalone_task_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    task: Mapping[str, Any],
+    now: str,
+) -> Dict[str, str]:
+    """Create canonical records before materializing a legacy task read record."""
+    task_id = str(task["task_id"])
+    legacy_status = _legacy_step_status(str(task.get("status") or "pending"))
+    title = str(task.get("task_name") or "Legacy task")
+    description = str(task.get("description") or "")
+    goal_id = _insert_goal(
+        conn,
+        user_id,
+        title,
+        description,
+        str(task.get("priority") or "medium"),
+        {"legacy_task_id": task_id},
+        now,
+        completed=legacy_status == "completed",
+    )
+    run_id = str(uuid.uuid4())
+    run_status = _run_status([legacy_status])
+    started_at, completed_at = _timestamps(run_status, now)
+    conn.execute(
+        """INSERT INTO task_runs
+           (run_id, goal_id, user_id, title, objective, mode, status, version,
+            idempotency_key, metadata, created_at, updated_at, started_at, completed_at, error_summary)
+           VALUES (?, ?, ?, ?, ?, 'manual', ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            run_id,
+            goal_id,
+            user_id,
+            title,
+            description,
+            run_status,
+            f"legacy-task:{task_id}",
+            _json({"legacy_task_id": task_id}),
+            now,
+            now,
+            started_at,
+            completed_at,
+            "Legacy task failed" if run_status == "failed" else None,
+        ),
+    )
+    step_id = _insert_step(
+        conn,
+        user_id,
+        goal_id,
+        run_id,
+        task,
+        now,
+        position=0,
+        chain_id=None,
+        link_legacy_task=False,
+    )
+    _refresh_dependency_readiness(conn, user_id, run_id, now, emit_events=False)
+    _event(
+        conn,
+        user_id,
+        run_id,
+        "legacy.task_canonical_created",
+        now,
+        step_id=step_id,
+        payload={"legacy_task_id": task_id},
+    )
+    return {"goal_id": goal_id, "run_id": run_id, "step_id": step_id}
+
+
+def create_chain_task_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    chain: Mapping[str, Any],
+    tasks: Sequence[Mapping[str, Any]],
+    now: str,
+) -> Optional[Dict[str, Any]]:
+    """Create a canonical dependency graph before its legacy task-chain read records."""
+    if not tasks:
+        return None
+    chain_id = str(chain["chain_id"])
+    ordered = sorted(
+        tasks,
+        key=lambda item: (int(item.get("chain_order") or 0), str(item.get("created_at") or "")),
+    )
+    statuses = [_legacy_step_status(str(task.get("status") or "pending")) for task in ordered]
+    run_status = _run_status(statuses)
+    title = str(chain.get("chain_name") or "Legacy workflow")
+    description = str(chain.get("description") or "")
+    goal_id = _insert_goal(
+        conn,
+        user_id,
+        title,
+        description,
+        str(ordered[0].get("priority") or "medium"),
+        {"legacy_chain_id": chain_id},
+        now,
+        completed=run_status == "completed",
+    )
+    run_id = str(uuid.uuid4())
+    started_at, completed_at = _timestamps(run_status, now)
+    conn.execute(
+        """INSERT INTO task_runs
+           (run_id, goal_id, user_id, title, objective, mode, status, version,
+            idempotency_key, metadata, created_at, updated_at, started_at, completed_at, error_summary)
+           VALUES (?, ?, ?, ?, ?, 'manual', ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            run_id,
+            goal_id,
+            user_id,
+            title,
+            description,
+            run_status,
+            f"legacy-chain:{chain_id}",
+            _json({"legacy_chain_id": chain_id}),
+            now,
+            now,
+            started_at,
+            completed_at,
+            "Legacy workflow failed" if run_status == "failed" else None,
+        ),
+    )
+    task_to_step: Dict[str, str] = {}
+    for position, task in enumerate(ordered):
+        task_id = str(task["task_id"])
+        task_to_step[task_id] = _insert_step(
+            conn,
+            user_id,
+            goal_id,
+            run_id,
+            task,
+            now,
+            position=position,
+            chain_id=chain_id,
+            link_legacy_task=False,
+        )
+    for position, task in enumerate(ordered):
+        task_id = str(task["task_id"])
+        dependency_ids = [
+            item for item in _load_list(task.get("prerequisites")) if item in task_to_step
+        ]
+        if not dependency_ids and position > 0:
+            dependency_ids = [str(ordered[position - 1]["task_id"])]
+        for dependency_id in dependency_ids:
+            conn.execute(
+                """INSERT OR IGNORE INTO task_step_dependencies
+                   (run_id, step_id, depends_on_step_id) VALUES (?, ?, ?)""",
+                (run_id, task_to_step[task_id], task_to_step[dependency_id]),
+            )
+    _refresh_dependency_readiness(conn, user_id, run_id, now, emit_events=False)
+    _sync_run_and_goal(conn, user_id, goal_id, run_id, now, reason="legacy_chain_canonical_create")
+    _event(
+        conn,
+        user_id,
+        run_id,
+        "legacy.chain_canonical_created",
+        now,
+        payload={"legacy_chain_id": chain_id, "task_count": len(ordered)},
+    )
+    return {"goal_id": goal_id, "run_id": run_id, "steps": task_to_step}
+
+
+def append_chain_task_execution(
+    conn: sqlite3.Connection,
+    user_id: str,
+    chain_id: str,
+    tasks: Sequence[Mapping[str, Any]],
+    now: str,
+) -> Optional[Dict[str, Any]]:
+    """Append canonical Steps to an existing legacy workflow before compatibility rows."""
+    if not tasks:
+        return None
+    existing = conn.execute(
+        """SELECT goal_id, run_id FROM legacy_chain_execution_links
+           WHERE legacy_chain_id = ? AND user_id = ?""",
+        (chain_id, user_id),
+    ).fetchone()
+    if existing is None:
+        return None
+
+    goal_id, run_id = str(existing["goal_id"]), str(existing["run_id"])
+    linked_steps = {
+        str(row["legacy_task_id"]): str(row["step_id"])
+        for row in conn.execute(
+            """SELECT legacy_task_id, step_id FROM legacy_task_execution_links
+               WHERE legacy_chain_id = ? AND user_id = ?""",
+            (chain_id, user_id),
+        ).fetchall()
+    }
+    previous = conn.execute(
+        """SELECT step_id FROM task_steps WHERE run_id = ? AND user_id = ?
+           ORDER BY position DESC, created_at DESC LIMIT 1""",
+        (run_id, user_id),
+    ).fetchone()
+    fallback_dependency = str(previous["step_id"]) if previous is not None else None
+    ordered = sorted(
+        tasks,
+        key=lambda item: (int(item.get("chain_order") or 0), str(item.get("created_at") or "")),
+    )
+    added: Dict[str, str] = {}
+    for task in ordered:
+        task_id = str(task["task_id"])
+        if task_id in linked_steps:
+            raise RuntimeError("Task already has a canonical workflow Step")
+        step_id = _insert_step(
+            conn,
+            user_id,
+            goal_id,
+            run_id,
+            task,
+            now,
+            position=max(0, int(task.get("chain_order") or 1) - 1),
+            chain_id=chain_id,
+            link_legacy_task=False,
+        )
+        linked_steps[task_id] = step_id
+        added[task_id] = step_id
+
+    previous_added_step = fallback_dependency
+    for task in ordered:
+        task_id = str(task["task_id"])
+        dependency_ids = [
+            item for item in _load_list(task.get("prerequisites")) if item in linked_steps
+        ]
+        if not dependency_ids and previous_added_step is not None:
+            conn.execute(
+                """INSERT OR IGNORE INTO task_step_dependencies
+                   (run_id, step_id, depends_on_step_id) VALUES (?, ?, ?)""",
+                (run_id, added[task_id], previous_added_step),
+            )
+        else:
+            for dependency_id in dependency_ids:
+                conn.execute(
+                    """INSERT OR IGNORE INTO task_step_dependencies
+                       (run_id, step_id, depends_on_step_id) VALUES (?, ?, ?)""",
+                    (run_id, added[task_id], linked_steps[dependency_id]),
+                )
+        previous_added_step = added[task_id]
+
+    _refresh_dependency_readiness(conn, user_id, run_id, now, emit_events=True)
+    _sync_run_and_goal(
+        conn, user_id, goal_id, run_id, now, reason="legacy_chain_canonical_extend"
+    )
+    _event(
+        conn,
+        user_id,
+        run_id,
+        "legacy.chain_canonical_extended",
+        now,
+        payload={"legacy_chain_id": chain_id, "added": len(added)},
+    )
+    return {"goal_id": goal_id, "run_id": run_id, "steps": added}
 
 def project_standalone_task(
     conn: sqlite3.Connection, user_id: str, task: Mapping[str, Any], now: str
@@ -616,14 +929,26 @@ def sync_task_status(
 
 def sync_task_progress(
     conn: sqlite3.Connection, user_id: str, task_id: str, progress: int, now: str
-) -> None:
+) -> bool:
     link = ensure_task_projection(conn, user_id, task_id, now)
     if link is None:
-        return
-    conn.execute(
+        return False
+    normalized = max(0, min(100, int(progress)))
+    cursor = conn.execute(
         "UPDATE task_steps SET progress = ?, updated_at = ? WHERE step_id = ? AND user_id = ?",
-        (max(0, min(100, int(progress))), now, link["step_id"], user_id),
+        (normalized, now, link["step_id"], user_id),
     )
+    if cursor.rowcount > 0:
+        _event(
+            conn,
+            user_id,
+            str(link["run_id"]),
+            "legacy.task.progress_updated",
+            now,
+            step_id=str(link["step_id"]),
+            payload={"legacy_task_id": task_id, "progress": normalized},
+        )
+    return cursor.rowcount > 0
 
 
 def delete_task_projection(conn: sqlite3.Connection, user_id: str, task_id: str, now: str) -> None:

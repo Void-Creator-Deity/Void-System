@@ -75,48 +75,62 @@ class SQLiteTaskRepository(TaskRepository):
         now = datetime.now().isoformat()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            task = conn.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ? AND user_id = ?",
+                (task_id, user_id),
+            ).fetchone()
+            if task is None:
+                conn.rollback()
+                return False
+            if ensure_task_projection(conn, user_id, task_id, now) is None:
+                raise RuntimeError("Task is missing its canonical execution projection")
+            sync_task_status(conn, user_id, task_id, status, now)
             if status == "completed":
-                cursor = conn.execute(
+                conn.execute(
                     """UPDATE tasks SET status = ?, completed_at = COALESCE(completed_at, ?),
                               updated_at = ? WHERE task_id = ? AND user_id = ?""",
                     (status, now, now, task_id, user_id),
                 )
             else:
-                cursor = conn.execute(
+                conn.execute(
                     """UPDATE tasks SET status = ?, completed_at = NULL, updated_at = ?
                        WHERE task_id = ? AND user_id = ?""",
                     (status, now, task_id, user_id),
                 )
-            if cursor.rowcount > 0:
-                sync_task_status(conn, user_id, task_id, status, now)
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
-
     def submit_proof(self, user_id: str, task_id: str, proof: Dict[str, Any]) -> bool:
         conn = self._connection_factory()
         now = datetime.now().isoformat()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute(
+            task = conn.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ? AND user_id = ?",
+                (task_id, user_id),
+            ).fetchone()
+            if task is None:
+                conn.rollback()
+                return False
+            if ensure_task_projection(conn, user_id, task_id, now) is None:
+                raise RuntimeError("Task is missing its canonical execution projection")
+            sync_task_status(conn, user_id, task_id, "pending_evaluation", now)
+            conn.execute(
                 """UPDATE tasks SET proof_data = ?, status = 'pending_evaluation', updated_at = ?
                    WHERE task_id = ? AND user_id = ?""",
                 (json.dumps(proof), now, task_id, user_id),
             )
-            if cursor.rowcount > 0:
-                sync_task_status(conn, user_id, task_id, "pending_evaluation", now)
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
-
     def update_evaluation(
         self,
         user_id: str,
@@ -177,11 +191,13 @@ class SQLiteTaskRepository(TaskRepository):
                 (task_id, user_id),
             )
             if cursor.fetchone() is not None:
-                self._mark_completed(cursor, task_id, user_id, now, ai_suggestion, preserve_time=True)
                 sync_task_status(conn, user_id, task_id, "completed", now)
+                self._mark_completed(cursor, task_id, user_id, now, ai_suggestion, preserve_time=True)
                 conn.commit()
                 return False
 
+            # Canonical completion is durable before reward compatibility data is materialized.
+            sync_task_status(conn, user_id, task_id, "completed", now)
             coins = max(0, int(reward.coins))
             experience = max(0, int(reward.experience))
             increments = reward.attribute_increments or {}
@@ -225,7 +241,6 @@ class SQLiteTaskRepository(TaskRepository):
             self._mark_completed(cursor, task_id, user_id, now, ai_suggestion)
             if cursor.rowcount <= 0:
                 raise RuntimeError("Task disappeared during reward settlement")
-            sync_task_status(conn, user_id, task_id, "completed", now)
             conn.execute(
                 """INSERT INTO task_events
                    (event_id, run_id, step_id, user_id, event_type, payload, created_at)

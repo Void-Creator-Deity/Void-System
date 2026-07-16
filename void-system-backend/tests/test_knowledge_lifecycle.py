@@ -11,6 +11,15 @@ class KnowledgeLifecycleRepositoryTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.database = Database(Path(self.temp_dir.name) / "knowledge.db")
         self.repository = SQLiteKnowledgeLifecycleRepository(self.database.get_connection)
+        connection = self.database.get_connection()
+        try:
+            connection.executemany(
+                "INSERT INTO users (user_id, username) VALUES (?, ?)",
+                [("user-1", "user-one"), ("user-2", "user-two")],
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -62,6 +71,43 @@ class KnowledgeLifecycleRepositoryTests(unittest.TestCase):
         self.assertEqual(traces[0]["citations"][0]["document_id"], "doc-1")
         self.assertEqual(self.repository.list_retrievals(owner_id="user-2"), [])
 
+
+    def test_profile_knowledge_use_summary_is_reliable_and_owner_scoped(self) -> None:
+        self.repository.record_knowledge_use(
+            owner_id="user-1", mode="hybrid", candidate_count=4, ranked_count=2,
+            source_count=1, citation_count=1, answerable=True,
+        )
+        self.repository.record_knowledge_use(
+            owner_id="user-1", mode="hybrid", candidate_count=4, ranked_count=0,
+            source_count=0, citation_count=0, answerable=False,
+        )
+        self.repository.record_knowledge_use(
+            owner_id="user-2", mode="hybrid", candidate_count=3, ranked_count=2,
+            source_count=1, citation_count=1, answerable=True,
+        )
+
+        summary = self.repository.summarize_profile_knowledge_use("user-1")
+        self.assertEqual(summary["knowledge_use_count"], 2)
+        self.assertEqual(summary["answerable_use_count"], 1)
+        self.assertEqual(summary["cited_use_count"], 1)
+        self.assertEqual(summary["reliable_use_count"], 1)
+        self.assertIsNotNone(summary["observation_range"]["observed_from"])
+        self.assertEqual(summary["observation_range"]["observed_from"], summary["observation_range"]["observed_to"])
+
+        isolated = self.repository.summarize_profile_knowledge_use("user-2")
+        self.assertEqual(isolated["knowledge_use_count"], 1)
+        self.assertEqual(isolated["reliable_use_count"], 1)
+
+    def test_unreliable_knowledge_use_does_not_create_an_observation_range(self) -> None:
+        self.repository.record_knowledge_use(
+            owner_id="user-1", mode="hybrid", candidate_count=2, ranked_count=1,
+            source_count=1, citation_count=0, answerable=True,
+        )
+
+        summary = self.repository.summarize_profile_knowledge_use("user-1")
+        self.assertEqual(summary["knowledge_use_count"], 1)
+        self.assertEqual(summary["reliable_use_count"], 0)
+        self.assertEqual(summary["observation_range"], {"observed_from": None, "observed_to": None})
 
 if __name__ == "__main__":
     unittest.main()

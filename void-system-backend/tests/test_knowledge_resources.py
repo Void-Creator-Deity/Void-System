@@ -77,6 +77,7 @@ class KnowledgeResourceCompositionTests(unittest.TestCase):
             vector_manager,
             fake_repository,
             trace_recorder=fake_lifecycle,
+            use_recorder=fake_lifecycle,
         )
 
 

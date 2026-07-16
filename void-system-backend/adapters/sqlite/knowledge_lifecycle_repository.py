@@ -173,6 +173,79 @@ class SQLiteKnowledgeLifecycleRepository:
         finally:
             connection.close()
 
+    def record_knowledge_use(
+        self,
+        *,
+        owner_id: str,
+        mode: str,
+        candidate_count: int,
+        ranked_count: int,
+        source_count: int,
+        citation_count: int,
+        answerable: bool,
+    ) -> str:
+        """Record only aggregate retrieval outcome for opt-in profile analysis."""
+        event_id = str(uuid.uuid4())
+        connection = self._connection_factory()
+        try:
+            connection.execute(
+                """INSERT INTO knowledge_use_events
+                   (event_id, owner_id, mode, candidate_count, ranked_count, source_count,
+                    citation_count, answerable, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    owner_id,
+                    str(mode or "hybrid")[:80],
+                    max(0, int(candidate_count)),
+                    max(0, int(ranked_count)),
+                    max(0, int(source_count)),
+                    max(0, int(citation_count)),
+                    1 if answerable else 0,
+                    self._now(),
+                ),
+            )
+            connection.commit()
+            return event_id
+        finally:
+            connection.close()
+
+    def summarize_profile_knowledge_use(self, owner_id: str) -> Dict[str, Any]:
+        """Return owner-scoped aggregates without queries, source ids, or citations."""
+        connection = self._connection_factory()
+        try:
+            row = connection.execute(
+                """SELECT COUNT(*) AS knowledge_use_count,
+                          COALESCE(SUM(CASE WHEN answerable = 1 THEN 1 ELSE 0 END), 0)
+                              AS answerable_use_count,
+                          COALESCE(SUM(CASE WHEN citation_count > 0 THEN 1 ELSE 0 END), 0)
+                              AS cited_use_count,
+                          COALESCE(SUM(CASE
+                              WHEN answerable = 1 AND source_count > 0 AND citation_count > 0
+                              THEN 1 ELSE 0 END), 0) AS reliable_use_count,
+                          MIN(CASE
+                              WHEN answerable = 1 AND source_count > 0 AND citation_count > 0
+                              THEN created_at END) AS observed_from,
+                          MAX(CASE
+                              WHEN answerable = 1 AND source_count > 0 AND citation_count > 0
+                              THEN created_at END) AS observed_to
+                   FROM knowledge_use_events
+                   WHERE owner_id = ?""",
+                (owner_id,),
+            ).fetchone()
+            return {
+                "knowledge_use_count": int(row["knowledge_use_count"] or 0),
+                "answerable_use_count": int(row["answerable_use_count"] or 0),
+                "cited_use_count": int(row["cited_use_count"] or 0),
+                "reliable_use_count": int(row["reliable_use_count"] or 0),
+                "observation_range": {
+                    "observed_from": row["observed_from"],
+                    "observed_to": row["observed_to"],
+                },
+            }
+        finally:
+            connection.close()
+
     def list_retrievals(self, *, owner_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         connection = self._connection_factory()
         try:

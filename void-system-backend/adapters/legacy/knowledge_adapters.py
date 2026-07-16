@@ -171,6 +171,7 @@ def build_legacy_user_knowledge_engine(
     vector_manager: Any,
     repository: UserKnowledgeRepository,
     trace_recorder: Any = None,
+    use_recorder: Any = None,
     settings: Optional[RuntimeSettings] = None,
 ):
     """Compose hybrid retrieval and grounded generation over supplied adapters."""
@@ -184,6 +185,7 @@ def build_legacy_user_knowledge_engine(
         responder=GroundedKnowledgeResponder(LegacyLangChainGroundedGenerator(settings=settings)),
         ingestor=LegacyUserDocumentIngestor(document_manager),
         trace_recorder=trace_recorder,
+        use_recorder=use_recorder,
     )
 
 

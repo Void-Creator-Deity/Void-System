@@ -1,6 +1,6 @@
 # Void System Backend
 
-The FastAPI backend for the Void System personal growth workspace. New execution behavior is built around Goal → Run → Step and portable Core interfaces; legacy task and RAG implementations remain behind compatibility adapters while migration continues.
+The FastAPI backend for the Void System personal growth workspace. New execution behavior is built around Goal → Run → Step and portable Core interfaces; legacy task and RAG implementations remain behind compatibility adapters during their deprecation window.
 
 ## Canonical modules
 
@@ -41,11 +41,28 @@ Set a unique `SECRET_KEY` of at least 32 characters in production. Configure exp
 
 The application owns one RuntimeSettings instance and one Database adapter per FastAPI app. Routes receive focused interfaces from dependency composition instead of constructing storage or model resources directly.
 
+## Local administrator recovery
+
+If the local administrator password is lost, reset the existing SQLite administrator without enabling bootstrap or storing a password in the repository:
+
+```powershell
+$env:VOID_ADMIN_PASSWORD = 'use-a-temporary-strong-password'
+uv run python tools/reset_local_admin.py --username admin --email admin@void-system.com
+Remove-Item Env:VOID_ADMIN_PASSWORD
+```
+
+The tool refuses to create or promote an account. It only repairs an existing administrator, increments the account token version, and revokes all previous login sessions. Omit `VOID_ADMIN_PASSWORD` to enter and confirm the password interactively. Use `--database` when recovering a non-default database.
+
 ## Verification
 
 ```powershell
 uv run python -m unittest discover -s tests -v
+
+# Current Windows workspace fallback when uv is not on PATH
+& '.\.venv313\Scripts\python.exe' -m unittest discover -s tests -v
 ```
+
+Use only an environment synchronized from pyproject.toml and uv.lock. An unrelated global Python may import part of the suite while missing FastAPI and other runtime dependencies.
 
 The suite covers SQLite migrations, identity and token rotation, Goal/Run/Step transitions, worker leases and checkpoints, triggers and commands, legacy projections, reward idempotency, conversations, knowledge lifecycle, planning, administration, and HTTP owner isolation.
 

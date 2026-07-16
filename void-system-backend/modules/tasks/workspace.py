@@ -138,6 +138,15 @@ class TaskWorkspace:
             raise TaskWorkspaceError("任务不存在或无权访问", "TASK_NOT_FOUND", 404)
         return task
 
+    def execution_link(self, user_id: str, task_id: str) -> Optional[Dict[str, Any]]:
+        return self._repository.get_execution_link(user_id, task_id)
+
+    def chain_execution_link(self, user_id: str, chain_id: str) -> Optional[Dict[str, Any]]:
+        return self._repository.get_chain_execution_link(user_id, chain_id)
+
+    def legacy_execution_audit(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        return self._repository.legacy_execution_audit(user_id)
+
     def delete_task(self, user_id: str, task_id: str) -> None:
         if not self._repository.delete_workspace_task(user_id, task_id):
             raise TaskWorkspaceError("任务不存在或无权访问", "TASK_NOT_FOUND", 404)

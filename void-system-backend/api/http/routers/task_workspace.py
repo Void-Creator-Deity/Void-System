@@ -1,10 +1,11 @@
-"""HTTP adapter for the user-facing Task Workspace."""
+"""Compatibility HTTP adapter for retired task and task-chain endpoints."""
 import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
-from api.http.dependencies import get_current_user, get_task_workspace
+from api.http.dependencies import get_current_admin, get_current_user, get_task_workspace
+from api.http.legacy_task_compatibility import legacy_task_metadata
 from api.http.responses import APIResponse, create_success_response
 from api.http.schemas.task_workspace import TaskChainCreate, TaskCreate, TaskProgressUpdate
 from core.task_workspace_contracts import TaskWorkspaceError
@@ -13,7 +14,7 @@ from modules.tasks.workspace import TaskWorkspace
 
 
 logger = logging.getLogger("void-system.task-workspace")
-router = APIRouter(tags=["任务"])
+router = APIRouter(tags=["tasks"])
 
 
 def _translate_error(exc: TaskWorkspaceError) -> VoidSystemException:
@@ -24,7 +25,7 @@ def _translate_error(exc: TaskWorkspaceError) -> VoidSystemException:
     )
 
 
-@router.post("/api/tasks", summary="创建新任务", response_model=APIResponse)
+@router.post("/api/tasks", summary="Create legacy task", response_model=APIResponse)
 async def create_task(
     task_data: TaskCreate,
     current_user: Dict[str, Any] = Depends(get_current_user),
@@ -34,10 +35,18 @@ async def create_task(
         task_id = workspace.create_task(current_user["user_id"], task_data.model_dump())
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
-    return APIResponse(success=True, message="任务创建成功", data={"task_id": task_id})
+    return create_success_response(
+        "Task created",
+        {
+            "task_id": task_id,
+            "migration": legacy_task_metadata(
+                workspace.execution_link(current_user["user_id"], task_id)
+            ),
+        },
+    )
 
 
-@router.get("/api/tasks", summary="获取任务列表", response_model=APIResponse)
+@router.get("/api/tasks", summary="List legacy tasks", response_model=APIResponse)
 async def get_tasks(
     task_status: str | None = Query(None, alias="status"),
     category_id: str | None = None,
@@ -46,20 +55,18 @@ async def get_tasks(
     current_user: Dict[str, Any] = Depends(get_current_user),
     workspace: TaskWorkspace = Depends(get_task_workspace),
 ) -> APIResponse:
-    return APIResponse(
-        success=True,
-        message="任务列表获取成功",
-        data=workspace.list_tasks(
-            current_user["user_id"],
-            task_status=task_status,
-            category_id=category_id,
-            limit=limit,
-            offset=offset,
-        ),
+    data = workspace.list_tasks(
+        current_user["user_id"],
+        task_status=task_status,
+        category_id=category_id,
+        limit=limit,
+        offset=offset,
     )
+    data["migration"] = legacy_task_metadata()
+    return create_success_response("Task list loaded", data)
 
 
-@router.get("/api/tasks/{task_id}", summary="获取任务详情", response_model=APIResponse)
+@router.get("/api/tasks/{task_id}", summary="Get legacy task", response_model=APIResponse)
 async def get_task(
     task_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user),
@@ -69,34 +76,43 @@ async def get_task(
         task = workspace.get_task(current_user["user_id"], task_id)
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
-    return APIResponse(success=True, message="任务详情获取成功", data={"task": task})
+    return create_success_response(
+        "Task loaded",
+        {
+            "task": task,
+            "migration": legacy_task_metadata(
+                workspace.execution_link(current_user["user_id"], task_id)
+            ),
+        },
+    )
 
 
-@router.delete("/api/tasks/{task_id}", summary="删除任务", response_model=APIResponse)
+@router.delete("/api/tasks/{task_id}", summary="Delete legacy task", response_model=APIResponse)
 async def delete_task(
     task_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user),
     workspace: TaskWorkspace = Depends(get_task_workspace),
 ) -> APIResponse:
+    link = workspace.execution_link(current_user["user_id"], task_id)
     try:
         workspace.delete_task(current_user["user_id"], task_id)
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
-    return APIResponse(success=True, message="任务删除成功")
+    return create_success_response("Task deleted", {"migration": legacy_task_metadata(link)})
 
 
-@router.get("/api/task-chains", summary="获取所有任务流程", response_model=APIResponse)
+@router.get("/api/task-chains", summary="List legacy task chains", response_model=APIResponse)
 async def get_task_chains(
     current_user: Dict[str, Any] = Depends(get_current_user),
     workspace: TaskWorkspace = Depends(get_task_workspace),
 ) -> APIResponse:
     return create_success_response(
-        "任务流程获取成功",
-        {"chains": workspace.list_chains(current_user["user_id"])},
+        "Task chains loaded",
+        {"chains": workspace.list_chains(current_user["user_id"]), "migration": legacy_task_metadata()},
     )
 
 
-@router.post("/api/task-chains", summary="创建任务流程", response_model=APIResponse)
+@router.post("/api/task-chains", summary="Create legacy task chain", response_model=APIResponse)
 async def create_task_chain(
     chain_data: TaskChainCreate,
     background_tasks: BackgroundTasks,
@@ -104,21 +120,21 @@ async def create_task_chain(
     workspace: TaskWorkspace = Depends(get_task_workspace),
 ) -> APIResponse:
     user_id = current_user["user_id"]
-    values = chain_data.model_dump()
     try:
-        creation = workspace.create_chain(user_id, values)
+        creation = workspace.create_chain(user_id, chain_data.model_dump())
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
 
+    data = {
+        "chain_id": creation.chain_id,
+        "task_count": creation.task_count,
+        "generation_status": creation.generation_status,
+        "migration": legacy_task_metadata(
+            workspace.chain_execution_link(user_id, creation.chain_id)
+        ),
+    }
     if chain_data.steps:
-        return create_success_response(
-            "任务流程及任务发布成功",
-            {
-                "chain_id": creation.chain_id,
-                "task_count": creation.task_count,
-                "generation_status": creation.generation_status,
-            },
-        )
+        return create_success_response("Task chain created", data)
 
     if chain_data.target_goal:
         def generate_tasks() -> None:
@@ -130,38 +146,29 @@ async def create_task_chain(
                     current_user,
                 )
             except TaskWorkspaceError as exc:
-                logger.warning(
-                    "Task chain generation failed for %s: %s",
-                    creation.chain_id,
-                    exc.code,
-                )
+                logger.warning("Task chain generation failed for %s: %s", creation.chain_id, exc.code)
 
         background_tasks.add_task(generate_tasks)
-        return create_success_response(
-            "Task workflow created; steps are being generated",
-            {"chain_id": creation.chain_id, "generation_status": creation.generation_status},
-        )
+        return create_success_response("Task chain created; steps are being generated", data)
 
-    return create_success_response(
-        "任务流程创建成功",
-        {"chain_id": creation.chain_id, "generation_status": creation.generation_status},
-    )
+    return create_success_response("Task chain created", data)
 
 
-@router.delete("/api/task-chains/{chain_id}", summary="删除任务流程", response_model=APIResponse)
+@router.delete("/api/task-chains/{chain_id}", summary="Delete legacy task chain", response_model=APIResponse)
 async def delete_task_chain(
     chain_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user),
     workspace: TaskWorkspace = Depends(get_task_workspace),
 ) -> APIResponse:
+    link = workspace.chain_execution_link(current_user["user_id"], chain_id)
     try:
         workspace.delete_chain(current_user["user_id"], chain_id)
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
-    return create_success_response("任务流程删除成功")
+    return create_success_response("Task chain deleted", {"migration": legacy_task_metadata(link)})
 
 
-@router.put("/api/tasks/{task_id}/progress", summary="更新任务进度", response_model=APIResponse)
+@router.put("/api/tasks/{task_id}/progress", summary="Update legacy task progress", response_model=APIResponse)
 async def update_task_progress(
     task_id: str,
     progress_data: TaskProgressUpdate,
@@ -175,6 +182,26 @@ async def update_task_progress(
     except TaskWorkspaceError as exc:
         raise _translate_error(exc) from exc
     return create_success_response(
-        "进度更新成功",
-        {"progress": progress_data.progress, "reward_granted": reward_granted},
+        "Task progress updated",
+        {
+            "progress": progress_data.progress,
+            "reward_granted": reward_granted,
+            "migration": legacy_task_metadata(
+                workspace.execution_link(current_user["user_id"], task_id)
+            ),
+        },
     )
+
+
+@router.get(
+    "/api/admin/task-execution/legacy-audit",
+    summary="Legacy task projection audit",
+    response_model=APIResponse,
+)
+async def legacy_task_projection_audit(
+    owner_id: str | None = Query(None),
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+    workspace: TaskWorkspace = Depends(get_task_workspace),
+) -> APIResponse:
+    """Expose a read-only migration audit for operators during the compatibility window."""
+    return create_success_response("Legacy task projection audit loaded", workspace.legacy_execution_audit(owner_id))

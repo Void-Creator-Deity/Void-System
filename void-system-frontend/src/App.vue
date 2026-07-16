@@ -115,11 +115,11 @@ import {
   ArrowRight,
   ChatDotRound,
   Collection,
+  Compass,
   Document,
   Files,
   House,
   List,
-  MagicStick,
   Menu,
   MoreFilled,
   Setting,
@@ -140,8 +140,8 @@ const workspaceNavigation = [
 ]
 
 const assistantNavigation = [
+  { to: '/companion', label: '系统精灵', icon: Compass },
   { to: '/ai', label: '对话', icon: ChatDotRound },
-  { to: '/advisor', label: '行动规划', icon: MagicStick },
   { to: '/qa', label: '知识问答', icon: Collection }
 ]
 const isWorkspaceRoute = computed(() => route.meta.requiresAuth !== false)
@@ -182,46 +182,46 @@ onMounted(() => {
 
 <style scoped>
 .app-shell { min-height: 100vh; background: var(--bg-primary); }
-.app-shell--workspace { display: grid; grid-template-columns: 244px minmax(0, 1fr); }
-.workspace-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; width: 244px; height: 100vh; padding: 22px 14px 14px; border-right: 1px solid var(--border-color); background: var(--bg-secondary); }
-.brand { display: inline-flex; align-items: center; gap: 10px; width: fit-content; border: 0; padding: 0 8px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
-.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; color: #fff; background: var(--color-primary); font-size: 14px; font-weight: 800; box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 22%, transparent); }
-.brand-copy { display: grid; gap: 1px; line-height: 1.15; }
-.brand-copy strong { font-size: 15px; letter-spacing: 0; }
+.app-shell--workspace { display: grid; grid-template-columns: 256px minmax(0, 1fr); }
+.workspace-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; width: 256px; height: 100vh; padding: 26px 16px 16px; border-right: 1px solid var(--border-color-light); background: color-mix(in srgb, var(--bg-secondary) 92%, var(--bg-primary)); }
+.brand { display: inline-flex; align-items: center; gap: 11px; width: fit-content; border: 0; padding: 0 8px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent); border-radius: 9px; color: #fff; background: var(--color-primary); font-size: 14px; font-weight: 800; box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 18%, transparent); }
+.brand-copy { display: grid; gap: 2px; line-height: 1.15; }
+.brand-copy strong { font-size: 15px; letter-spacing: .01em; }
 .brand-copy small { color: var(--text-muted); font-size: 11px; }
-.workspace-nav { display: grid; align-content: start; gap: 3px; margin-top: 34px; }
-.nav-label { margin: 0 10px 7px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
-.nav-label--secondary { margin-top: 20px; }
-.workspace-nav__item { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 1px solid transparent; border-radius: 7px; color: var(--text-secondary); font-size: 14px; text-decoration: none; transition: color .16s ease, background .16s ease, border-color .16s ease; }
-.workspace-nav__item:hover { color: var(--text-primary); background: var(--bg-tertiary); }
-.workspace-nav__item.router-link-exact-active { border-color: color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); font-weight: 700; }
-.workspace-nav__item .el-icon { font-size: 17px; }
-.sidebar-account { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border-color-light); }
-.account-trigger, .mobile-account { display: flex; align-items: center; gap: 9px; width: 100%; border: 1px solid transparent; border-radius: 7px; padding: 7px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.workspace-nav { display: grid; align-content: start; gap: 4px; margin-top: 38px; }
+.nav-label { margin: 0 12px 8px; color: var(--text-muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.nav-label--secondary { margin-top: 24px; }
+.workspace-nav__item { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; color: var(--text-secondary); font-size: 14px; text-decoration: none; transition: color .16s ease, background .16s ease, border-color .16s ease, transform .16s ease; }
+.workspace-nav__item:hover { color: var(--text-primary); background: var(--bg-tertiary); transform: translateX(2px); }
+.workspace-nav__item.router-link-exact-active { border-color: color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); font-weight: 750; }
+.workspace-nav__item .el-icon { width: 18px; color: currentColor; font-size: 17px; }
+.sidebar-account { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-color-light); }
+.account-trigger, .mobile-account { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid transparent; border-radius: 8px; padding: 8px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
 .account-trigger:hover, .mobile-account:hover { border-color: var(--border-color-light); background: var(--bg-tertiary); }
-.account-avatar { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 15%, var(--bg-secondary)); font-size: 12px; font-weight: 800; }
-.account-copy, .mobile-account > span:nth-child(2) { display: grid; gap: 1px; min-width: 0; }
+.account-avatar { display: grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); border-radius: 50%; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 12%, var(--bg-secondary)); font-size: 12px; font-weight: 800; }
+.account-copy, .mobile-account > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
 .account-copy strong, .mobile-account strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .account-copy small, .mobile-account small { color: var(--text-muted); font-size: 11px; }
 .account-caret { margin-left: auto; color: var(--text-muted); }
-.main { min-width: 0; min-height: 100vh; }
+.main { min-width: 0; min-height: 100vh; background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 34%, transparent), transparent 220px); }
 .main--fullbleed { width: 100%; }
 .main-inner--fullbleed { width: 100%; }
 .mobile-header { display: none; }
-.public-header { display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 0 clamp(14px, 4vw, 28px); border-bottom: 1px solid var(--border-color-light); }
+.public-header { display: flex; align-items: center; justify-content: space-between; min-height: 68px; padding: 0 clamp(16px, 4vw, 38px); border-bottom: 1px solid var(--border-color-light); background: var(--bg-secondary); }
 .public-header .brand { padding-left: 0; }
-.public-header__actions { display: flex; align-items: center; gap: 4px; }
+.public-header__actions { display: flex; align-items: center; gap: 6px; }
 .mobile-navigation__header { display: flex; align-items: center; gap: 10px; padding: 4px 0 21px; border-bottom: 1px solid var(--border-color); }
-.mobile-navigation__header > div { display: grid; gap: 1px; }
+.mobile-navigation__header > div { display: grid; gap: 2px; }
 .mobile-navigation__header strong { font-size: 15px; }
 .mobile-navigation__header small { color: var(--text-muted); font-size: 11px; }
-.mobile-navigation__links { display: grid; gap: 4px; padding: 18px 0; }.mobile-navigation__label { margin: 14px 12px 4px; color: var(--text-muted); font-size: 11px; font-weight: 700; }
-.mobile-navigation__links a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px; border-radius: 7px; color: var(--text-secondary); text-decoration: none; font-size: 14px; }
-.mobile-navigation__links a.router-link-exact-active { color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); font-weight: 700; }
+.mobile-navigation__links { display: grid; gap: 4px; padding: 18px 0; }
+.mobile-navigation__label { margin: 14px 12px 4px; color: var(--text-muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.mobile-navigation__links a { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-size: 14px; }
+.mobile-navigation__links a.router-link-exact-active { color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); font-weight: 750; }
 .mobile-account { margin-top: auto; }
 .mobile-account > .el-icon { margin-left: auto; color: var(--text-muted); }
-@media (max-width: 900px) { .app-shell--workspace { display: block; } .workspace-sidebar { display: none; } .mobile-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 14px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--bg-primary) 94%, transparent); backdrop-filter: blur(14px); } .mobile-header .brand { padding-left: 0; } .main { min-height: calc(100vh - 60px); } }
+@media (max-width: 900px) { .app-shell--workspace { display: block; } .workspace-sidebar { display: none; } .mobile-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 0 16px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--bg-primary) 94%, transparent); backdrop-filter: blur(14px); } .mobile-header .brand { padding-left: 0; } .main { min-height: calc(100vh - 62px); } }
 @media (min-width: 901px) { .app-shell--workspace .main { grid-column: 2; } }
-
 @media (max-width: 520px) { .brand-copy small { display: none; } .public-header__actions .el-button:first-child { display: none; } }
 </style>

@@ -27,6 +27,10 @@ Void System is a personal growth workspace. It turns goals and personal knowledg
 - **Task Workflow**: compatibility language for the legacy task endpoints. New backend behavior belongs to Task Execution.
 - **Capability**: a user attribute or skill that planning and rewards may reference.
 - **Reward Settlement**: the one-time, atomic application of coins, experience, and capability growth for a completed task.
+- **Profile Observation**: user-owned, traceable evidence such as a review event or aggregate action pattern. It is not a personality conclusion.
+- **Profile Claim**: a reviewable candidate understanding supported by one or more Profile Observations.
+- **User Override**: a user's confirmation, correction, rejection, or reset of a Profile Claim. It takes precedence over system inference.
+- **Behavior Insight**: an aggregate, first-party task-history pattern presented for review; it never silently becomes a profile fact.
 - **Legacy Adapter**: an implementation that lets a new Core interface use existing database, Chroma, document, or advisor code during migration.
 
 ## Architectural Invariants
@@ -44,7 +48,8 @@ Void System is a personal growth workspace. It turns goals and personal knowledg
 11. Legacy task and task-chain writes are compatibility projections into Task Execution, never an independent source of execution truth.
 12. Schedules and external events create Runs through durable Triggers; they never introduce another execution model.
 13. User steering and follow-up input are durable Run Commands with append-only Events, not transient chat callbacks or process-local queues.
+14. The initial portrait system uses only first-party Workspace evidence, exposes reviewable non-clinical behavior insights, and never auto-writes an effective profile without a user decision.
 
 ## Migration Direction
 
-The codebase is moving from route-centric and database-centric organization to deep domain modules. New behavior should be added behind Core interfaces. Existing implementations may remain behind Legacy Adapters until replaced. Router extraction follows domain ownership: tasks, knowledge, planning, identity, conversations, and administration.
+The codebase now uses deep domain modules and portable Core interfaces as the canonical architecture. New behavior must be added behind those interfaces. Existing implementations may remain behind Legacy Adapters during explicit deprecation windows, but they are compatibility surfaces rather than independent sources of truth. Router ownership is split across tasks, knowledge, planning, identity, conversations, personal context, growth, and administration.

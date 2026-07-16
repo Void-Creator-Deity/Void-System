@@ -106,5 +106,62 @@ class TaskWorkspaceHttpTests(unittest.TestCase):
         self.assertEqual(by_order[1]["prerequisites"], [by_order[0]["task_id"]])
 
 
+    def test_legacy_task_routes_expose_canonical_mapping_and_deprecation(self) -> None:
+        headers = self.login("migration@example.com", "migration")
+        created = self.client.post(
+            "/api/tasks",
+            headers=headers,
+            json={"task_name": "Migrate an existing client"},
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.headers["deprecation"], "true")
+        self.assertIn("/api/goals", created.headers["link"])
+        self.assertIn("2027", created.headers["sunset"])
+        migration = created.json()["data"]["migration"]
+        self.assertTrue(migration["deprecated"])
+        self.assertEqual(migration["adapter"], "legacy-task-execution-projection")
+        self.assertEqual(set(migration["canonical"]), {"goal_id", "run_id", "step_id"})
+
+        task_id = created.json()["data"]["task_id"]
+        detail = self.client.get(f"/api/tasks/{task_id}", headers=headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["data"]["migration"]["canonical"], migration["canonical"])
+
+        denied = self.client.get("/api/tasks/not-owned", headers=headers)
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(denied.headers["deprecation"], "true")
+
+    def test_admin_can_audit_legacy_projection_links(self) -> None:
+        headers = self.login("audit@example.com", "audit")
+        created = self.client.post(
+            "/api/tasks",
+            headers=headers,
+            json={"task_name": "Audit compatibility projection"},
+        )
+        self.assertEqual(created.status_code, 200)
+        database = self.client.app.state.database
+        connection = database.get_connection()
+        try:
+            connection.execute("UPDATE users SET role = 'admin' WHERE username = ?", ("audit",))
+            connection.commit()
+        finally:
+            connection.close()
+
+        audit = self.client.get(
+            "/api/admin/task-execution/legacy-audit",
+            headers=headers,
+        )
+        self.assertEqual(audit.status_code, 200)
+        data = audit.json()["data"]
+        self.assertEqual(data["summary"]["owner_count"], 1)
+        self.assertEqual(data["summary"]["task_link_count"], 1)
+        self.assertEqual(data["summary"]["task_status_counts"], {"pending": 1})
+        link = data["tasks"][0]
+        self.assertEqual(
+            {key: link[key] for key in ("goal_id", "run_id", "step_id")},
+            created.json()["data"]["migration"]["canonical"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

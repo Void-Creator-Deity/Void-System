@@ -25,6 +25,12 @@ def _json(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
 
 
+def _observation_range(row: Optional[sqlite3.Row]) -> Dict[str, Optional[str]]:
+    if row is None:
+        return {"observed_from": None, "observed_to": None}
+    return {"observed_from": row["observed_from"], "observed_to": row["observed_to"]}
+
+
 def _decode(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
@@ -190,21 +196,34 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
     def create_goal(self, user_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
         goal_id = str(uuid.uuid4())
         now = _now()
+        idempotency_key = values.get("idempotency_key")
         conn = self._connection_factory()
         try:
+            conn.execute("BEGIN IMMEDIATE")
+            if idempotency_key:
+                existing = conn.execute(
+                    "SELECT * FROM task_goals WHERE user_id = ? AND idempotency_key = ?",
+                    (user_id, idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    conn.rollback()
+                    return _decode(existing) or {}
             conn.execute(
                 """INSERT INTO task_goals
                    (goal_id, user_id, title, description, desired_outcome, status,
-                    priority, metadata, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+                    priority, idempotency_key, metadata, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)""",
                 (
                     goal_id, user_id, values["title"], values.get("description", ""),
                     values.get("desired_outcome", ""), values.get("priority", "medium"),
-                    _json(values.get("metadata")), now, now,
+                    idempotency_key, _json(values.get("metadata")), now, now,
                 ),
             )
             conn.commit()
             return self.get_goal(user_id, goal_id) or {}
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -254,16 +273,44 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
             return False
         assignments = [f"{field} = ?" for field in fields]
         params = [_json(values[field]) if field == "metadata" else values[field] for field in fields]
-        assignments.append("updated_at = ?")
-        params.extend((_now(), goal_id, user_id))
         conn = self._connection_factory()
         try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = _decode(conn.execute(
+                "SELECT * FROM task_goals WHERE goal_id = ? AND user_id = ?", (goal_id, user_id)
+            ).fetchone())
+            if existing is None:
+                conn.rollback()
+                return False
+            changed_fields = [field for field in fields if existing.get(field) != values[field]]
+            now = _now()
+            assignments.append("updated_at = ?")
+            params.extend((now, goal_id, user_id))
             cursor = conn.execute(
                 f"UPDATE task_goals SET {', '.join(assignments)} WHERE goal_id = ? AND user_id = ?",
                 params,
             )
+            if cursor.rowcount and changed_fields:
+                planning_fields = {"title", "description", "desired_outcome", "priority"}
+                change_kind = (
+                    "plan_refined" if planning_fields.intersection(changed_fields)
+                    else "status_changed" if "status" in changed_fields
+                    else "metadata_changed"
+                )
+                conn.execute(
+                    """INSERT INTO task_goal_changes
+                       (change_id, goal_id, user_id, change_kind, changed_fields, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        str(uuid.uuid4()), goal_id, user_id, change_kind,
+                        _json(sorted(changed_fields)), now,
+                    ),
+                )
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -381,6 +428,121 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                 params,
             ).fetchall()
             return [_decode(row) or {} for row in rows]
+        finally:
+            conn.close()
+
+    def summarize_profile_behavior(self, user_id: str) -> Dict[str, Any]:
+        """Return aggregate execution signals without exposing review text or artifacts."""
+        conn = self._connection_factory()
+        try:
+            totals = conn.execute(
+                """SELECT
+                       COUNT(*) AS run_count,
+                       COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0)
+                           AS completed_run_count,
+                       COALESCE(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0)
+                           AS cancelled_run_count,
+                       COALESCE(SUM(CASE WHEN mode = 'agent' THEN 1 ELSE 0 END), 0)
+                           AS agent_run_count,
+                       MIN(created_at) AS observed_from,
+                       MAX(COALESCE(completed_at, updated_at, created_at)) AS observed_to
+                   FROM task_runs WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+            steps = conn.execute(
+                """SELECT
+                       COUNT(*) AS step_count,
+                       COALESCE(SUM(CASE WHEN status IN ('completed', 'skipped') THEN 1 ELSE 0 END), 0)
+                           AS finished_step_count,
+                       MIN(created_at) AS observed_from,
+                       MAX(COALESCE(completed_at, updated_at, created_at)) AS observed_to
+                   FROM task_steps WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+            reviews = conn.execute(
+                """SELECT
+                       COUNT(*) AS review_count,
+                       COALESCE(SUM(CASE WHEN next_action <> '' THEN 1 ELSE 0 END), 0)
+                           AS review_with_next_action_count,
+                       COALESCE(SUM(CASE WHEN notes <> '' THEN 1 ELSE 0 END), 0)
+                           AS review_with_notes_count,
+                       AVG(rating) AS average_rating,
+                       MIN(created_at) AS observed_from,
+                       MAX(updated_at) AS observed_to
+                   FROM task_run_reviews WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+            event_rows = conn.execute(
+                """SELECT event_type, COUNT(*) AS event_count,
+                          MIN(created_at) AS observed_from,
+                          MAX(created_at) AS observed_to
+                   FROM task_events
+                   WHERE user_id = ? AND event_type IN ('run.paused', 'run.resumed', 'run.retry_requested')
+                   GROUP BY event_type""",
+                (user_id,),
+            ).fetchall()
+            events = {
+                str(row["event_type"]): {
+                    "count": int(row["event_count"]),
+                    "observed_from": row["observed_from"],
+                    "observed_to": row["observed_to"],
+                }
+                for row in event_rows
+            }
+            approvals = conn.execute(
+                """SELECT
+                       COUNT(CASE WHEN status IN ('approved', 'rejected') THEN 1 END) AS approval_count,
+                       COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0)
+                           AS approved_approval_count,
+                       COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0)
+                           AS rejected_approval_count,
+                       MIN(CASE WHEN status IN ('approved', 'rejected') THEN resolved_at END) AS observed_from,
+                       MAX(CASE WHEN status IN ('approved', 'rejected') THEN resolved_at END) AS observed_to
+                   FROM task_approvals WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+            goal_changes = conn.execute(
+                """SELECT
+                       COUNT(*) AS goal_change_count,
+                       COALESCE(SUM(CASE WHEN change_kind = 'plan_refined' THEN 1 ELSE 0 END), 0)
+                           AS goal_plan_refinement_count,
+                       COUNT(DISTINCT CASE WHEN change_kind = 'plan_refined' THEN goal_id END)
+                           AS refined_goal_count,
+                       MIN(CASE WHEN change_kind = 'plan_refined' THEN created_at END) AS observed_from,
+                       MAX(CASE WHEN change_kind = 'plan_refined' THEN created_at END) AS observed_to
+                   FROM task_goal_changes WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+            return {
+                "run_count": int(totals['run_count'] or 0),
+                "completed_run_count": int(totals['completed_run_count'] or 0),
+                "cancelled_run_count": int(totals['cancelled_run_count'] or 0),
+                "agent_run_count": int(totals['agent_run_count'] or 0),
+                "step_count": int(steps['step_count'] or 0),
+                "finished_step_count": int(steps['finished_step_count'] or 0),
+                "review_count": int(reviews['review_count'] or 0),
+                "review_with_next_action_count": int(reviews['review_with_next_action_count'] or 0),
+                "review_with_notes_count": int(reviews['review_with_notes_count'] or 0),
+                "average_rating": float(reviews['average_rating']) if reviews['average_rating'] is not None else None,
+                "pause_count": events.get('run.paused', {}).get("count", 0),
+                "resume_count": events.get('run.resumed', {}).get("count", 0),
+                "retry_count": events.get('run.retry_requested', {}).get("count", 0),
+                "approval_count": int(approvals['approval_count'] or 0),
+                "approved_approval_count": int(approvals['approved_approval_count'] or 0),
+                "rejected_approval_count": int(approvals['rejected_approval_count'] or 0),
+                "goal_change_count": int(goal_changes['goal_change_count'] or 0),
+                "goal_plan_refinement_count": int(goal_changes['goal_plan_refinement_count'] or 0),
+                "refined_goal_count": int(goal_changes['refined_goal_count'] or 0),
+                "observation_ranges": {
+                    "runs": _observation_range(totals),
+                    "steps": _observation_range(steps),
+                    "reviews": _observation_range(reviews),
+                    "pauses": events.get("run.paused", _observation_range(None)),
+                    "resumes": events.get("run.resumed", _observation_range(None)),
+                    "approvals": _observation_range(approvals),
+                    "goal_plan_refinements": _observation_range(goal_changes),
+                },
+            }
         finally:
             conn.close()
 
@@ -719,6 +881,84 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
             return [_decode(row) or {} for row in conn.execute(
                 "SELECT * FROM task_events WHERE run_id = ? AND user_id = ? ORDER BY created_at, event_id",
                 (run_id, user_id),
+            ).fetchall()]
+        finally:
+            conn.close()
+
+    def get_run_review(self, user_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._connection_factory()
+        try:
+            return _decode(conn.execute(
+                "SELECT * FROM task_run_reviews WHERE run_id = ? AND user_id = ?",
+                (run_id, user_id),
+            ).fetchone())
+        finally:
+            conn.close()
+
+    def upsert_run_review(
+        self,
+        user_id: str,
+        run_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        conn = self._connection_factory()
+        now = _now()
+        try:
+            existing = conn.execute(
+                "SELECT * FROM task_run_reviews WHERE run_id = ? AND user_id = ?",
+                (run_id, user_id),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """INSERT INTO task_run_reviews
+                       (run_id, user_id, outcome, rating, notes, next_action, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run_id,
+                        user_id,
+                        values.get("outcome"),
+                        values.get("rating"),
+                        values.get("notes", ""),
+                        values.get("next_action", ""),
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """UPDATE task_run_reviews
+                       SET outcome = ?, rating = ?, notes = ?, next_action = ?, updated_at = ?
+                       WHERE run_id = ? AND user_id = ?""",
+                    (
+                        values.get("outcome"),
+                        values.get("rating"),
+                        values.get("notes", ""),
+                        values.get("next_action", ""),
+                        now,
+                        run_id,
+                        user_id,
+                    ),
+                )
+            conn.commit()
+            return _decode(conn.execute(
+                "SELECT * FROM task_run_reviews WHERE run_id = ? AND user_id = ?",
+                (run_id, user_id),
+            ).fetchone()) or {}
+        finally:
+            conn.close()
+
+    def list_run_reward_settlements(
+        self, user_id: str, run_id: str
+    ) -> Sequence[Dict[str, Any]]:
+        conn = self._connection_factory()
+        try:
+            return [_decode(row) or {} for row in conn.execute(
+                """SELECT settlement_id, task_id, run_id, step_id, coins, experience,
+                          attribute_increments, source, created_at
+                   FROM task_reward_settlements
+                   WHERE user_id = ? AND run_id = ?
+                   ORDER BY created_at, settlement_id""",
+                (user_id, run_id),
             ).fetchall()]
         finally:
             conn.close()

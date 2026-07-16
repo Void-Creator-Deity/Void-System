@@ -26,6 +26,7 @@ schema details. Page components should consume the API modules in
 | Goals and execution | `goals.js`, `runs.js` | `/goals`, `/goals/{goal_id}/runs`, `/runs/*`, `/approvals/*` |
 | Planning | `plans.js` | `/plans` |
 | Automation and steering | `triggers.js`, Run methods in `runs.js` | `/triggers/*`, `/runs/{run_id}/commands/*` |
+| System companion and personal context | `companion.js` | `/companion/settings`, `/companion/briefing`, `/companion/context`, `/companion/profile/*`, `/companion/memories/*` |
 | Legacy task compatibility | no first-party page client | `/task-categories`, `/task-chains`, `/tasks`, `/ai/advisor` |
 | Growth profile and points | `growthProfile.js` | `/attributes`, `/coins/balance`, `/coins/history`, `/coins/stats` |
 | Conversations | `chat.js`, `session.js` | `/chat/groups`, `/chat/sessions`, `/chat/messages` |
@@ -77,6 +78,37 @@ Do not call `/api/lc/qa` or use `type: "qa"` with `/api/stream-chat`.
 They are intentionally retired and return a migration response. Use
 `/api/user/qa/ask` or the shared system knowledge routes above.
 
+## System Companion and Personal Context
+
+The companion is a permissioned context gateway. It reads only the user-approved
+sections requested by the client and returns provenance, selection reasons, and
+access records; it is not a hidden channel for unrestricted profile or document
+access.
+
+- Settings: use `GET` and `PUT /companion/settings`. The `permissions` object
+  is the source of truth for what may enter a briefing or context snapshot. Keep
+  profile analysis opt-in; do not enable it on behalf of a user.
+- Briefing and context: use `GET /companion/briefing` for the primary companion
+  surface and `GET /companion/context` when a page needs a bounded, explicitly
+  requested section set. Render the returned explanations instead of exposing
+  internal ranking details.
+- Profile: use `GET /companion/profile` and `GET /companion/profile/suggestions`.
+  Suggestions are reviewable first-party patterns, not facts. The UI must offer
+  confirm, correct, or reject actions through the matching review endpoint and
+  must never silently promote a suggestion.
+- Memory: use `GET` and `POST /companion/memories` for user-authored memory.
+  System-created candidates are available from `GET /companion/memories/suggestions`
+  and must be confirmed, corrected, or rejected through
+  `PATCH /companion/memories/{memory_id}/review` before use in context.
+  `DELETE /companion/memories/{memory_id}` archives; permanent removal is the
+  separate `DELETE /companion/memories/{memory_id}/purge` operation and only
+  applies after archival.
+- Expiry: an expired active memory remains visible to its owner but is excluded
+  from context. Updating `expires_at` through `PATCH /companion/memories/{memory_id}`
+  may make it context-eligible again when it is otherwise active and confirmed.
+- Access history: `GET /companion/access-log` is for transparent explanation of
+  companion data use. Do not infer user preferences from raw log text in the UI.
+
 ## Goal and Run Execution
 
 Task Execution is the canonical contract for new work. A simple personal task is a
@@ -121,7 +153,7 @@ Task Automation adds entry conditions and user steering to canonical Runs. It do
 ## AI and Streaming
 
 - Conversation streaming: `POST /stream-chat` with `type: "persona"`. This is an SSE response; consume `message`, `done`, and `error` events.
-- Canonical planning: `POST /plans` with `{ topic, execution_mode, max_steps }`. It returns a reviewable `{ goal, run, summary, estimated_duration, meta }` specification that can be published through the Goal and Run endpoints.
+- Canonical planning: `POST /plans` with `{ topic, execution_mode, max_steps }`. It returns a reviewable `{ goal, run, summary, estimated_duration, meta }` specification only; this request never creates a Goal, Run, legacy task, or task chain. Publish the user-reviewed draft through the Goal and Run endpoints.
 - Legacy planning: `POST /ai/advisor` with `{ topic, force_mode }` remains compatible and returns `{ mode, query, response, estimated_duration, tasks, meta }`. The first-party frontend no longer branches its architecture on `single_task` or `workflow_chain`; do not reintroduce that split.
 - Task progress: `PUT /tasks/{task_id}/progress` with `{ progress: 0..100 }`. Progress tasks complete automatically at 100%.
 - AI-evaluated task completion: `POST /tasks/{task_id}/ai-evaluate` with submitted evidence. Never call the generic status endpoint to complete one.

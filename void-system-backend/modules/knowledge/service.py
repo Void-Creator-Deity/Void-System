@@ -81,7 +81,10 @@ def create_user_knowledge_resources(
     )
     maintenance = LegacyUserKnowledgeMaintenance(document_manager, vector_manager)
     workspace = KnowledgeWorkspace(repository, maintenance, lifecycle_repository)
-    engine_kwargs = {"trace_recorder": lifecycle_repository}
+    engine_kwargs = {
+        "trace_recorder": lifecycle_repository,
+        "use_recorder": lifecycle_repository,
+    }
     if settings is not None:
         engine_kwargs["settings"] = settings
     engine = build_legacy_user_knowledge_engine(

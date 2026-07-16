@@ -348,3 +348,31 @@ def get_user_knowledge_workspace(
             workspace = create_user_knowledge_workspace(db, settings)
             request.app.state.user_knowledge_workspace = workspace
     return workspace
+
+
+def get_personal_context(
+    db: Database = Depends(get_db),
+    task_execution: Any = Depends(get_task_execution),
+    growth_profile: Any = Depends(get_growth_profile),
+    knowledge_workspace: Any = Depends(get_user_knowledge_workspace),
+):
+    """Compose permissioned personal context over public Workspace Core modules."""
+    from adapters.sqlite.knowledge_lifecycle_repository import SQLiteKnowledgeLifecycleRepository
+    from adapters.sqlite.personal_context_repository import SQLitePersonalContextRepository
+    from modules.personal_context.behavior_insights import BehaviorInsightEngine
+    from modules.personal_context.context import ContextAssembler
+    from modules.personal_context.profile import ProfileCognition
+    from modules.personal_context.service import PersonalContext
+
+    repository = SQLitePersonalContextRepository(db.get_connection)
+    assembler = ContextAssembler(task_execution, growth_profile, knowledge_workspace)
+    profile_cognition = ProfileCognition(repository)
+    return PersonalContext(
+        repository,
+        assembler,
+        profile_cognition,
+        behavior_insights=BehaviorInsightEngine(
+            task_execution,
+            knowledge=SQLiteKnowledgeLifecycleRepository(db.get_connection),
+        ),
+    )

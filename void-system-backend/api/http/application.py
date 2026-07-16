@@ -26,6 +26,7 @@ from api.http.routers.identity import router as identity_router
 from api.http.routers.knowledge import router as knowledge_router
 from api.http.routers.knowledge_administration import router as knowledge_administration_router
 from api.http.routers.planning import router as planning_router
+from api.http.routers.personal_context import router as personal_context_router
 from api.http.routers.reward_marketplace import router as reward_marketplace_router
 from api.http.routers.session_files import router as session_files_router
 from api.http.routers.system import router as system_router
@@ -163,6 +164,10 @@ def _register_request_middleware(app: FastAPI) -> None:
         )
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Process-Time"] = f"{process_time:.2f}ms"
+        if request.url.path == "/api/tasks" or request.url.path.startswith("/api/tasks/") or request.url.path == "/api/task-chains" or request.url.path.startswith("/api/task-chains/"):
+            from api.http.legacy_task_compatibility import mark_legacy_task_response_headers
+
+            mark_legacy_task_response_headers(response)
         return response
 
 
@@ -287,6 +292,7 @@ def create_app(options: Optional[ApplicationOptions] = None) -> FastAPI:
         reward_marketplace_router,
         knowledge_router,
         planning_router,
+        personal_context_router,
     ):
         app.include_router(router)
     if options.enable_ai_routes:

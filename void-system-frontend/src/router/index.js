@@ -9,8 +9,8 @@ import { isLoggedIn } from '@/api/user'
 
 // 路由懒加载（按需加载组件，优化首屏加载速度）
 const Home = () => import('@/pages/Home.vue')
+const Companion = () => import('@/pages/Companion.vue')
 const AIConsole = () => import('@/pages/AIConsole.vue')
-const Advisor = () => import('@/pages/Advisor.vue')
 const TaskWorkspace = () => import('@/pages/TaskWorkspace.vue')
 const QA = () => import('@/pages/QA.vue')
 const DocumentManager = () => import('@/pages/DocumentManager.vue')
@@ -54,6 +54,15 @@ const routes = [
     }
   },
   {
+    path: '/companion',
+    name: 'Companion',
+    component: Companion,
+    meta: {
+      requiresAuth: true,
+      title: '系统精灵'
+    }
+  },
+  {
     path: '/ai',
     name: 'AIConsole',
     component: AIConsole,
@@ -75,8 +84,8 @@ const routes = [
   {
     path: '/advisor',
     name: 'Advisor',
-    component: Advisor,
-    meta: { 
+    redirect: { path: '/tasks', query: { view: 'plan' } },
+    meta: {
       requiresAuth: true,
       title: '行动规划'
     }

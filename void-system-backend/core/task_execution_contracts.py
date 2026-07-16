@@ -43,6 +43,28 @@ class StepSpec:
     client_key: Optional[str] = None
 
 
+class RunReviewObservationSink(Protocol):
+    """Receives noncritical evidence derived from a saved Run review."""
+
+    def record_run_review(
+        self,
+        owner_id: str,
+        run: Mapping[str, Any],
+        review: Mapping[str, Any],
+    ) -> None: ...
+
+
+class RunReviewMemoryCandidateSink(Protocol):
+    """Proposes reviewable memory without changing Run review durability."""
+
+    def propose_run_review_memory(
+        self,
+        owner_id: str,
+        run: Mapping[str, Any],
+        review: Mapping[str, Any],
+    ) -> None: ...
+
+
 class TaskExecutionRepository(Protocol):
     """Persistence Interface required by the Task Execution Module."""
 
@@ -66,6 +88,7 @@ class TaskExecutionRepository(Protocol):
         status: Optional[str] = None,
     ) -> Sequence[Dict[str, Any]]: ...
     def get_run(self, user_id: str, run_id: str) -> Optional[Dict[str, Any]]: ...
+    def summarize_profile_behavior(self, user_id: str) -> Dict[str, Any]: ...
     def compare_and_set_run_status(
         self,
         user_id: str,
@@ -136,6 +159,17 @@ class TaskExecutionRepository(Protocol):
         payload: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]: ...
     def list_events(self, user_id: str, run_id: str) -> Sequence[Dict[str, Any]]: ...
+
+    def get_run_review(self, user_id: str, run_id: str) -> Optional[Dict[str, Any]]: ...
+    def upsert_run_review(
+        self,
+        user_id: str,
+        run_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]: ...
+    def list_run_reward_settlements(
+        self, user_id: str, run_id: str
+    ) -> Sequence[Dict[str, Any]]: ...
 
     def create_action(
         self,

@@ -214,5 +214,222 @@ class TaskExecutionProjectionTests(unittest.TestCase):
             self.assertEqual(step["status"], "ready")
 
 
+    def test_new_legacy_writes_start_from_canonical_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "canonical-first.db")
+            self._create_user(database, "owner")
+            task_id = database.add_task("owner", "Canonical-first task")
+            chain_id = database.create_task_chain("owner", "Canonical-first workflow")
+            database.create_task_chain_steps(
+                "owner", chain_id, [self._step("Prepare"), self._step("Confirm")]
+            )
+
+            connection = database.get_connection()
+            try:
+                task_run = connection.execute(
+                    """SELECT run_id FROM legacy_task_execution_links
+                       WHERE legacy_task_id = ?""",
+                    (task_id,),
+                ).fetchone()
+                chain_run = connection.execute(
+                    """SELECT run_id FROM legacy_chain_execution_links
+                       WHERE legacy_chain_id = ?""",
+                    (chain_id,),
+                ).fetchone()
+                task_events = {
+                    row["event_type"]
+                    for row in connection.execute(
+                        "SELECT event_type FROM task_events WHERE run_id = ?",
+                        (task_run["run_id"],),
+                    ).fetchall()
+                }
+                chain_events = {
+                    row["event_type"]
+                    for row in connection.execute(
+                        "SELECT event_type FROM task_events WHERE run_id = ?",
+                        (chain_run["run_id"],),
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertIn("legacy.task_canonical_created", task_events)
+            self.assertNotIn("legacy.task_projected", task_events)
+            self.assertIn("legacy.chain_canonical_created", chain_events)
+            self.assertNotIn("legacy.chain_projected", chain_events)
+
+    def test_compatibility_updates_follow_canonical_step_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "canonical-first-updates.db")
+            self._create_user(database, "owner")
+            task_id = database.add_task("owner", "Verify compatibility ordering")
+            connection = database.get_connection()
+            try:
+                link = connection.execute(
+                    "SELECT step_id FROM legacy_task_execution_links WHERE legacy_task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                step_id = str(link["step_id"])
+                connection.executescript(
+                    f"""
+                    CREATE TRIGGER canonical_status_before_legacy
+                    BEFORE UPDATE OF status ON tasks
+                    WHEN NEW.task_id = '{task_id}'
+                         AND NEW.status = 'in_progress'
+                         AND COALESCE((SELECT status FROM task_steps
+                                       WHERE step_id = '{step_id}'), '') != 'running'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'canonical status must be written first');
+                    END;
+                    CREATE TRIGGER canonical_progress_before_legacy
+                    BEFORE UPDATE OF current_progress ON tasks
+                    WHEN NEW.task_id = '{task_id}'
+                         AND COALESCE((SELECT progress FROM task_steps
+                                       WHERE step_id = '{step_id}'), -1) != NEW.current_progress
+                    BEGIN
+                        SELECT RAISE(ABORT, 'canonical progress must be written first');
+                    END;
+                    CREATE TRIGGER canonical_proof_before_legacy
+                    BEFORE UPDATE OF proof_data ON tasks
+                    WHEN NEW.task_id = '{task_id}'
+                         AND COALESCE((SELECT status FROM task_steps
+                                       WHERE step_id = '{step_id}'), '') != 'waiting_approval'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'canonical proof state must be written first');
+                    END;
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            self.assertTrue(database.update_task_status(task_id, "owner", "in_progress"))
+            self.assertTrue(database.update_task_progress(task_id, "owner", 55))
+            self.assertTrue(database.submit_task_proof(task_id, "owner", {"note": "verified"}))
+            connection = database.get_connection()
+            try:
+                events = {
+                    row["event_type"]
+                    for row in connection.execute(
+                        "SELECT event_type FROM task_events WHERE step_id = ?", (step_id,)
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+            self.assertIn("legacy.task.progress_updated", events)
+
+    def test_chain_append_creates_canonical_steps_before_compatibility_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "canonical-chain-append.db")
+            self._create_user(database, "owner")
+            chain_id = database.create_task_chain("owner", "Release workflow")
+            first_ids = database.create_task_chain_steps(
+                "owner", chain_id, [self._step("Prepare"), self._step("Review")]
+            )
+            appended_ids = database.create_task_chain_steps(
+                "owner", chain_id, [self._step("Publish")]
+            )
+            self.assertEqual(len(appended_ids), 1)
+
+            connection = database.get_connection()
+            try:
+                rows = connection.execute(
+                    """SELECT task_id, chain_order FROM tasks
+                       WHERE chain_id = ? AND user_id = ? ORDER BY chain_order""",
+                    (chain_id, "owner"),
+                ).fetchall()
+                appended_link = connection.execute(
+                    "SELECT run_id, step_id FROM legacy_task_execution_links WHERE legacy_task_id = ?",
+                    (appended_ids[0],),
+                ).fetchone()
+                previous_link = connection.execute(
+                    "SELECT step_id FROM legacy_task_execution_links WHERE legacy_task_id = ?",
+                    (first_ids[-1],),
+                ).fetchone()
+                dependency = connection.execute(
+                    """SELECT 1 FROM task_step_dependencies
+                       WHERE run_id = ? AND step_id = ? AND depends_on_step_id = ?""",
+                    (appended_link["run_id"], appended_link["step_id"], previous_link["step_id"]),
+                ).fetchone()
+                events = {
+                    row["event_type"]
+                    for row in connection.execute(
+                        "SELECT event_type FROM task_events WHERE run_id = ?",
+                        (appended_link["run_id"],),
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual([int(row["chain_order"]) for row in rows], [1, 2, 3])
+            self.assertIsNotNone(dependency)
+            self.assertIn("legacy.chain_canonical_extended", events)
+            self.assertNotIn("legacy.chain_extended", events)
+    def test_moving_a_task_to_a_chain_creates_target_step_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "canonical-task-move.db")
+            self._create_user(database, "owner")
+            task_id = database.add_task("owner", "Standalone task")
+            chain_id = database.create_task_chain("owner", "Release workflow")
+            chain_task_ids = database.create_task_chain_steps(
+                "owner", chain_id, [self._step("Prepare"), self._step("Review")]
+            )
+            connection = database.get_connection()
+            try:
+                connection.executescript(
+                    f"""
+                    CREATE TRIGGER canonical_move_before_compatibility_update
+                    BEFORE UPDATE OF chain_id ON tasks
+                    WHEN NEW.task_id = '{task_id}' AND NEW.chain_id = '{chain_id}'
+                         AND NOT EXISTS (
+                             SELECT 1 FROM task_events
+                             WHERE event_type = 'legacy.chain_canonical_extended'
+                         )
+                    BEGIN
+                        SELECT RAISE(ABORT, 'target canonical step must be written first');
+                    END;
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            self.assertTrue(database.add_task_to_chain(task_id, chain_id, 3))
+            connection = database.get_connection()
+            try:
+                task = connection.execute(
+                    "SELECT chain_id, chain_order, prerequisites FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                link = connection.execute(
+                    """SELECT legacy_chain_id, run_id, step_id
+                       FROM legacy_task_execution_links WHERE legacy_task_id = ?""",
+                    (task_id,),
+                ).fetchone()
+                previous_link = connection.execute(
+                    "SELECT step_id FROM legacy_task_execution_links WHERE legacy_task_id = ?",
+                    (chain_task_ids[-1],),
+                ).fetchone()
+                dependency = connection.execute(
+                    """SELECT 1 FROM task_step_dependencies
+                       WHERE run_id = ? AND step_id = ? AND depends_on_step_id = ?""",
+                    (link["run_id"], link["step_id"], previous_link["step_id"]),
+                ).fetchone()
+                events = {
+                    row["event_type"]
+                    for row in connection.execute(
+                        "SELECT event_type FROM task_events WHERE run_id = ?",
+                        (link["run_id"],),
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual((task["chain_id"], int(task["chain_order"])), (chain_id, 3))
+            self.assertEqual(json.loads(task["prerequisites"]), [chain_task_ids[-1]])
+            self.assertEqual(link["legacy_chain_id"], chain_id)
+            self.assertIsNotNone(dependency)
+            self.assertIn("legacy.chain_canonical_extended", events)
+
 if __name__ == "__main__":
     unittest.main()

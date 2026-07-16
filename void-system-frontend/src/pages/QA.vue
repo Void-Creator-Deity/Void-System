@@ -53,6 +53,15 @@
           <span>正在查找相关依据并整理答案...</span>
         </div>
 
+        <div v-else-if="errorMessage" class="answer-error" role="alert">
+          <el-icon><WarningFilled /></el-icon>
+          <div>
+            <h2>这次没有连上知识服务</h2>
+            <p>{{ errorMessage }}</p>
+          </div>
+          <el-button :icon="Refresh" @click="ask">重新提问</el-button>
+        </div>
+
         <article v-else-if="result" class="answer-panel">
           <header class="answer-panel__header">
             <div>
@@ -96,7 +105,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Collection, Document, DocumentAdd, Loading, Promotion, Reading } from '@element-plus/icons-vue'
+import { Collection, Document, DocumentAdd, Loading, Promotion, Reading, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { sharedKnowledgeApi } from '@/api/knowledge'
 import { formatAxiosErrorMessage } from '@/utils/apiPayload'
@@ -107,6 +116,7 @@ const question = ref('')
 const scope = ref('personal')
 const isLoading = ref(false)
 const result = ref(null)
+const errorMessage = ref('')
 
 const scopes = [
   { value: 'personal', label: '我的资料', description: '你上传的文档', icon: Document },
@@ -122,6 +132,7 @@ function selectScope(nextScope) {
   if (scope.value === nextScope) return
   scope.value = nextScope
   result.value = null
+  errorMessage.value = ''
 }
 
 function normalizeSources(sources = []) {
@@ -138,6 +149,7 @@ async function ask() {
 
   isLoading.value = true
   result.value = null
+  errorMessage.value = ''
   try {
     const data = scope.value === 'personal'
       ? await documentApi.ask(text)
@@ -149,6 +161,7 @@ async function ask() {
     }
   } catch (error) {
     const message = formatAxiosErrorMessage(error, '知识服务暂时不可用。')
+    errorMessage.value = `${message} 你的问题还保留在输入框中，可以直接重试。`
     ElMessage.error(message)
   } finally {
     isLoading.value = false
@@ -184,6 +197,7 @@ h2 { font-size: 21px; }
 .ask-form__footer { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-top: 14px; }
 .ask-form__footer > span { color: var(--text-muted); font-size: 12px; }
 .answer-loading, .knowledge-empty { display: grid; justify-items: center; gap: 12px; padding: 76px 22px; color: var(--text-muted); text-align: center; }
+.answer-error { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:14px; margin-top:22px; padding:18px; border:1px solid color-mix(in srgb,var(--color-danger) 24%,var(--border-color)); border-radius:7px; background:color-mix(in srgb,var(--color-danger) 5%,var(--bg-secondary)); }.answer-error > .el-icon { color:var(--color-danger); font-size:22px; }.answer-error h2 { margin:0 0 4px; font-size:15px; }.answer-error p { margin:0; color:var(--text-secondary); font-size:13px; line-height:1.55; }
 .answer-loading { grid-template-columns: auto auto; justify-content: center; }
 .answer-loading .el-icon { color: var(--color-primary); font-size: 19px; }
 .answer-panel { margin-top: 26px; border-top: 2px solid var(--color-primary); }
@@ -205,5 +219,5 @@ h2 { font-size: 21px; }
 .knowledge-empty h2 { color: var(--text-primary); }
 .knowledge-empty p { max-width: 440px; color: var(--text-secondary); font-size: 14px; }
 @media (max-width: 820px) { .knowledge-page { padding-top: 28px; } .knowledge-page__header { align-items: flex-start; flex-direction: column; } .knowledge-workspace { grid-template-columns: 1fr; gap: 20px; } .knowledge-scope { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { h1 { font-size: 32px; } .knowledge-page { padding-bottom: 36px; } .knowledge-page__header { padding-bottom: 22px; } .knowledge-page__header > .el-button { width: 100%; } .knowledge-scope { grid-template-columns: 1fr; } .ask-form { padding: 14px; } .ask-form__footer { align-items: stretch; flex-direction: column; } .ask-form__footer .el-button { width: 100%; } .sources li { align-items: flex-start; } }
+@media (max-width: 560px) { h1 { font-size: 32px; } .answer-error { grid-template-columns:auto minmax(0,1fr); }.answer-error .el-button { grid-column:1/-1; width:100%; } .knowledge-page { padding-bottom: 36px; } .knowledge-page__header { padding-bottom: 22px; } .knowledge-page__header > .el-button { width: 100%; } .knowledge-scope { grid-template-columns: 1fr; } .ask-form { padding: 14px; } .ask-form__footer { align-items: stretch; flex-direction: column; } .ask-form__footer .el-button { width: 100%; } .sources li { align-items: flex-start; } }
 </style>

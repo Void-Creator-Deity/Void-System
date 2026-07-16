@@ -151,6 +151,20 @@ class PlanningHttpTests(unittest.TestCase):
         self.assertNotIn("single_task", str(data))
         self.assertNotIn("workflow_chain", str(data))
 
+        # A plan is a reviewable draft. It must not create canonical or legacy work records.
+        connection = self.client.app.state.database.get_connection()
+        try:
+            owner_id = connection.execute(
+                "SELECT user_id FROM users WHERE username = ?", ("admin",)
+            ).fetchone()["user_id"]
+            for table in ("task_goals", "task_runs", "tasks", "task_chains"):
+                count = connection.execute(
+                    f"SELECT COUNT(*) AS count FROM {table} WHERE user_id = ?", (owner_id,)
+                ).fetchone()["count"]
+                self.assertEqual(count, 0, table)
+        finally:
+            connection.close()
+
     def test_unexpected_planning_failure_does_not_expose_internal_error(self) -> None:
         with self.assertLogs("void-system.planning", level="ERROR") as captured:
             with patch(

@@ -46,6 +46,15 @@ class FakeTraceRecorder:
         return "trace-1"
 
 
+class FakeKnowledgeUseRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def record_knowledge_use(self, **kwargs):
+        self.calls.append(kwargs)
+        return "use-1"
+
+
 class StaticIndex:
     def __init__(self, chunks):
         self.chunks = chunks
@@ -102,6 +111,34 @@ class CoreEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.metadata["trace_id"], "trace-1")
         self.assertEqual(recorder.calls[0]["owner_id"], "u1")
         self.assertEqual(recorder.calls[0]["citations"][0]["document_id"], "d1")
+
+    async def test_knowledge_engine_records_only_aggregate_use_outcome(self):
+        recorder = FakeKnowledgeUseRecorder()
+        engine = KnowledgeEngine(
+            index=FakeIndex(),
+            responder=FakeResponder(),
+            use_recorder=recorder,
+        )
+
+        result = await engine.ask(
+            KnowledgeQuery(question="hello knowledge", owner_id="u1")
+        )
+
+        self.assertEqual(result.metadata["knowledge_use_event_id"], "use-1")
+        self.assertEqual(len(recorder.calls), 1)
+        self.assertEqual(
+            recorder.calls[0],
+            {
+                "owner_id": "u1",
+                "mode": "hybrid",
+                "candidate_count": 1,
+                "ranked_count": 1,
+                "source_count": 1,
+                "citation_count": 1,
+                "answerable": True,
+            },
+        )
+        self.assertNotIn("hello knowledge", str(recorder.calls[0]))
 
     async def test_knowledge_engine_search_uses_index(self):
         engine = KnowledgeEngine(index=FakeIndex(), responder=FakeResponder())

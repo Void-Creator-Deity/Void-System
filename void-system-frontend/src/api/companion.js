@@ -1,0 +1,79 @@
+/** Personal context and system companion client. */
+import api, { apiRequest } from './index'
+
+const fromKey = (payload, key, fallback) => payload?.[key] ?? fallback
+
+export const companionApi = {
+  async getSettings() {
+    const data = await apiRequest(api.get('/api/companion/settings'))
+    return fromKey(data, 'settings', {})
+  },
+
+  async updateSettings(updates) {
+    const data = await apiRequest(api.put('/api/companion/settings', updates))
+    return fromKey(data, 'settings', {})
+  },
+
+  async getBriefing(itemBudget = 24) {
+    const data = await apiRequest(api.get('/api/companion/briefing', { params: { item_budget: itemBudget } }))
+    return fromKey(data, 'briefing', {})
+  },
+
+  async getContext(params = {}) {
+    const data = await apiRequest(api.get('/api/companion/context', { params }))
+    return fromKey(data, 'context', {})
+  },
+
+  async getProfile() {
+    const data = await apiRequest(api.get('/api/companion/profile'))
+    return fromKey(data, 'profile', { raw_claims: [], effective_claims: [], groups: {}, stats: {} })
+  },
+
+  async reviewClaim(claimId, decision, value = null, reason = '') {
+    const data = await apiRequest(api.patch(`/api/companion/profile/claims/${claimId}/review`, {
+      decision,
+      value,
+      reason
+    }))
+    return data
+  },
+
+  async listProfileSuggestions() {
+    const data = await apiRequest(api.get('/api/companion/profile/suggestions'))
+    return fromKey(data, 'suggestions', [])
+  },
+
+  async reviewProfileSuggestion(suggestionId, decision, value = null, reason = '') {
+    return apiRequest(api.post(`/api/companion/profile/suggestions/${suggestionId}/review`, {
+      decision,
+      value,
+      reason
+    }))
+  },
+
+  async listMemories(params = {}) {
+    const data = await apiRequest(api.get('/api/companion/memories', { params }))
+    return fromKey(data, 'memories', [])
+  },
+
+  async createMemory(memory) {
+    const data = await apiRequest(api.post('/api/companion/memories', memory))
+    return fromKey(data, 'memory', data)
+  },
+
+  async updateMemory(memoryId, updates) {
+    const data = await apiRequest(api.patch(`/api/companion/memories/${memoryId}`, updates))
+    return fromKey(data, 'memory', data)
+  },
+
+  deleteMemory(memoryId) {
+    return apiRequest(api.delete(`/api/companion/memories/${memoryId}`))
+  },
+
+  async listAccessLog(limit = 50) {
+    const data = await apiRequest(api.get('/api/companion/access-log', { params: { limit } }))
+    return fromKey(data, 'records', [])
+  }
+}
+
+export default companionApi

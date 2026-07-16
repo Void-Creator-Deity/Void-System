@@ -9,6 +9,7 @@ class GoalCreate(BaseModel):
     description: str = Field("", max_length=2000)
     desired_outcome: str = Field("", max_length=2000)
     priority: Literal["low", "medium", "high"] = "medium"
+    idempotency_key: Optional[str] = Field(None, max_length=200)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -45,6 +46,21 @@ class RunCreate(BaseModel):
 
 class RunCancelRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
+
+
+class RunReviewUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    outcome: Optional[Literal["met", "partially_met", "not_met"]] = None
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    notes: Optional[str] = Field(None, max_length=4000)
+    next_action: Optional[str] = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_reflection(self) -> "RunReviewUpdate":
+        if all(value is None for value in (self.outcome, self.rating, self.notes, self.next_action)):
+            raise ValueError("Provide at least one review field")
+        return self
 
 
 class RunLeaseClaimRequest(BaseModel):

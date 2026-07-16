@@ -160,6 +160,23 @@ class KnowledgeTraceRecorder(Protocol):
         """Persist an implementation-neutral retrieval trace."""
 
 
+class KnowledgeUseEventRecorder(Protocol):
+    """Optional privacy-minimized activity seam for aggregate behavior insights."""
+
+    def record_knowledge_use(
+        self,
+        *,
+        owner_id: str,
+        mode: str,
+        candidate_count: int,
+        ranked_count: int,
+        source_count: int,
+        citation_count: int,
+        answerable: bool,
+    ) -> str:
+        """Persist aggregate retrieval outcome without question or document content."""
+
+
 class Reranker(Protocol):
     """Optional ranking adapter, intentionally separate from retrieval."""
 

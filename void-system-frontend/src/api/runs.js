@@ -21,11 +21,22 @@ export const runsApi = {
     return asArray(await apiRequest(api.get(`/api/runs/${runId}/events`)), 'events')
   },
 
+  async review(runId) {
+    const data = await apiRequest(api.get(`/api/runs/${runId}/review`))
+    return data?.review || data
+  },
+
+  async saveReview(runId, values) {
+    const data = await apiRequest(api.put(`/api/runs/${runId}/review`, values))
+    return data?.review || data
+  },
+
   start(runId) { return apiRequest(api.post(`/api/runs/${runId}/start`)).then(runFrom) },
   pause(runId) { return apiRequest(api.post(`/api/runs/${runId}/pause`)).then(runFrom) },
   resume(runId) { return apiRequest(api.post(`/api/runs/${runId}/resume`)).then(runFrom) },
   cancel(runId, reason = '') { return apiRequest(api.post(`/api/runs/${runId}/cancel`, { reason: reason || null })).then(runFrom) },
 
+  retry(runId) { return apiRequest(api.post(`/api/runs/${runId}/retry`)).then(runFrom) },
   startStep(runId, stepId) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/start`)).then(runFrom) },
   completeStep(runId, stepId, body = {}) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/complete`, { output_data: body.output_data || {}, artifacts: body.artifacts || [] })).then(runFrom) },
   skipStep(runId, stepId) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/skip`)).then(runFrom) },
