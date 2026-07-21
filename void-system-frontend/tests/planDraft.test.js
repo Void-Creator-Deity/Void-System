@@ -2,15 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  PUBLICATION_STATUS,
-  buildGoalCreateInput,
-  buildRunSpecification,
-  normalizeHistoryEntry,
-  normalizePlanDraft,
-  resetMissingPublication
+  PLAN_DRAFT_STATUS,
+  buildPlanDraftPayload,
+  createPublicationKey,
+  normalizePlanDraft
 } from '../src/domain/planDraft.js'
 
-const rawPlan = {
+const rawPayload = {
   goal: {
     title: '发布作品集',
     description: '整理并发布一个可访问的作品集。',
@@ -32,71 +30,70 @@ const rawPlan = {
         completion_criteria: { deliverables: ['公开链接'] }
       }
     ]
-  }
+  },
+  context: { sources: ['profile-summary'] },
+  meta: { needs_review: true }
 }
 
-test('legacy history keeps its stable draft identity and editable graph', () => {
-  const entry = normalizeHistoryEntry({
-    ...rawPlan,
-    id: 'legacy-draft-7',
-    createdAt: '2026-07-16T08:00:00.000Z'
+test('server Plan Draft record keeps authority fields and editable graph', () => {
+  const draft = normalizePlanDraft({
+    draft_id: 'draft-7',
+    status: PLAN_DRAFT_STATUS.READY,
+    version: 3,
+    created_at: '2026-07-18T08:00:00.000Z',
+    payload: rawPayload
   })
 
-  assert.equal(entry.draft_id, 'legacy-draft-7')
-  assert.equal(entry.id, 'legacy-draft-7')
-  assert.deepEqual(entry.run.steps[1].depends_on, ['collect'])
-  assert.deepEqual(entry.run.steps[1].completion_criteria.deliverables, ['公开链接'])
-  assert.equal(entry.run.steps[1].requires_approval, true)
+  assert.equal(draft.draft_id, 'draft-7')
+  assert.equal(draft.status, PLAN_DRAFT_STATUS.READY)
+  assert.equal(draft.version, 3)
+  assert.deepEqual(draft.run.steps[1].depends_on, ['collect'])
+  assert.deepEqual(draft.run.steps[1].completion_criteria.deliverables, ['公开链接'])
+  assert.equal(draft.run.steps[1].requires_approval, true)
 })
 
-test('publication inputs are stable and preserve the user-reviewed graph', () => {
-  const plan = normalizePlanDraft({ ...rawPlan, draft_id: 'draft-42' })
-  const goal = buildGoalCreateInput(plan)
-  const run = buildRunSpecification(plan)
-
-  assert.equal(goal.idempotency_key, 'plan-goal-draft-42')
-  assert.equal(goal.metadata.planning_draft_id, 'draft-42')
-  assert.equal(run.idempotency_key, 'plan-draft-42')
-  assert.deepEqual(run.steps[1].depends_on, ['collect'])
-  assert.equal(run.steps[1].requires_approval, true)
-  assert.deepEqual(run.steps[1].completion_criteria.deliverables, ['公开链接'])
-})
-
-test('missing resources reset only the invalid publication stages', () => {
-  const plan = normalizePlanDraft({
-    ...rawPlan,
-    draft_id: 'draft-recovery',
-    publication: {
-      status: PUBLICATION_STATUS.PUBLISHED,
-      goal_id: 'goal-1',
-      run_id: 'run-1'
-    }
+test('editable payload excludes immutable server publication fields', () => {
+  const draft = normalizePlanDraft({
+    draft_id: 'draft-42',
+    status: PLAN_DRAFT_STATUS.PUBLISHED,
+    version: 4,
+    published_goal_id: 'goal-1',
+    published_run_id: 'run-1',
+    payload: rawPayload
   })
+  const payload = buildPlanDraftPayload(draft)
 
-  const missingRun = resetMissingPublication(plan, 'run')
-  assert.equal(missingRun.publication.status, PUBLICATION_STATUS.GOAL_CREATED)
-  assert.equal(missingRun.publication.goal_id, 'goal-1')
-  assert.equal(missingRun.publication.run_id, null)
-
-  const missingGoal = resetMissingPublication(plan, 'goal')
-  assert.equal(missingGoal.publication.status, PUBLICATION_STATUS.DRAFT)
-  assert.equal(missingGoal.publication.goal_id, null)
-  assert.equal(missingGoal.publication.run_id, null)
+  assert.equal(payload.goal.title, '发布作品集')
+  assert.deepEqual(payload.run.steps[1].depends_on, ['collect'])
+  assert.equal(payload.run.steps[1].requires_approval, true)
+  assert.deepEqual(payload.context, { sources: ['profile-summary'] })
+  assert.equal(Object.hasOwn(payload, 'draft_id'), false)
+  assert.equal(Object.hasOwn(payload, 'published_run_id'), false)
 })
 
-
-test('cyclic dependencies are rejected before publication', () => {
-  const plan = normalizePlanDraft({
-    ...rawPlan,
+test('cyclic dependencies are rejected before a stale edit reaches the API', () => {
+  const draft = normalizePlanDraft({
     draft_id: 'draft-cycle',
-    run: {
-      ...rawPlan.run,
-      steps: [
-        { client_key: 'a', title: 'A', depends_on: ['b'] },
-        { client_key: 'b', title: 'B', depends_on: ['a'] }
-      ]
+    payload: {
+      ...rawPayload,
+      run: {
+        ...rawPayload.run,
+        steps: [
+          { client_key: 'a', title: 'A', depends_on: ['b'] },
+          { client_key: 'b', title: 'B', depends_on: ['a'] }
+        ]
+      }
     }
   })
 
-  assert.throws(() => buildRunSpecification(plan), /不能互相等待/)
+  assert.throws(() => buildPlanDraftPayload(draft), /不能互相等待/)
+})
+
+test('publication keys are scoped to a server draft and vary per first attempt', () => {
+  const first = createPublicationKey('draft-key')
+  const second = createPublicationKey('draft-key')
+
+  assert.match(first, /^plan-draft-draft-key-/)
+  assert.match(second, /^plan-draft-draft-key-/)
+  assert.notEqual(first, second)
 })

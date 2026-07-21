@@ -26,6 +26,14 @@ class AIConfigUpdateRequest(BaseModel):
         return value
 
 
+class AIConfigModelListRequest(BaseModel):
+    llm_provider: Optional[str] = Field(default=None, max_length=40)
+    ollama_base_url: Optional[str] = Field(default=None, max_length=500)
+    openai_base_url: Optional[str] = Field(default=None, max_length=500)
+    openai_api_key: Optional[str] = Field(default=None, max_length=1000)
+    google_api_key: Optional[str] = Field(default=None, max_length=1000)
+
+
 class AIConfigTestRequest(BaseModel):
     llm_provider: Optional[str] = Field(default=None, max_length=40)
     ollama_base_url: Optional[str] = Field(default=None, max_length=500)

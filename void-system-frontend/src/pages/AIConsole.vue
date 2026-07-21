@@ -70,12 +70,10 @@
             <div class="chat-message__body">
               <button v-if="message.replyToId" type="button" class="message-reference" @click="navigateToMessage(message.replyToId)"><el-icon><ChatDotSquare /></el-icon><span>引用：{{ messagePreview(message.reply_content, 48) }}</span></button>
               <div class="chat-message__meta"><strong>{{ message.role === 'user' ? '你' : 'AI 助手' }}</strong><span>{{ formatTime(message.timestamp) }}</span><div><el-tooltip content="引用"><el-button text circle size="small" aria-label="引用消息" @click="quoteMessage(message)"><el-icon><ChatDotSquare /></el-icon></el-button></el-tooltip><el-tooltip content="复制"><el-button text circle size="small" aria-label="复制消息" @click="copyToClipboard(message.text)"><el-icon><CopyDocument /></el-icon></el-button></el-tooltip></div></div>
-              <div class="chat-message__content"><div v-if="message.role !== 'user'" class="markdown-body" v-html="renderMarkdown(message.text)"></div><div v-else class="chat-message__plain">{{ message.text }}</div></div>
+              <div class="chat-message__content"><div v-if="message.role !== 'user' && message.text" class="markdown-body" v-html="renderMarkdown(message.text)"></div><div v-else-if="message.role !== 'user' && isGenerating && message === messages.at(-1)" class="typing" aria-label="AI is generating"><i></i><i></i><i></i></div><div v-else-if="message.role === 'user'" class="chat-message__plain">{{ message.text }}</div></div>
               <small v-if="message.tokens">约 {{ message.tokens }} 字符</small>
             </div>
           </article>
-
-          <article v-if="isGenerating && !hasStreamingText" class="chat-message chat-message--assistant"><div class="chat-message__avatar"><el-icon><MagicStick /></el-icon></div><div class="chat-message__body"><div class="chat-message__meta"><strong>AI 助手</strong></div><div class="typing"><i></i><i></i><i></i></div></div></article>
         </div>
       </section>
 
@@ -116,7 +114,6 @@ const currentGroup = computed(() => chatStore.activeGroup)
 const currentSession = computed(() => chatStore.activeSession)
 const messages = computed(() => chatStore.messages)
 const sessionCount = computed(() => chatStore.groups.reduce((total, group) => total + (group.sessions?.length || 0), 0))
-const hasStreamingText = computed(() => isGenerating.value && messages.value.at(-1)?.role === 'assistant' && Boolean(messages.value.at(-1)?.text))
 const readyAttachments = computed(() => composerAttachments.value.filter(item => item.fileId && !item.uploading && !item.error))
 const canSendMessage = computed(() => !isGenerating.value && Boolean(input.value.trim() || readyAttachments.value.length))
 const inputPlaceholder = computed(() => readyAttachments.value.length ? '补充说明（可选）' : '输入问题或想法')

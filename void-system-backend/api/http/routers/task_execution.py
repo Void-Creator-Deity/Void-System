@@ -14,10 +14,8 @@ from api.http.schemas.task_execution import (
     GoalUpdate,
     RunCancelRequest,
     RunCreate,
-    RunLeaseClaimRequest,
-    RunLeaseHeartbeatRequest,
-    RunLeaseReleaseRequest,
     RunReviewUpdate,
+    AssistedStepReviewRequest,
     StepCompleteRequest,
     StepFailRequest,
 )
@@ -191,67 +189,6 @@ async def start_run(
     return create_success_response("执行已开始", {"run": run})
 
 
-@router.post(
-    "/api/runs/{run_id}/lease", summary="领取 Agent 执行租约", response_model=APIResponse
-)
-async def claim_run_lease(
-    run_id: str,
-    request: RunLeaseClaimRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    execution: TaskExecution = Depends(get_task_execution),
-) -> APIResponse:
-    try:
-        lease = execution.claim_agent_run(
-            current_user["user_id"], run_id, request.worker_id, request.lease_seconds
-        )
-    except TaskExecutionError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("执行租约已领取", {"lease": lease})
-
-
-@router.post(
-    "/api/runs/{run_id}/heartbeat", summary="续期并保存 Agent 检查点", response_model=APIResponse
-)
-async def heartbeat_run_lease(
-    run_id: str,
-    request: RunLeaseHeartbeatRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    execution: TaskExecution = Depends(get_task_execution),
-) -> APIResponse:
-    try:
-        lease = execution.heartbeat_agent_run(
-            current_user["user_id"],
-            run_id,
-            request.lease_token,
-            lease_seconds=request.lease_seconds,
-            checkpoint_data=request.checkpoint_data,
-        )
-    except TaskExecutionError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("执行状态已续期", {"lease": lease})
-
-
-@router.post(
-    "/api/runs/{run_id}/lease/release", summary="释放 Agent 执行租约", response_model=APIResponse
-)
-async def release_run_lease(
-    run_id: str,
-    request: RunLeaseReleaseRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    execution: TaskExecution = Depends(get_task_execution),
-) -> APIResponse:
-    try:
-        run = execution.release_agent_run(
-            current_user["user_id"],
-            run_id,
-            request.lease_token,
-            checkpoint_data=request.checkpoint_data,
-        )
-    except TaskExecutionError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("执行租约已释放", {"run": run})
-
-
 @router.post("/api/runs/{run_id}/pause", summary="暂停执行", response_model=APIResponse)
 async def pause_run(
     run_id: str,
@@ -352,6 +289,27 @@ async def complete_step(
     except TaskExecutionError as exc:
         raise _translate_error(exc) from exc
     return create_success_response("步骤已完成", {"run": run})
+
+
+@router.post(
+    "/api/runs/{run_id}/steps/{step_id}/review",
+    summary="Submit evidence for system-assisted review",
+    response_model=APIResponse,
+)
+async def review_assisted_step(
+    run_id: str,
+    step_id: str,
+    request: AssistedStepReviewRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    execution: TaskExecution = Depends(get_task_execution),
+) -> APIResponse:
+    try:
+        run = execution.review_assisted_step(
+            current_user["user_id"], run_id, step_id, request.model_dump()
+        )
+    except TaskExecutionError as exc:
+        raise _translate_error(exc) from exc
+    return create_success_response("Review result updated", {"run": run})
 
 
 @router.post("/api/runs/{run_id}/steps/{step_id}/fail", summary="记录步骤失败", response_model=APIResponse)

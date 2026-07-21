@@ -19,6 +19,10 @@ export const aiConnectionApi = {
     return apiRequest(api.put('/api/admin/system/ai-config', profile))
   },
 
+  models(profile) {
+    return apiRequest(api.post('/api/admin/system/ai-config/models', profile))
+  },
+
   test(profile) {
     return apiRequest(api.post('/api/admin/system/ai-config/test', profile))
   }

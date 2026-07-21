@@ -122,22 +122,21 @@ class SQLiteIdentityRepository:
         connection = self._connection_factory()
         try:
             cursor = connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) FROM task_steps WHERE user_id = ?", (user_id,))
             total_tasks = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'completed'", (user_id,)
+                "SELECT COUNT(*) FROM task_steps WHERE user_id = ? AND status = 'completed'", (user_id,)
             )
             completed_tasks = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'in_progress'", (user_id,)
+                "SELECT COUNT(*) FROM task_steps WHERE user_id = ? AND status IN ('ready', 'running', 'waiting_approval')", (user_id,)
             )
             in_progress_tasks = cursor.fetchone()[0]
-            cursor.execute("SELECT SUM(amount) FROM experience WHERE user_id = ?", (user_id,))
-            total_experience = cursor.fetchone()[0] or 0
-            cursor.execute("SELECT SUM(amount) FROM coins WHERE user_id = ? AND amount > 0", (user_id,))
-            total_earned_coins = cursor.fetchone()[0] or 0
-            cursor.execute("SELECT ABS(SUM(amount)) FROM coins WHERE user_id = ? AND amount < 0", (user_id,))
-            total_spent_coins = cursor.fetchone()[0] or 0
+            cursor.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM growth_point_ledger WHERE user_id = ?",
+                (user_id,),
+            )
+            growth_points = int(cursor.fetchone()[0] or 0)
             cursor.execute("SELECT COUNT(*) FROM user_documents WHERE user_id = ?", (user_id,))
             total_documents = cursor.fetchone()[0]
             return {
@@ -145,9 +144,7 @@ class SQLiteIdentityRepository:
                 "completed_tasks": completed_tasks,
                 "in_progress_tasks": in_progress_tasks,
                 "completion_rate": (completed_tasks / total_tasks * 100) if total_tasks else 0,
-                "total_experience": total_experience,
-                "total_earned_coins": total_earned_coins,
-                "total_spent_coins": total_spent_coins,
+                "growth_points": growth_points,
                 "total_documents": total_documents,
             }
         finally:

@@ -36,9 +36,8 @@ class HttpArchitectureTests(unittest.TestCase):
             "documents_router",
             "knowledge_router",
             "planning_router",
-            "task_workflow_router",
-            "task_workspace_router",
-            "reward_marketplace_router",
+            "task_execution_router",
+            "task_automation_router",
         ):
             self.assertIn(router_name, source)
 
@@ -48,8 +47,11 @@ class HttpArchitectureTests(unittest.TestCase):
             "api/http/routers/identity.py": (
                 "/api/auth/login", "/api/auth/refresh", "/api/user/password",
             ),
-            "api/http/routers/tasks.py": (
-                "/api/tasks/{task_id}/status", "/api/tasks/{task_id}/proof",
+            "api/http/routers/task_execution.py": (
+                "/api/goals", "/api/runs/{run_id}/steps/{step_id}/complete",
+            ),
+            "api/http/routers/task_automation.py": (
+                "/api/triggers", "/api/triggers/{trigger_id}/fire",
             ),
             "api/http/routers/knowledge.py": (
                 "/api/knowledge/search", "/api/vector/search",
@@ -63,13 +65,9 @@ class HttpArchitectureTests(unittest.TestCase):
             for route in routes:
                 self.assertIn(route, source)
                 self.assertNotIn(route, main_source)
-
-    def test_task_workspace_route_uses_planning_module_seam(self) -> None:
-        source = _source("api/http/routers/task_workspace.py")
-        self.assertNotIn("services.ai_services", source)
-        self.assertNotIn("generate_workflow_chain", source)
-        self.assertNotIn("runtime_settings_scope", source)
-        self.assertIn("workspace.generate_chain_steps", source)
+        self.assertNotIn("/api/runs/{run_id}/commands", _source("api/http/routers/task_automation.py"))
+        self.assertNotIn("reward_marketplace", _source("api/http/application.py"))
+        self.assertFalse((BACKEND_ROOT / "api/http/routers/reward_marketplace.py").exists())
 
     def test_http_routes_do_not_depend_on_database_facade(self) -> None:
         router_directory = BACKEND_ROOT / "api" / "http" / "routers"
@@ -80,9 +78,10 @@ class HttpArchitectureTests(unittest.TestCase):
 
     def test_legacy_planning_adapter_does_not_bypass_runtime_settings(self) -> None:
         source = _source("services/ai_services/advisor_chain.py")
-        self.assertIn("active_runtime_settings", source)
+        self.assertIn("get_chat_llm", source)
         self.assertNotIn("from config import config", source)
-        self.assertIn("_pick_first_available_ollama_model(runtime.OLLAMA_BASE_URL)", source)
+        self.assertNotIn("_pick_first_available_ollama_model", source)
+        self.assertNotIn("ChatOllama", source)
 
     def test_legacy_qa_paths_are_not_exposed(self) -> None:
         application_source = _source("api/http/application.py")
@@ -95,30 +94,43 @@ class HttpArchitectureTests(unittest.TestCase):
         self.assertIn("LegacyKnowledgePipelineRetired", legacy_chain_source)
         self.assertNotIn("get_embeddings", legacy_chain_source)
 
-    def test_system_knowledge_has_a_product_facing_retrieval_api(self) -> None:
+    def test_shared_knowledge_uses_the_unified_library_authorization_model(self) -> None:
         router_source = _source("api/http/routers/knowledge.py")
-        dependency_source = _source("api/http/dependencies.py")
-        self.assertIn("/api/knowledge/system/search", router_source)
-        self.assertIn("/api/knowledge/system/ask", router_source)
-        self.assertIn("get_system_knowledge_resources", router_source)
-        self.assertIn("def get_system_knowledge_resources", dependency_source)
-        self.assertIn("create_system_knowledge_resources", dependency_source)
+        library_router_source = _source("api/http/routers/library.py")
+        repository_source = _source("adapters/sqlite/knowledge_document_repository.py")
+        self.assertNotIn("/api/knowledge/system/search", router_source)
+        self.assertNotIn("/api/knowledge/system/ask", router_source)
+        self.assertIn("/api/library/ask", library_router_source)
+        self.assertIn("include_global_shared", library_router_source)
+        self.assertIn("active_library_catalog", repository_source)
 
     def test_system_knowledge_resources_are_application_owned(self) -> None:
         application_source = _source("api/http/application.py")
         dependency_source = _source("api/http/dependencies.py")
         router_source = _source("api/http/routers/knowledge_administration.py")
-        manager_source = _source("services/ai_services/rag_manager.py")
-        self.assertIn("app.state.system_knowledge_manager = None", application_source)
-        self.assertIn("app.state.system_knowledge_manager_lock = threading.Lock()", application_source)
+        store_source = _source("adapters/chroma/knowledge_store.py")
+        shared_source = _source("modules/knowledge/shared_documents.py")
+        self.assertIn("app.state.system_knowledge_resources = None", application_source)
+        self.assertNotIn("system_knowledge_manager", application_source)
         self.assertIn("def get_system_knowledge_manager", dependency_source)
-        self.assertIn("SystemRAGManager(database=db, settings=settings)", dependency_source)
+        self.assertIn("create_system_knowledge_resources(db, settings)", dependency_source)
         self.assertIn("get_system_knowledge_manager", router_source)
         self.assertNotIn("def _manager", router_source)
-        self.assertNotIn("SystemRAGManager", router_source)
-        self.assertIn("settings: Optional[RuntimeSettings] = None", manager_source)
-        self.assertIn("get_embeddings(settings=self.settings)", manager_source)
-        self.assertNotIn("from config import config", manager_source)
+        self.assertIn('SYSTEM_COLLECTION = "system_knowledge"', store_source)
+        self.assertIn("class SharedKnowledgeDocumentManager", shared_source)
+        self.assertNotIn("asyncio.create_task", shared_source)
+
+    def test_retired_knowledge_runtime_modules_are_absent(self) -> None:
+        retired = [
+            "api/user_vector_manager.py",
+            "api/user_document_manager.py",
+            "api/user_document_parser.py",
+            "services/ai_services/rag_manager.py",
+            "adapters/legacy/knowledge_adapters.py",
+            "adapters/legacy/user_knowledge_maintenance.py",
+        ]
+        for relative_path in retired:
+            self.assertFalse((BACKEND_ROOT / relative_path).exists(), relative_path)
 
     def test_authentication_dependency_requires_access_token_and_session(self) -> None:
         source = _source("api/http/dependencies.py")

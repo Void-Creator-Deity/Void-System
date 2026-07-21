@@ -105,7 +105,7 @@ const routes = [
     component: DocumentManager,
     meta: {
       requiresAuth: true,
-      title: '资料库'
+      title: '资料馆'
     }
   },
   {

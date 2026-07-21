@@ -1,22 +1,20 @@
-"""Trigger-to-Run automation and durable steering for active Runs."""
+"""Trigger-to-Run automation for creating user-owned Runs."""
 from __future__ import annotations
 
 import hashlib
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from core.task_automation_contracts import TaskAutomationError, TaskAutomationRepository
-from core.task_execution_contracts import TERMINAL_RUN_STATUSES, TaskExecutionError
+from core.task_execution_contracts import TaskExecutionError
 from modules.tasks.execution import TaskExecution
 
 
 TRIGGER_TYPES = frozenset({"schedule", "event"})
 TRIGGER_STATUSES = frozenset({"active", "paused"})
-COMMAND_TYPES = frozenset({"instruction", "follow_up"})
-COMMAND_STATUSES = frozenset({"pending", "acknowledged"})
 
 
 class TaskAutomation:
-    """Own Trigger lifecycle and Run steering behind one compact Interface."""
+    """Own Trigger lifecycle behind one compact interface."""
 
     def __init__(self, repository: TaskAutomationRepository, execution: TaskExecution) -> None:
         self._repository = repository
@@ -147,59 +145,6 @@ class TaskAutomation:
             "firing": firing,
             "run": self._get_run(user_id, firing["run_id"]),
         }
-
-    def submit_command(
-        self, user_id: str, run_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        run = self._get_run(user_id, run_id)
-        if run["status"] in TERMINAL_RUN_STATUSES:
-            raise TaskAutomationError(
-                "A finished run cannot accept new commands.", "RUN_COMMANDS_CLOSED", 409
-            )
-        command_type = self._choice(
-            values.get("command_type"), COMMAND_TYPES, "command type"
-        )
-        return self._repository.create_command(
-            user_id,
-            run_id,
-            {
-                "command_type": command_type,
-                "instruction": self._required_text(
-                    values.get("instruction"), "Instruction", 4000
-                ),
-                "payload": self._mapping(values.get("payload"), "Command payload"),
-                "idempotency_key": self._optional_text(
-                    values.get("idempotency_key"), 200
-                ),
-            },
-        )
-
-    def list_commands(
-        self, user_id: str, run_id: str, status: Optional[str] = None
-    ) -> Sequence[Dict[str, Any]]:
-        self._get_run(user_id, run_id)
-        if status is not None:
-            status = self._choice(status, COMMAND_STATUSES, "command status")
-        return self._repository.list_commands(user_id, run_id, status)
-
-    def acknowledge_command(
-        self, user_id: str, run_id: str, command_id: str
-    ) -> Dict[str, Any]:
-        self._get_run(user_id, run_id)
-        command = self._repository.get_command(user_id, run_id, command_id)
-        if command is None:
-            raise TaskAutomationError("Run command not found.", "RUN_COMMAND_NOT_FOUND", 404)
-        if command["status"] == "acknowledged":
-            return command
-        if not self._repository.acknowledge_command(
-            user_id, run_id, command_id
-        ):
-            command = self._repository.get_command(user_id, run_id, command_id)
-            if command is None:
-                raise TaskAutomationError(
-                    "Run command not found.", "RUN_COMMAND_NOT_FOUND", 404
-                )
-        return self._repository.get_command(user_id, run_id, command_id) or command
 
     def _set_trigger_status(
         self, user_id: str, trigger_id: str, status: str

@@ -1,4 +1,4 @@
-"""HTTP adapter for a user's growth profile and reward balance."""
+"""HTTP adapter for a user's growth profile and durable points activity."""
 from __future__ import annotations
 
 import logging
@@ -26,35 +26,35 @@ def _translate_error(exc: GrowthProfileError) -> VoidSystemException:
     )
 
 
-@router.get("/api/coins/balance", summary="Get reward balance", response_model=APIResponse)
-async def get_reward_balance(
+@router.get("/api/growth/points/balance", summary="Get growth-point balance", response_model=APIResponse)
+async def get_growth_points_balance(
     current_user: Dict[str, Any] = Depends(get_current_user),
     profile: GrowthProfile = Depends(get_growth_profile),
 ) -> APIResponse:
     return create_success_response(
-        "Reward balance loaded", data={"balance": profile.balance(current_user["user_id"])}
+        "Growth points loaded", data={"growth_points": profile.balance(current_user["user_id"])}
     )
 
 
-@router.get("/api/coins/history", summary="Get reward activity", response_model=APIResponse)
-async def get_reward_history(
+@router.get("/api/growth/points/activity", summary="Get growth-point activity", response_model=APIResponse)
+async def get_growth_point_activity(
     limit: int = Query(50, ge=1, le=200),
     current_user: Dict[str, Any] = Depends(get_current_user),
     profile: GrowthProfile = Depends(get_growth_profile),
 ) -> APIResponse:
     return create_success_response(
-        "Reward activity loaded",
-        data={"history": profile.coin_history(current_user["user_id"], limit)},
+        "Growth-point activity loaded",
+        data={"history": profile.growth_point_activity(current_user["user_id"], limit)},
     )
 
 
-@router.get("/api/coins/stats", summary="Get reward summary", response_model=APIResponse)
-async def get_reward_summary(
+@router.get("/api/growth/points/summary", summary="Get growth-point summary", response_model=APIResponse)
+async def get_growth_points_summary(
     current_user: Dict[str, Any] = Depends(get_current_user),
     profile: GrowthProfile = Depends(get_growth_profile),
 ) -> APIResponse:
     return create_success_response(
-        "Reward summary loaded", data=profile.economy_summary(current_user["user_id"])
+        "Growth-point summary loaded", data=profile.growth_point_summary(current_user["user_id"])
     )
 
 

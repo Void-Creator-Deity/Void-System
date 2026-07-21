@@ -1,4 +1,4 @@
-/** Canonical Run, Step, Approval, and steering client. */
+/** Canonical Goal, Run, Step, and Approval client. */
 import api, { apiRequest } from './index'
 
 const asArray = (payload, key) => Array.isArray(payload) ? payload : (Array.isArray(payload?.[key]) ? payload[key] : [])
@@ -42,23 +42,12 @@ export const runsApi = {
   skipStep(runId, stepId) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/skip`)).then(runFrom) },
   failStep(runId, stepId, errorSummary) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/fail`, { error_summary: errorSummary })).then(runFrom) },
   retryStep(runId, stepId) { return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/retry`)).then(runFrom) },
+  reviewAssistedStep(runId, stepId, payload) {
+    return apiRequest(api.post(`/api/runs/${runId}/steps/${stepId}/review`, payload)).then(runFrom)
+  },
 
   resolveApproval(approvalId, decision, note = '') {
     return apiRequest(api.post(`/api/approvals/${approvalId}/resolve`, { decision, note: note || null })).then(runFrom)
-  },
-
-  async listCommands(runId, params = {}) {
-    return asArray(await apiRequest(api.get(`/api/runs/${runId}/commands`, { params })), 'commands')
-  },
-
-  async submitCommand(runId, command) {
-    const data = await apiRequest(api.post(`/api/runs/${runId}/commands`, command))
-    return data?.command || data
-  },
-
-  async acknowledgeCommand(runId, commandId) {
-    const data = await apiRequest(api.post(`/api/runs/${runId}/commands/${commandId}/acknowledge`))
-    return data?.command || data
   }
 }
 

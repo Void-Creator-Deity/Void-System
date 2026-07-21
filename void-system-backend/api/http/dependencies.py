@@ -1,4 +1,5 @@
 """FastAPI dependencies shared by Growth App routers."""
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, Request, status
@@ -11,6 +12,7 @@ from errors import ErrorCode, VoidSystemException
 from middleware.auth import decode_token
 
 
+logger = logging.getLogger("void-system.dependencies")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(
     tokenUrl="/api/auth/login",
@@ -84,6 +86,25 @@ def get_analytics_repository(
     return SQLiteAnalyticsRepository(db.get_connection)
 
 
+def get_user_library_catalog(
+    db: Database = Depends(get_db),
+    settings: RuntimeSettings = Depends(get_runtime_settings),
+):
+    """Provide the caller-neutral unified library catalogue.
+
+    Inputs: the application-owned database and runtime encryption settings.
+    Output: a repository that reads private documents and shared catalogue
+    references without materializing copies. Called by the user library HTTP API.
+    """
+    from adapters.sqlite.knowledge_document_repository import SQLiteKnowledgeDocumentRepository
+    from modules.knowledge.encrypted_storage import KnowledgeSourceCipher
+
+    return SQLiteKnowledgeDocumentRepository(
+        db.get_connection,
+        cipher=KnowledgeSourceCipher(settings, settings.BASE_DIR / "user_documents"),
+    )
+
+
 def get_system_knowledge_catalog(
     db: Database = Depends(get_db),
 ):
@@ -110,40 +131,53 @@ def get_analytics_dashboard(
 
     return compose_analytics_dashboard(db)
 
-def get_reward_marketplace(
+def get_plan_generation_service(
     db: Database = Depends(get_db),
 ):
-    """Provide the Reward Marketplace module using atomic SQLite settlement."""
-    from modules.reward_marketplace.service import get_reward_marketplace as compose_reward_marketplace
+    """Provide durable AI plan generation jobs backed by the application database."""
+    from modules.planning.generation import (
+        get_plan_generation_service as compose_plan_generation_service,
+    )
 
-    return compose_reward_marketplace(db)
+    return compose_plan_generation_service(db)
+
+
+def get_knowledge_job_service(
+    db: Database = Depends(get_db),
+):
+    """Provide owner-scoped durable knowledge processing jobs."""
+    from modules.knowledge.jobs import get_knowledge_job_service as compose_knowledge_job_service
+
+    return compose_knowledge_job_service(db)
+
+
+def get_plan_draft_service(
+    db: Database = Depends(get_db),
+):
+    """Provide persisted Plan Draft editing and atomic publication use cases."""
+    from modules.planning.drafts import get_plan_draft_service as compose_plan_draft_service
+
+    return compose_plan_draft_service(db)
+
 
 def get_task_automation(
     db: Database = Depends(get_db),
+    settings: RuntimeSettings = Depends(get_runtime_settings),
 ):
     """Provide Trigger-to-Run automation and durable Run commands."""
     from modules.tasks.service import get_task_automation as compose_task_automation
 
-    return compose_task_automation(db)
+    return compose_task_automation(db, settings)
 
 
 def get_task_execution(
     db: Database = Depends(get_db),
+    settings: RuntimeSettings = Depends(get_runtime_settings),
 ):
     """Provide durable Goal and Run execution."""
     from modules.tasks.service import get_task_execution as compose_task_execution
 
-    return compose_task_execution(db)
-
-
-def get_task_workspace(
-    db: Database = Depends(get_db),
-    settings: RuntimeSettings = Depends(get_runtime_settings),
-):
-    """Provide the task workspace module using application-owned adapters."""
-    from modules.tasks.service import get_task_workspace as compose_task_workspace
-
-    return compose_task_workspace(db, settings=settings)
+    return compose_task_execution(db, settings)
 
 
 def get_conversation_service(
@@ -154,25 +188,6 @@ def get_conversation_service(
 
     return compose_conversation_service(db)
 
-
-def get_task_workflow(
-    db: Database = Depends(get_db),
-):
-    """Provide task state transitions backed by the application-owned database."""
-    from modules.tasks.service import get_task_workflow as compose_task_workflow
-
-    return compose_task_workflow(db)
-
-
-def get_ai_task_workflow(
-    db: Database = Depends(get_db),
-    settings: RuntimeSettings = Depends(get_runtime_settings),
-):
-    """Provide a task workflow with an application-scoped AI evaluator."""
-    from modules.planning.service import get_evaluation_engine
-    from modules.tasks.service import get_task_workflow as compose_task_workflow
-
-    return compose_task_workflow(db, evaluator=get_evaluation_engine(settings))
 
 def _resolve_user(
     token: str,
@@ -221,8 +236,14 @@ async def get_current_user_optional(
     if not token:
         return None
     user = _resolve_user(token, repository, settings)
-    if user is None or not user.get("is_active", True):
-        return None
+    if user is None:
+        raise VoidSystemException(
+            message="Authentication credentials are invalid or expired",
+            error_code="INVALID_CREDENTIALS",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    if not user.get("is_active", True):
+        raise VoidSystemException.from_error_code(ErrorCode.USER_INACTIVE)
     return user
 
 
@@ -238,59 +259,39 @@ async def get_current_admin(
     return current_user
 
 
-def get_system_knowledge_manager(
+def get_system_knowledge_resources(
     request: Request,
     db: Database = Depends(get_db),
     settings: RuntimeSettings = Depends(get_runtime_settings),
 ):
-    """Lazily create the system knowledge manager over application-owned resources."""
-    manager = getattr(request.app.state, "system_knowledge_manager", None)
-    if manager is not None:
-        return manager
-
-    lock = getattr(request.app.state, "system_knowledge_manager_lock", None)
-    if lock is None:
-        from threading import Lock
-
-        lock = Lock()
-        request.app.state.system_knowledge_manager_lock = lock
-
-    with lock:
-        manager = getattr(request.app.state, "system_knowledge_manager", None)
-        if manager is None:
-            from services.ai_services.rag_manager import SystemRAGManager
-
-            manager = SystemRAGManager(database=db, settings=settings)
-            request.app.state.system_knowledge_manager = manager
-    return manager
-
-
-def get_system_knowledge_resources(
-    request: Request,
-    manager: Any = Depends(get_system_knowledge_manager),
-    settings: RuntimeSettings = Depends(get_runtime_settings),
-):
-    """Lazily compose system retrieval behind the same knowledge engine contracts."""
+    """Lazily compose shared knowledge through the unified store and engine."""
     resources = getattr(request.app.state, "system_knowledge_resources", None)
     if resources is not None:
         return resources
-
     lock = getattr(request.app.state, "system_knowledge_resources_lock", None)
     if lock is None:
         from threading import Lock
-
         lock = Lock()
         request.app.state.system_knowledge_resources_lock = lock
-
     with lock:
         resources = getattr(request.app.state, "system_knowledge_resources", None)
         if resources is None:
-            from modules.knowledge.service import create_system_knowledge_resources
-
-            resources = create_system_knowledge_resources(manager, settings)
+            try:
+                from modules.knowledge.service import create_system_knowledge_resources
+                resources = create_system_knowledge_resources(db, settings)
+            except VoidSystemException:
+                raise
+            except Exception as exc:
+                _raise_knowledge_service_unavailable("共享", exc)
             request.app.state.system_knowledge_resources = resources
     return resources
 
+
+def get_system_knowledge_manager(
+    resources: Any = Depends(get_system_knowledge_resources),
+):
+    """Expose shared catalog operations from the unified knowledge composition."""
+    return resources.manager
 
 def get_user_knowledge_resources(
     request: Request,
@@ -312,11 +313,26 @@ def get_user_knowledge_resources(
     with lock:
         resources = getattr(request.app.state, "user_knowledge_resources", None)
         if resources is None:
-            from modules.knowledge.service import create_user_knowledge_resources
+            try:
+                from modules.knowledge.service import create_user_knowledge_resources
 
-            resources = create_user_knowledge_resources(db, settings)
+                resources = create_user_knowledge_resources(db, settings)
+            except VoidSystemException:
+                raise
+            except Exception as exc:
+                _raise_knowledge_service_unavailable("个人", exc)
             request.app.state.user_knowledge_resources = resources
     return resources
+
+
+def _raise_knowledge_service_unavailable(scope: str, exc: Exception) -> None:
+    """Convert runtime initialization failures into a stable knowledge-service response."""
+    logger.exception("%s knowledge service initialization failed", scope, exc_info=exc)
+    raise VoidSystemException(
+        message=f"{scope}知识服务尚未就绪，请检查知识库运行依赖和嵌入服务后重试。",
+        error_code="KNOWLEDGE_SERVICE_UNAVAILABLE",
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    ) from exc
 
 
 def get_user_knowledge_workspace(
@@ -352,27 +368,9 @@ def get_user_knowledge_workspace(
 
 def get_personal_context(
     db: Database = Depends(get_db),
-    task_execution: Any = Depends(get_task_execution),
-    growth_profile: Any = Depends(get_growth_profile),
-    knowledge_workspace: Any = Depends(get_user_knowledge_workspace),
+    settings: RuntimeSettings = Depends(get_runtime_settings),
 ):
-    """Compose permissioned personal context over public Workspace Core modules."""
-    from adapters.sqlite.knowledge_lifecycle_repository import SQLiteKnowledgeLifecycleRepository
-    from adapters.sqlite.personal_context_repository import SQLitePersonalContextRepository
-    from modules.personal_context.behavior_insights import BehaviorInsightEngine
-    from modules.personal_context.context import ContextAssembler
-    from modules.personal_context.profile import ProfileCognition
-    from modules.personal_context.service import PersonalContext
+    """Compose Personal Context through the shared request/worker composition helper."""
+    from modules.personal_context.composition import compose_personal_context
 
-    repository = SQLitePersonalContextRepository(db.get_connection)
-    assembler = ContextAssembler(task_execution, growth_profile, knowledge_workspace)
-    profile_cognition = ProfileCognition(repository)
-    return PersonalContext(
-        repository,
-        assembler,
-        profile_cognition,
-        behavior_insights=BehaviorInsightEngine(
-            task_execution,
-            knowledge=SQLiteKnowledgeLifecycleRepository(db.get_connection),
-        ),
-    )
+    return compose_personal_context(db, settings)

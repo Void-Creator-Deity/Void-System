@@ -1,12 +1,11 @@
-"""HTTP Adapter for Trigger-to-Run automation and durable Run commands."""
-from typing import Any, Dict, Optional
+"""HTTP adapter for Trigger-to-Run automation."""
+from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from api.http.dependencies import get_current_user, get_task_automation
 from api.http.responses import APIResponse, create_success_response
 from api.http.schemas.task_automation import (
-    RunCommandCreate,
     TriggerCreate,
     TriggerFireRequest,
     TriggerUpdate,
@@ -138,55 +137,3 @@ async def fire_trigger(
     except TaskAutomationError as exc:
         raise _translate_error(exc) from exc
     return create_success_response("Trigger fired", result)
-
-
-@router.post("/api/runs/{run_id}/commands", summary="Submit Run command", response_model=APIResponse)
-async def submit_run_command(
-    run_id: str,
-    request: RunCommandCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    automation: TaskAutomation = Depends(get_task_automation),
-) -> APIResponse:
-    try:
-        command = automation.submit_command(
-            current_user["user_id"], run_id, request.model_dump()
-        )
-    except TaskAutomationError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("Run command submitted", {"command": command})
-
-
-@router.get("/api/runs/{run_id}/commands", summary="List Run commands", response_model=APIResponse)
-async def list_run_commands(
-    run_id: str,
-    status: Optional[str] = Query(None),
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    automation: TaskAutomation = Depends(get_task_automation),
-) -> APIResponse:
-    try:
-        commands = automation.list_commands(
-            current_user["user_id"], run_id, status
-        )
-    except TaskAutomationError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("Run commands updated", {"commands": commands})
-
-
-@router.post(
-    "/api/runs/{run_id}/commands/{command_id}/acknowledge",
-    summary="Acknowledge Run command",
-    response_model=APIResponse,
-)
-async def acknowledge_run_command(
-    run_id: str,
-    command_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    automation: TaskAutomation = Depends(get_task_automation),
-) -> APIResponse:
-    try:
-        command = automation.acknowledge_command(
-            current_user["user_id"], run_id, command_id
-        )
-    except TaskAutomationError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("Run command acknowledged", {"command": command})

@@ -77,84 +77,68 @@
           </div>
         </section>
 
-        <section class="workspace-section" aria-labelledby="profile-title">
-          <div class="section-heading">
+        <section class="workspace-section profile-workspace" aria-labelledby="profile-title">
+          <div class="section-heading profile-workspace-heading">
             <div>
-              <p class="section-kicker">可解释画像</p>
-              <h2 id="profile-title">系统怎样理解你</h2>
-              <p>这些是有来源的候选判断。确认、修正或不采用后，原始判断仍会保留，方便追溯。</p>
+              <p class="section-kicker">协作偏好与工作记录</p>
+              <h2 id="profile-title">系统如何更好地配合你</h2>
+              <p>先看你已确认的偏好与近期记录。任何新建议都由你决定是否保留，不会把一次任务变成人格结论。</p>
             </div>
-            <div class="section-counts" aria-label="画像审核统计">
-              <span><strong>{{ profileStats.pending || 0 }}</strong> 待确认</span>
-              <span><strong>{{ confirmedCount }}</strong> 已采纳</span>
+            <div class="profile-heading-side">
+              <div class="profile-totals" aria-label="协作偏好与工作记录统计">
+                <span><strong>{{ profileSummary.established || 0 }}</strong> 已确认</span>
+                <span><strong>{{ profileSummary.reviewing || 0 }}</strong> 待确认</span>
+                <span><strong>{{ profileSummary.signals || 0 }}</strong> 条参考记录</span>
+              </div>
+              <el-button type="primary" :icon="Compass" :loading="loading.inference" :disabled="!settings.permissions.profile || !profileEvidence.ready_for_inference" @click="inferProfileUnderstanding">整理协作建议</el-button>
             </div>
           </div>
 
-          <div v-if="profileSuggestions.length" class="profile-suggestions" aria-live="polite">
-            <article v-for="suggestion in profileSuggestions" :key="suggestion.suggestion_id" class="profile-suggestion">
-              <div class="suggestion-main">
-                <div class="claim-meta">
-                  <span class="domain-label">来自你的行动记录</span>
-                  <span class="review-label">等待你的决定</span>
-                </div>
-                <h3>{{ suggestion.summary }}</h3>
-                <p>{{ suggestion.rationale }}</p>
-                <small v-if="suggestion.first_observed_at || suggestion.last_observed_at">记录时间：{{ formatObservationRange(suggestion) }}</small>
-              </div>
-              <div class="claim-actions">
-                <el-button type="success" plain :icon="Check" :loading="loading.review" @click="reviewSuggestion(suggestion, 'confirmed')">采用</el-button>
-                <el-button :icon="EditPen" :loading="loading.review" @click="openSuggestionCorrection(suggestion)">调整</el-button>
-                <el-button text :icon="Close" :loading="loading.review" @click="reviewSuggestion(suggestion, 'rejected')">停止使用这类模式</el-button>
-              </div>
-            </article>
+          <div class="profile-intent" :class="{ 'profile-intent--off': !settings.permissions.profile }">
+            <span class="profile-intent-mark"><el-icon><User /></el-icon></span>
+            <div>
+              <strong>{{ settings.permissions.profile ? '只根据你允许的记录逐步学习' : '帮助系统理解我目前已关闭' }}</strong>
+              <p>{{ settings.permissions.profile ? '目前只参考任务汇总、复盘结果、你的确认或修正，以及明确授权的长期记忆；不会读取任务标题、聊天内容或资料正文。' : '开启右侧“帮助系统理解我”后，系统才会整理可审阅的协作建议。' }}</p>
+            </div>
           </div>
 
-          <div class="profile-filter" role="tablist" aria-label="画像筛选">
-            <button
-              v-for="option in claimFilters"
-              :key="option.value"
-              type="button"
-              :class="{ active: claimFilter === option.value }"
-              @click="claimFilter = option.value"
-            >{{ option.label }}</button>
+          <div v-if="profileFacets.length" class="profile-layer">
+            <div class="profile-layer-heading"><div><span class="layer-eyebrow">已确认</span><h3>已确认的协作偏好</h3></div><p>这些是你确认或修正后允许系统在后续协助中参考的内容。</p></div>
+            <div class="facet-grid">
+              <article v-for="facet in profileFacets" :key="facet.facet_id" class="profile-facet">
+                <span>{{ facet.label }}</span><strong>{{ facet.title }}</strong><p>{{ facet.value }}</p><small>{{ facet.source }} · {{ formatDate(facet.updated_at) }}</small>
+              </article>
+            </div>
           </div>
 
-          <div v-if="filteredClaims.length" class="claim-list">
-            <article v-for="claim in filteredClaims" :key="claim.claim_id" class="claim-row">
-              <div class="claim-main">
-                <div class="claim-meta">
-                  <span class="domain-label">{{ domainLabel(claim.domain) }}</span>
-                  <span class="review-label" :class="`review-label--${claim.review_status}`">{{ reviewLabel(claim.review_status) }}</span>
-                  <span v-if="claim.context_eligible" class="context-label">可用于协助</span>
+          <div v-if="profilePatterns.length" class="profile-layer">
+            <div class="profile-layer-heading"><div><span class="layer-eyebrow">近期记录</span><h3>近期工作记录</h3></div><p>这里只显示已授权记录的汇总，不对你做性格判断。</p></div>
+            <div class="pattern-list">
+              <article v-for="pattern in profilePatterns" :key="pattern.pattern_id" class="pattern-row">
+                <span class="pattern-mark"><el-icon><CircleCheck /></el-icon></span><div><strong>{{ pattern.title }}</strong><p>{{ pattern.summary }}</p></div><span class="freshness-label">{{ pattern.freshness }}</span>
+              </article>
+            </div>
+          </div>
+
+          <div class="profile-layer profile-layer--review">
+            <div class="profile-layer-heading"><div><span class="layer-eyebrow">等待确认</span><h3>需要你确认的协作建议</h3></div><p>只有明确、可修改的建议会出现在这里。确认前不会用于对话或规划。</p></div>
+            <div v-if="profileHypotheses.length" class="hypothesis-list">
+              <article v-for="hypothesis in profileHypotheses" :key="hypothesis.hypothesis_id" class="hypothesis-row">
+                <div class="hypothesis-copy">
+                  <span>{{ hypothesis.label }}</span><h4>{{ hypothesis.title }}</h4><p>{{ hypothesis.detail }}</p>
+                  <div v-if="hypothesis.evidence.length" class="hypothesis-evidence"><strong>参考记录</strong><span v-for="evidence in hypothesis.evidence" :key="evidence.label + ':' + evidence.observed_at">{{ evidence.label }}：{{ evidence.detail }}</span></div>
                 </div>
-                <h3>{{ claim.summary || claim.profile_key }}</h3>
-                <p class="claim-value">{{ formatValue(claim.value) }}</p>
-                <p v-if="claim.rationale" class="claim-rationale">{{ claim.rationale }}</p>
-                <details v-if="claim.evidence_refs?.length" class="claim-evidence">
-                  <summary>查看依据 · {{ claim.evidence_refs.length }} 条</summary>
-                  <div v-for="(evidence, index) in claim.evidence_refs" :key="index">
-                    <span>{{ evidenceLabel(evidence.type) }}</span>
-                    <code>{{ evidence.id || evidence.source_ref || '已记录证据' }}</code>
-                  </div>
-                </details>
-              </div>
-              <div class="claim-actions">
-                <template v-if="claim.review_status === 'pending'">
-                  <el-button type="success" plain :icon="Check" @click="reviewClaim(claim, 'confirmed')">准确</el-button>
-                  <el-button :icon="EditPen" @click="openCorrection(claim)">修正</el-button>
-                  <el-button text :icon="Close" @click="reviewClaim(claim, 'rejected')">不采用</el-button>
-                </template>
-                <template v-else>
-                  <el-button v-if="claim.review_status !== 'corrected'" :icon="EditPen" @click="openCorrection(claim)">修正</el-button>
-                  <el-button text :icon="RefreshLeft" @click="reviewClaim(claim, 'pending')">重新审核</el-button>
-                </template>
-              </div>
-            </article>
+                <div class="hypothesis-actions"><el-button type="success" plain :icon="Check" :loading="loading.review" @click="reviewHypothesis(hypothesis, 'confirmed')">确认</el-button><el-button :icon="EditPen" :loading="loading.review" @click="openHypothesisCorrection(hypothesis)">修正</el-button><el-button text :icon="Close" :loading="loading.review" @click="reviewHypothesis(hypothesis, 'rejected')">不采用</el-button></div>
+              </article>
+            </div>
+            <div v-else class="profile-empty-state"><span class="empty-icon"><el-icon><Compass /></el-icon></span><div><strong>还没有需要你确认的协作建议</strong><p>{{ profileEvidence.ready_for_inference ? '可以根据当前记录整理少量具体、可修正的协作建议。' : '继续使用目标、执行和复盘后，系统会先积累足够的记录基础。' }}</p></div></div>
           </div>
-          <div v-else class="empty-inline empty-inline--quiet">
-            <span class="empty-icon"><el-icon><User /></el-icon></span>
-            <div><strong>{{ claimFilter === 'all' ? '还没有形成画像判断' : '这个分类目前为空' }}</strong><p>系统会把明确记忆和后续证据整理成可审核的候选判断。</p></div>
-          </div>
+
+          <details class="profile-sources" open>
+            <summary><span><el-icon><View /></el-icon>本次整理参考了哪些记录</span><small>{{ profileSources.length }} 类来源</small></summary>
+            <div v-if="profileSources.length" class="profile-source-list"><div v-for="source in profileSources" :key="source.source_id" class="profile-source-row"><div><strong>{{ source.label }}</strong><p>{{ source.detail }}</p></div><span>{{ source.count }} 条</span></div></div>
+            <p v-else class="access-empty">还没有形成可用记录。</p>
+          </details>
         </section>
 
         <section class="workspace-section" aria-labelledby="memory-title">
@@ -162,7 +146,7 @@
             <div>
               <p class="section-kicker">长期记忆</p>
               <h2 id="memory-title">值得保留的信息</h2>
-              <p>事实、偏好、经历和推断分开保存。你可以暂停使用、归档或彻底忘记。</p>
+              <p>手动保存的内容可立即使用；系统整理出的候选需先确认。你可暂停使用、归档或彻底忘记。</p>
             </div>
             <el-button type="primary" :icon="Plus" @click="openMemoryEditor()">添加记忆</el-button>
           </div>
@@ -225,12 +209,31 @@
             <span>主动程度</span>
             <el-segmented v-model="settings.initiative" :options="initiativeOptions" :disabled="loading.settings" @change="saveSettings({ initiative: settings.initiative })" />
           </label>
+          <div class="persona-fields">
+            <div class="persona-heading">
+              <span>精灵人设</span>
+              <small>只影响表达与协作方式</small>
+            </div>
+            <label class="control-field control-field--compact">
+              <span>怎么称呼它</span>
+              <el-input v-model="settings.persona.name" maxlength="48" show-word-limit :disabled="loading.settings" />
+            </label>
+            <label class="control-field control-field--compact">
+              <span>它是什么角色</span>
+              <el-input v-model="settings.persona.role" maxlength="80" show-word-limit :disabled="loading.settings" />
+            </label>
+            <label class="control-field control-field--compact">
+              <span>怎么介绍它</span>
+              <el-input v-model="settings.persona.brief" type="textarea" :rows="3" maxlength="500" show-word-limit :disabled="loading.settings" />
+            </label>
+            <el-button class="persona-save" plain :loading="loading.settings" @click="savePersona">保存人设</el-button>
+          </div>
         </section>
 
         <section class="sidebar-section">
           <div class="sidebar-heading">
             <div><p class="section-kicker">数据权限</p><h2>可以参考什么</h2></div>
-            <el-tooltip content="权限只控制系统精灵组装上下文，不会删除原始数据。" placement="top">
+            <el-tooltip content="权限决定系统精灵能否读取相应数据；个人资料馆仅按当前问题检索你的资料馆，不会扫描未加入的共享资料。" placement="top">
               <el-icon class="help-icon"><InfoFilled /></el-icon>
             </el-tooltip>
           </div>
@@ -331,14 +334,20 @@ import companionApi from '@/api/companion'
 import { getApiErrorMessage } from '@/api'
 
 const router = useRouter()
-const loading = reactive({ page: true, settings: false, briefing: false, review: false, memory: false, access: false })
-const settings = reactive({ enabled: true, tone: 'calm', initiative: 'balanced', permissions: {} })
+const loading = reactive({ page: true, settings: false, briefing: false, inference: false, review: false, memory: false, access: false })
+const settings = reactive({
+  enabled: true,
+  tone: 'calm',
+  initiative: 'balanced',
+  persona: { name: '系统精灵', role: '协作伙伴', brief: '' },
+  permissions: {}
+})
 const briefing = ref({})
-const profile = ref({ raw_claims: [], effective_claims: [], groups: {}, stats: {} })
+const profile = ref({ summary: {}, facets: [], patterns: [], hypotheses: [], sources: [], evidence: {} })
 const profileSuggestions = ref([])
 const memories = ref([])
 const accessRecords = ref([])
-const claimFilter = ref('pending')
+const claimFilter = ref('all')
 const memoryFilter = ref('active')
 
 const claimFilters = [
@@ -355,8 +364,8 @@ const permissionOptions = [
   { key: 'runs', label: '执行进度', description: '正在进行的计划和步骤' },
   { key: 'growth', label: '成长记录', description: '能力与长期变化' },
   { key: 'memories', label: '长期记忆', description: '你明确保留的信息' },
-  { key: 'knowledge', label: '个人资料库', description: '上传和收藏的资料' },
-  { key: 'rewards', label: '奖励与资源', description: '余额和已获得资源' }
+  { key: 'knowledge', label: '个人资料馆', description: '开启后，对话会按当前问题检索你上传或已加入资料馆的内容' },
+  { key: 'rewards', label: '奖励与资源', description: '余额和已获得资源；只在确有必要时提供摘要' }
 ]
 const memoryTypeOptions = [
   { label: '稳定事实', value: 'fact' },
@@ -367,25 +376,40 @@ const memoryTypeOptions = [
 const domainLabels = { basic: '基本事实', interests: '兴趣与回避', working_style: '工作与学习', communication: '沟通偏好', values: '价值与驱力', current_phase: '当前阶段' }
 const reviewLabels = { pending: '待确认', confirmed: '已确认', corrected: '已修正', rejected: '不采用' }
 const memoryLabels = { fact: '事实', preference: '偏好', episode: '经历', inference: '推断' }
+const profileEvidenceSourceMeta = {
+  task_history: { label: '任务与执行汇总', detail: '只统计目标、执行和步骤等工作流汇总，不读取标题、描述或产出正文。' },
+  task_reviews: { label: '任务复盘', detail: '只使用已完成复盘的结构化记录，不读取其他聊天内容。' },
+  profile_feedback: { label: '你的确认与修正', detail: '你对协作建议的确认、修正或不采用会成为可追溯的反馈依据。' },
+  manual_evidence: { label: '明确保存的依据', detail: '仅使用你主动录入或明确导入的可审阅信息。' },
+  explicit_memories: { label: '授权的长期记忆', detail: '只有勾选“帮助系统理解我”的记忆会直接加入画像，不会自动读取全部记忆。' }
+}
 const permissionLabels = Object.fromEntries(permissionOptions.map((item) => [item.key, item.label]))
 
 const correctionDialog = reactive({ open: false, claim: null, value: '', reason: '' })
 const emptyMemory = () => ({ memory_type: 'fact', title: '', content: '', use_in_context: true, contribute_to_profile: false })
 const memoryDialog = reactive({ open: false, memoryId: null, form: emptyMemory() })
 
-const profileStats = computed(() => profile.value?.stats || {})
-const confirmedCount = computed(() => (profileStats.value.confirmed || 0) + (profileStats.value.corrected || 0))
-const effectiveById = computed(() => new Map((profile.value?.effective_claims || []).map((item) => [item.claim_id, item])))
-const displayClaims = computed(() => (profile.value?.raw_claims || []).map((raw) => ({ ...raw, ...(effectiveById.value.get(raw.claim_id) || {}) })))
-const filteredClaims = computed(() => displayClaims.value.filter((claim) => {
-  if (claimFilter.value === 'all') return true
-  if (claimFilter.value === 'accepted') return ['confirmed', 'corrected'].includes(claim.review_status)
-  return claim.review_status === claimFilter.value
-}))
+const profileSummary = computed(() => profile.value?.summary || {})
+const profileFacets = computed(() => profile.value?.facets || [])
+const profilePatterns = computed(() => profile.value?.patterns || [])
+const profileHypotheses = computed(() => profile.value?.hypotheses || [])
+const profileSources = computed(() => profile.value?.sources || [])
+const profileEvidence = computed(() => profile.value?.evidence || {
+  eligible_signal_count: 0,
+  minimum_signal_count: 3,
+  permission_enabled: false,
+  ready_for_inference: false,
+  sources: []
+})
 const visibleMemories = computed(() => memories.value.filter((memory) => memory.status === memoryFilter.value))
 const focusItems = computed(() => briefing.value?.focus_items || [])
 const suggestions = computed(() => briefing.value?.suggestions || [])
 const contextSources = computed(() => briefing.value?.context?.sources || [])
+const profileInferenceNote = computed(() => {
+  if (!settings.permissions.profile) return '先在右侧打开“帮助系统理解我”，再整理协作建议。'
+  if (profileEvidence.value.ready_for_inference) return '只会将当前展示的记录整理成待确认建议，不会自动当作事实使用。'
+  return '会先刷新任务记录汇总；不足三条合格记录时不会让模型猜测。'
+})
 const briefingHeadline = computed(() => {
   if (!settings.enabled) return '系统精灵已暂停'
   if (focusItems.value.some((item) => item.kind === 'run')) return '先把正在进行的事情接上'
@@ -403,23 +427,27 @@ function normalizeSettings(value = {}) {
   settings.enabled = value.enabled ?? true
   settings.tone = value.tone || 'calm'
   settings.initiative = value.initiative || 'balanced'
+  settings.persona = {
+    name: value.persona?.name || '系统精灵',
+    role: value.persona?.role || '协作伙伴',
+    brief: value.persona?.brief || ''
+  }
   settings.permissions = Object.fromEntries(permissionOptions.map((item) => [item.key, value.permissions?.[item.key] ?? false]))
 }
 
 async function loadPage() {
   loading.page = true
   try {
-    const [settingsResult, profileResult, suggestionsResult, memoryResult] = await Promise.allSettled([
-      companionApi.getSettings(), companionApi.getProfile(), companionApi.listProfileSuggestions(), companionApi.listMemories({ limit: 200 })
+    const [settingsResult, profileResult, memoryResult] = await Promise.allSettled([
+      companionApi.getSettings(), companionApi.getProfile(), companionApi.listMemories({ limit: 200 })
     ])
     if (settingsResult.status === 'fulfilled') normalizeSettings(settingsResult.value)
     else throw settingsResult.reason
     if (profileResult.status === 'fulfilled') profile.value = profileResult.value
-    if (suggestionsResult.status === 'fulfilled') profileSuggestions.value = suggestionsResult.value
     if (memoryResult.status === 'fulfilled') memories.value = memoryResult.value
     await refreshBriefing(false)
     await loadAccessLog(false)
-    const partialFailures = [profileResult, suggestionsResult, memoryResult].filter((item) => item.status === 'rejected').length
+    const partialFailures = [profileResult, memoryResult].filter((item) => item.status === 'rejected').length
     if (partialFailures) ElMessage.warning('部分个人数据暂时没有加载，已保留可用内容')
   } catch (error) {
     ElMessage.error(getApiErrorMessage(error, '系统精灵暂时无法加载'))
@@ -459,22 +487,36 @@ function savePermissions() {
   return saveSettings({ permissions: { ...settings.permissions } })
 }
 
-async function refreshProfileUnderstanding() {
-  const [profileValue, suggestionsValue] = await Promise.all([
-    companionApi.getProfile(),
-    companionApi.listProfileSuggestions()
-  ])
-  profile.value = profileValue
-  profileSuggestions.value = suggestionsValue
+function savePersona() {
+  return saveSettings({ persona: { ...settings.persona } })
 }
 
-async function reviewSuggestion(suggestion, decision, value = null, reason = '') {
+async function refreshProfileUnderstanding() {
+  profile.value = await companionApi.getProfile()
+}
+
+async function inferProfileUnderstanding() {
+  loading.inference = true
+  try {
+    const result = await companionApi.inferProfile({ max_signals: 24, max_hypotheses: 4 })
+    await refreshProfileUnderstanding()
+    const count = result?.hypotheses?.length || 0
+    ElMessage[count ? 'success' : 'info'](
+      count ? `已整理 ${count} 条待判断理解` : '暂时没有足够的新线索形成理解'
+    )
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '暂时无法整理个人理解'))
+  } finally {
+    loading.inference = false
+  }
+}
+
+async function reviewHypothesis(hypothesis, decision) {
   loading.review = true
   try {
-    await companionApi.reviewProfileSuggestion(suggestion.suggestion_id, decision, value, reason)
+    await companionApi.reviewHypothesis(hypothesis.hypothesis_id, decision)
     await refreshProfileUnderstanding()
-    const messages = { confirmed: '已采用这项理解', rejected: '系统将停止使用这类模式' }
-    ElMessage.success(messages[decision] || '理解方式已更新')
+    ElMessage.success(decision === 'confirmed' ? '这项理解已确认' : '这项理解不会再参与后续协助')
     await refreshBriefing(false)
   } catch (error) {
     ElMessage.error(getApiErrorMessage(error, '这项理解没有保存成功'))
@@ -483,31 +525,9 @@ async function reviewSuggestion(suggestion, decision, value = null, reason = '')
   }
 }
 
-function openSuggestionCorrection(suggestion) {
-  correctionDialog.claim = { ...suggestion, suggestion_id: suggestion.suggestion_id, isSuggestion: true }
-  correctionDialog.value = formatValue(suggestion.value?.label || suggestion.summary)
-  correctionDialog.reason = ''
-  correctionDialog.open = true
-}
-
-async function reviewClaim(claim, decision) {
-  loading.review = true
-  try {
-    await companionApi.reviewClaim(claim.claim_id, decision)
-    await refreshProfileUnderstanding()
-    const messages = { confirmed: '已确认这条理解', rejected: '这条理解将不再被采用', pending: '已恢复为待审核' }
-    ElMessage.success(messages[decision] || '画像已更新')
-    await refreshBriefing(false)
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error, '画像审核没有保存成功'))
-  } finally {
-    loading.review = false
-  }
-}
-
-function openCorrection(claim) {
-  correctionDialog.claim = claim
-  correctionDialog.value = formatValue(claim.value)
+function openHypothesisCorrection(hypothesis) {
+  correctionDialog.claim = { hypothesis_id: hypothesis.hypothesis_id, value: hypothesis.title }
+  correctionDialog.value = hypothesis.title
   correctionDialog.reason = ''
   correctionDialog.open = true
 }
@@ -516,13 +536,13 @@ async function submitCorrection() {
   if (!correctionDialog.value.trim()) return ElMessage.warning('请填写更准确的说法')
   loading.review = true
   try {
-    if (correctionDialog.claim.isSuggestion) {
-      await companionApi.reviewProfileSuggestion(correctionDialog.claim.suggestion_id, 'corrected', correctionDialog.value.trim(), correctionDialog.reason.trim())
-      await refreshProfileUnderstanding()
-    } else {
-      await companionApi.reviewClaim(correctionDialog.claim.claim_id, 'corrected', correctionDialog.value.trim(), correctionDialog.reason.trim())
-      await refreshProfileUnderstanding()
-    }
+    await companionApi.reviewHypothesis(
+      correctionDialog.claim.hypothesis_id,
+      'corrected',
+      correctionDialog.value.trim(),
+      correctionDialog.reason.trim()
+    )
+    await refreshProfileUnderstanding()
     correctionDialog.open = false
     ElMessage.success('已保存你的修正')
     await refreshBriefing(false)
@@ -690,96 +710,136 @@ function formatDateTime(value) { return value ? new Intl.DateTimeFormat('zh-CN',
 onMounted(loadPage)
 </script>
 
+
 <style scoped>
-.companion-page { width: min(100%, 1240px); margin: 0 auto; padding: 30px 0 72px; color: var(--text-primary); }
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; padding: 0 2px 26px; border-bottom: 1px solid var(--border-color); }
-.page-kicker, .section-kicker { margin: 0 0 6px; color: var(--color-primary); font-size: 12px; font-weight: 800; }
-.page-header h1 { margin: 0; font-size: 30px; line-height: 1.15; }
-.page-header p:not(.page-kicker) { max-width: 700px; margin: 9px 0 0; color: var(--text-secondary); line-height: 1.65; }
-.header-state { display: flex; align-items: center; flex: 0 0 auto; gap: 9px; min-height: 42px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--color-success) 28%, var(--border-color)); border-radius: 7px; color: var(--color-success); background: color-mix(in srgb, var(--color-success) 6%, var(--bg-secondary)); font-size: 13px; font-weight: 700; }
-.header-state--paused { border-color: var(--border-color); color: var(--text-muted); background: var(--bg-secondary); }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.briefing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .85fr); gap: 44px; padding: 30px 2px; border-bottom: 1px solid var(--border-color); }
-.briefing-copy { align-self: center; }
-.briefing-label { display: inline-flex; margin-bottom: 10px; padding: 4px 7px; border-radius: 4px; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); font-size: 11px; font-weight: 800; }
-.briefing h2 { max-width: 660px; margin: 0; font-size: 25px; line-height: 1.3; }
-.briefing p { max-width: 680px; margin: 10px 0 0; color: var(--text-secondary); line-height: 1.65; }
-.briefing-actions { display: grid; align-content: center; gap: 7px; }
-.suggestion-button { display: flex; align-items: center; width: 100%; min-height: 58px; gap: 14px; padding: 9px 12px; border: 1px solid var(--border-color-light); border-radius: 7px; color: var(--text-primary); background: var(--bg-secondary); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
-.suggestion-button:hover { border-color: color-mix(in srgb, var(--color-primary) 30%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 4%, var(--bg-secondary)); transform: translateY(-1px); }
-.suggestion-button > span { display: grid; flex: 1; min-width: 0; gap: 2px; }
-.suggestion-button strong { font-size: 14px; }
-.suggestion-button small { color: var(--text-muted); font-size: 12px; }
-.suggestion-button .el-icon, .row-arrow { color: var(--text-muted); }
-.workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 318px; gap: 42px; align-items: start; }
+/* A personal understanding file: factual first, interpretive only where review is needed. */
+.companion-page { width: min(100%, 1180px); margin: 0 auto; padding: 42px 0 72px; color: var(--text-primary); }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; padding: 4px 2px 34px; border-bottom: 1px solid var(--border-color-light); }
+.page-kicker, .section-kicker { margin: 0 0 7px; color: var(--color-primary-dark); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.page-header h1 { margin: 0; font-size: 36px; line-height: 1.16; letter-spacing: 0; }
+.page-header h1 + p { max-width: 620px; margin: 10px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.header-state { display: inline-flex; align-items: center; gap: 9px; flex: none; min-height: 38px; padding: 0 5px 0 12px; color: var(--text-secondary); border: 1px solid var(--border-color); background: var(--bg-secondary); border-radius: 7px; font-size: 12px; font-weight: 700; }
+.state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 15%, transparent); }
+.header-state--paused .state-dot { background: var(--text-muted); box-shadow: none; }
+
+.briefing { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .76fr); gap: 52px; padding: 38px 2px; border-bottom: 1px solid var(--border-color-light); }
+.briefing-label { display: inline-flex; margin-bottom: 11px; padding: 2px 10px; color: var(--color-primary-dark); border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-secondary)); border-radius: 999px; font-size: 11px; font-weight: 800; line-height: 20px; }
+.briefing h2 { max-width: 720px; margin: 0; font-size: 25px; line-height: 1.38; }
+.briefing-copy > p { max-width: 700px; margin: 10px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.68; }
+.briefing-actions { display: grid; align-content: center; gap: 8px; }
+.suggestion-button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; min-height: 62px; padding: 13px 15px; color: inherit; text-align: left; cursor: pointer; border: 1px solid var(--border-color-light); border-radius: 7px; background: var(--bg-secondary); transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.suggestion-button:hover { border-color: color-mix(in srgb, var(--color-primary) 52%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 4%, var(--bg-secondary)); transform: translateX(2px); }
+.suggestion-button span { display: grid; gap: 4px; min-width: 0; }
+.suggestion-button strong { color: var(--text-primary); font-size: 13px; }
+.suggestion-button small { overflow: hidden; color: var(--text-muted); font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-button .el-icon { color: var(--color-primary); }
+
+.workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 52px; align-items: start; }
 .workspace-main { min-width: 0; }
-.workspace-section { padding: 34px 2px 38px; border-bottom: 1px solid var(--border-color); }
-.section-heading, .sidebar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
-.section-heading h2, .sidebar-heading h2 { margin: 0; font-size: 19px; line-height: 1.3; }
-.section-heading > div:first-child > p:not(.section-kicker) { max-width: 680px; margin: 7px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
-.section-counts { display: flex; flex: 0 0 auto; gap: 15px; color: var(--text-muted); font-size: 12px; }
-.section-counts strong { color: var(--text-primary); font-size: 15px; }
-.focus-list, .claim-list, .memory-list { margin-top: 22px; }
-.focus-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 18px; align-items: center; width: 100%; min-height: 62px; gap: 12px; padding: 9px 4px; border: 0; border-bottom: 1px solid var(--border-color-light); color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
-.focus-row:hover { background: color-mix(in srgb, var(--color-primary) 4%, transparent); }
-.focus-icon, .empty-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 10%, var(--bg-secondary)); }
-.focus-copy { display: grid; min-width: 0; gap: 3px; }
-.focus-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.focus-copy small { color: var(--text-muted); font-size: 12px; }
-.focus-status { padding: 4px 7px; border-radius: 4px; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 8%, transparent); font-size: 11px; font-weight: 700; }
-.empty-inline { display: flex; align-items: center; gap: 13px; min-height: 96px; margin-top: 20px; padding: 16px; border: 1px dashed var(--border-color); border-radius: 7px; background: color-mix(in srgb, var(--bg-secondary) 68%, transparent); }
-.empty-inline > div { flex: 1; }
-.empty-inline strong { font-size: 14px; }
-.empty-inline p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
-.empty-inline--quiet { min-height: 86px; }
-.profile-suggestions { margin-top: 22px; border-top: 1px solid var(--border-color-light); }
-.profile-suggestion { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 20px 2px; border-bottom: 1px solid var(--border-color-light); }
-.suggestion-main { min-width: 0; }
-.suggestion-main h3 { margin: 10px 0 0; font-size: 15px; line-height: 1.45; }
-.suggestion-main p { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
-.suggestion-main small { display: block; margin-top: 9px; color: var(--text-muted); font-size: 11px; }
-.profile-filter { display: inline-flex; gap: 3px; margin-top: 20px; padding: 3px; border-radius: 7px; background: var(--bg-tertiary); }
-.profile-filter button { min-height: 32px; border: 0; border-radius: 5px; padding: 0 10px; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 12px; }
-.profile-filter button.active { color: var(--text-primary); background: var(--bg-secondary); box-shadow: var(--shadow-sm); font-weight: 700; }
-.claim-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 20px 2px; border-bottom: 1px solid var(--border-color-light); }
-.claim-main { min-width: 0; }
-.claim-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.domain-label, .review-label, .context-label, .memory-type { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
-.domain-label { color: var(--text-secondary); background: var(--bg-tertiary); }
-.review-label { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
-.review-label--confirmed, .review-label--corrected, .context-label { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 9%, transparent); }
-.review-label--rejected { color: var(--text-muted); background: var(--bg-tertiary); }
-.claim-row h3 { margin: 10px 0 0; font-size: 15px; line-height: 1.45; }
-.claim-value { margin: 6px 0 0; color: var(--text-primary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
-.claim-rationale { margin: 7px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
-.claim-evidence { margin-top: 10px; color: var(--text-muted); font-size: 12px; }
-.claim-evidence summary { width: fit-content; cursor: pointer; }
-.claim-evidence > div { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.claim-evidence code { overflow: hidden; color: var(--text-secondary); font-family: var(--font-family-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.claim-actions { display: flex; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 260px; }
-.memory-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.memory-toolbar > span { color: var(--text-muted); font-size: 12px; }
-.memory-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto 34px; align-items: start; gap: 13px; padding: 18px 2px; border-bottom: 1px solid var(--border-color-light); }
-.memory-type { margin-top: 1px; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, transparent); }
-.memory-copy { min-width: 0; }
-.memory-copy strong { font-size: 14px; }
-.memory-copy p { display: -webkit-box; overflow: hidden; margin: 5px 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.memory-copy small { color: var(--text-muted); font-size: 11px; }
-.memory-use { display: grid; justify-items: end; gap: 4px; min-width: 70px; color: var(--text-muted); font-size: 11px; }
-.context-sidebar { position: sticky; top: 22px; min-width: 0; }
-.sidebar-section { padding: 28px 0; border-bottom: 1px solid var(--border-color); }
-.sidebar-heading { align-items: center; }
+.workspace-section { padding: 36px 2px; border-bottom: 1px solid var(--border-color-light); }
+.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.section-heading h2, .sidebar-heading h2 { margin: 0; font-size: 20px; line-height: 1.35; }
+.section-heading > div > p:last-child { max-width: 650px; margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
+.focus-list { margin-top: 18px; border-top: 1px solid var(--border-color-light); }
+.focus-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 18px; gap: 12px; align-items: center; width: 100%; min-height: 64px; padding: 10px 4px; color: inherit; text-align: left; cursor: pointer; border: 0; border-bottom: 1px solid var(--border-color-light); background: transparent; }
+.focus-row:hover .focus-copy strong { color: var(--color-primary); }
+.focus-icon, .empty-icon { display: grid; place-items: center; width: 32px; height: 32px; color: var(--color-primary); border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 6%, var(--bg-secondary)); border-radius: 50%; }
+.focus-copy { display: grid; gap: 4px; min-width: 0; }
+.focus-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; transition: color .18s ease; }
+.focus-copy small { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.focus-status { color: var(--text-secondary); font-size: 12px; }
+.row-arrow { color: var(--text-muted); }
+.empty-inline, .profile-empty-state { display: flex; align-items: flex-start; gap: 13px; margin-top: 18px; padding: 16px 0; }
+.empty-inline > div, .profile-empty-state > div { min-width: 0; }
+.empty-inline strong, .profile-empty-state strong { font-size: 13px; }
+.empty-inline p, .profile-empty-state p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.empty-inline .el-button { margin-left: auto; }
+
+.profile-workspace { padding-top: 38px; }
+.profile-workspace-heading { align-items: flex-start; }
+.profile-heading-side { display: grid; justify-items: end; gap: 12px; flex: none; }
+.profile-totals { display: inline-flex; align-items: center; gap: 13px; color: var(--text-muted); font-size: 11px; }
+.profile-totals span { padding-left: 13px; border-left: 1px solid var(--border-color-light); white-space: nowrap; }
+.profile-totals span:first-child { padding-left: 0; border-left: 0; }
+.profile-totals strong { color: var(--text-primary); font-size: 17px; font-variant-numeric: tabular-nums; }
+.profile-intent { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; margin-top: 24px; padding: 15px 16px; border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--border-color)); border-left: 3px solid var(--color-primary); border-radius: 6px; background: color-mix(in srgb, var(--color-primary) 5%, var(--bg-secondary)); }
+.profile-intent-mark { display: grid; place-items: center; width: 28px; height: 28px; color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 11%, var(--bg-secondary)); border-radius: 50%; }
+.profile-intent strong { font-size: 13px; }
+.profile-intent p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.62; }
+.profile-intent--off { border-color: var(--border-color); border-left-color: var(--text-muted); background: var(--bg-tertiary); }
+.profile-intent--off .profile-intent-mark { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-secondary)); }
+.profile-layer { margin-top: 32px; }
+.profile-layer-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 14px; }
+.profile-layer-heading h3 { margin: 3px 0 0; font-size: 17px; line-height: 1.35; }
+.profile-layer-heading p { max-width: 325px; margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.52; text-align: right; }
+.layer-eyebrow { color: var(--color-primary); font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.facet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.profile-facet { display: flex; flex-direction: column; min-height: 144px; padding: 16px; border: 1px solid var(--border-color-light); border-top: 2px solid color-mix(in srgb, var(--color-primary) 55%, var(--border-color)); border-radius: 6px; background: var(--bg-secondary); }
+.profile-facet > span { color: var(--color-primary-dark); font-size: 11px; font-weight: 800; }
+.profile-facet strong { margin-top: 8px; font-size: 14px; line-height: 1.42; }
+.profile-facet p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.profile-facet small { margin-top: auto; padding-top: 13px; color: var(--text-muted); font-size: 10px; }
+.pattern-list, .hypothesis-list, .memory-list { border-top: 1px solid var(--border-color-light); }
+.pattern-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border-color-light); }
+.pattern-mark { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-primary); border-radius: 50%; background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); }
+.pattern-row strong { font-size: 13px; }
+.pattern-row p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.freshness-label { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.profile-layer--review { padding: 20px; border: 1px solid color-mix(in srgb, var(--color-accent) 39%, var(--border-color)); border-radius: 7px; background: color-mix(in srgb, var(--color-accent) 5%, var(--bg-secondary)); }
+.profile-layer--review .profile-layer-heading { margin-bottom: 3px; }
+.profile-layer--review .layer-eyebrow, .hypothesis-copy > span { color: var(--color-accent); }
+.hypothesis-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; padding: 18px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 26%, var(--border-color)); }
+.hypothesis-row:last-child { border-bottom: 0; }
+.hypothesis-copy > span { font-size: 11px; font-weight: 800; }
+.hypothesis-copy h4 { margin: 5px 0 0; font-size: 15px; line-height: 1.45; }
+.hypothesis-copy > p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.hypothesis-evidence { display: grid; gap: 4px; margin-top: 12px; padding: 8px 10px; border-left: 2px solid color-mix(in srgb, var(--color-accent) 58%, transparent); background: color-mix(in srgb, var(--color-accent) 5%, transparent); color: var(--text-muted); font-size: 11px; line-height: 1.48; }
+.hypothesis-evidence strong { color: var(--text-secondary); font-size: 11px; }
+.hypothesis-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.profile-empty-state { padding: 20px 0 4px; }
+.profile-sources { margin-top: 28px; border-top: 1px solid var(--border-color-light); border-bottom: 1px solid var(--border-color-light); }
+.profile-sources summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 700; list-style: none; }
+.profile-sources summary::-webkit-details-marker { display: none; }
+.profile-sources summary > span { display: inline-flex; align-items: center; gap: 7px; }
+.profile-sources summary small { color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.profile-source-list { padding-bottom: 10px; }
+.profile-source-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-color-light); }
+.profile-source-row strong { font-size: 12px; }
+.profile-source-row p { margin: 3px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.profile-source-row > span { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.memory-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; color: var(--text-muted); font-size: 12px; }
+.profile-filter { display: inline-flex; padding: 3px; border: 1px solid var(--border-color); background: var(--bg-tertiary); border-radius: 6px; }
+.profile-filter button { padding: 5px 9px; color: var(--text-muted); cursor: pointer; border: 0; background: transparent; border-radius: 4px; font: inherit; font-size: 11px; font-weight: 700; }
+.profile-filter button.active { color: var(--text-primary); background: var(--bg-secondary); box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 12%, transparent); }
+.memory-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto 34px; gap: 14px; align-items: start; padding: 18px 0; border-bottom: 1px solid var(--border-color-light); }
+.memory-type { display: inline-flex; align-items: center; min-height: 24px; padding: 0 7px; color: var(--color-primary-dark); border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-secondary)); border-radius: 999px; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.memory-copy strong { font-size: 13px; }
+.memory-copy p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; white-space: pre-line; }
+.memory-copy small { display: block; margin-top: 7px; color: var(--text-muted); font-size: 10px; }
+.memory-use { display: grid; justify-items: end; gap: 4px; padding-top: 2px; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.empty-inline--quiet { border-top: 1px solid var(--border-color-light); }
+
+.context-sidebar { position: sticky; top: 28px; border-left: 1px solid var(--border-color-light); }
+.sidebar-section { padding: 30px 0 30px 24px; border-bottom: 1px solid var(--border-color-light); }
+.sidebar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .sidebar-heading h2 { font-size: 16px; }
-.help-icon { color: var(--text-muted); cursor: help; }
+.help-icon { margin-top: 3px; color: var(--text-muted); cursor: help; }
 .control-field { display: grid; gap: 8px; margin-top: 18px; }
 .control-field > span { color: var(--text-secondary); font-size: 12px; font-weight: 700; }
-.control-field :deep(.el-segmented) { width: 100%; min-height: 40px; padding: 3px; }
-.control-field :deep(.el-segmented__item) { min-width: 0; }
-.permission-list { margin-top: 13px; }
-.permission-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 56px; border-bottom: 1px solid var(--border-color-light); }
-.permission-row > span { display: grid; gap: 2px; }
-.permission-row strong { font-size: 13px; }
-.permission-row small { color: var(--text-muted); font-size: 11px; line-height: 1.35; }
+.control-field :deep(.el-segmented) { width: 100%; }
+.persona-fields { display: grid; gap: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-color-light); }
+.persona-heading { display: grid; gap: 3px; }
+.persona-heading > span { color: var(--text-primary); font-size: 13px; font-weight: 800; }
+.persona-heading > small { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.control-field--compact { margin-top: 14px; }
+.control-field--compact :deep(.el-input__wrapper), .control-field--compact :deep(.el-textarea__inner) { background: var(--bg-secondary); box-shadow: 0 0 0 1px var(--border-color) inset; }
+.persona-save { justify-self: start; margin-top: 16px; }
+.permission-list { margin-top: 12px; }
+.permission-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 58px; border-bottom: 1px solid var(--border-color-light); }
+.permission-row > span { display: grid; gap: 3px; }
+.permission-row strong { font-size: 12px; }
+.permission-row small { color: var(--text-muted); font-size: 11px; line-height: 1.36; }
 .audit-id { color: var(--text-muted); font-family: var(--font-family-mono); font-size: 11px; }
 .context-note { display: flex; align-items: flex-start; gap: 7px; margin: 16px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
 .source-list { margin-top: 12px; }
@@ -797,28 +857,20 @@ onMounted(loadPage)
 .access-list { border-top: 1px solid var(--border-color-light); }
 .access-row { display: grid; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--border-color-light); font-size: 12px; }
 .access-row small, .access-empty { color: var(--text-muted); font-size: 11px; }
+
 .dialog-form { display: grid; gap: 18px; }
 .dialog-form label { display: grid; gap: 8px; }
 .dialog-form label > span, .original-value > span { color: var(--text-secondary); font-size: 13px; font-weight: 700; }
 .dialog-form label small { color: var(--text-muted); font-weight: 400; }
 .original-value { padding: 12px; border-left: 3px solid var(--color-warning); background: color-mix(in srgb, var(--color-warning) 7%, var(--bg-secondary)); }
-.original-value p { margin: 5px 0 0; color: var(--text-primary); line-height: 1.55; }
+.original-value p { margin: 5px 0 0; line-height: 1.55; }
 .switch-field { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .switch-field > span { display: grid; gap: 2px; }
 .switch-field small { line-height: 1.4; }
-@media (max-width: 1080px) { .workspace-grid { grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; } .briefing { grid-template-columns: minmax(0, 1fr) minmax(320px, .85fr); gap: 28px; } }
-@media (max-width: 860px) { .companion-page { padding-top: 22px; } .briefing { grid-template-columns: 1fr; gap: 22px; } .workspace-grid { grid-template-columns: 1fr; } .context-sidebar { position: static; } .sidebar-section { padding: 28px 2px; } }
-@media (max-width: 640px) { .profile-suggestion { grid-template-columns: 1fr; gap: 14px; } .page-header { align-items: stretch; flex-direction: column; gap: 18px; } .header-state { justify-content: space-between; width: 100%; box-sizing: border-box; } .briefing { padding: 24px 2px; } .briefing h2 { font-size: 22px; } .section-heading { align-items: flex-start; flex-direction: column; gap: 14px; } .section-counts { width: 100%; } .focus-row { grid-template-columns: 32px minmax(0, 1fr) 18px; } .focus-status { display: none; } .claim-row { grid-template-columns: 1fr; gap: 14px; } .claim-actions { justify-content: flex-start; max-width: none; } .memory-row { grid-template-columns: auto minmax(0, 1fr) 34px; } .memory-use { grid-column: 2; grid-row: 2; justify-items: start; } .empty-inline { align-items: flex-start; flex-wrap: wrap; } .empty-inline .el-button { margin-left: 45px; } }
+
+@media (max-width: 1080px) { .workspace-grid { grid-template-columns: minmax(0, 1fr) 280px; gap: 30px; } .briefing { grid-template-columns: minmax(0, 1fr) minmax(290px, .8fr); gap: 30px; } }
+@media (max-width: 860px) { .companion-page { padding-top: 28px; } .briefing { grid-template-columns: 1fr; gap: 22px; } .workspace-grid { grid-template-columns: 1fr; } .context-sidebar { position: static; border-left: 0; } .sidebar-section { padding: 28px 2px; } }
+@media (max-width: 760px) { .profile-workspace-heading, .profile-layer-heading { align-items: flex-start; flex-direction: column; gap: 14px; } .profile-layer-heading p { max-width: none; text-align: left; } .profile-heading-side { justify-items: start; width: 100%; } .profile-totals { width: 100%; justify-content: space-between; } .facet-grid { grid-template-columns: 1fr; } .hypothesis-row { grid-template-columns: 1fr; gap: 14px; } .hypothesis-actions { justify-content: flex-start; } }
+@media (max-width: 640px) { .page-header { align-items: stretch; flex-direction: column; gap: 18px; } .header-state { justify-content: space-between; width: 100%; box-sizing: border-box; } .briefing { padding: 26px 2px; } .briefing h2 { font-size: 22px; } .section-heading { align-items: flex-start; flex-direction: column; gap: 14px; } .focus-row { grid-template-columns: 32px minmax(0, 1fr) 18px; } .focus-status { display: none; } .memory-row { grid-template-columns: auto minmax(0, 1fr) 34px; } .memory-use { grid-column: 2; grid-row: 2; justify-items: start; } .empty-inline { align-items: flex-start; flex-wrap: wrap; } .empty-inline .el-button { margin-left: 45px; } .profile-layer--review { margin-inline: -2px; padding: 16px; } .profile-source-row { gap: 8px; } }
 @media (prefers-reduced-motion: reduce) { .suggestion-button { transition: none; } }
-/* The companion is a reflective workspace, with evidence kept visible but secondary. */
-.companion-page { width: min(100%, 1180px); padding-top: 42px; }
-.page-kicker, .section-kicker { color: var(--color-primary-dark); letter-spacing: .06em; text-transform: uppercase; }
-.page-header h1 { font-size: clamp(30px, 3vw, 38px); letter-spacing: -.02em; }
-.briefing { gap: 52px; padding-block: 38px; }
-.briefing-label { border-radius: 999px; padding-inline: 10px; }
-.suggestion-button { min-height: 62px; border-radius: 8px; }
-.workspace-grid { gap: 52px; }
-.profile-suggestion, .claim-row, .memory-row { padding-block: 22px; }
-.context-sidebar { top: 28px; }
-@media (max-width: 860px) { .companion-page { padding-top: 28px; } }
 </style>

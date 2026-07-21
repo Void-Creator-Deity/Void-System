@@ -1,47 +1,26 @@
-"""Composition point for the Task Workflow module."""
+"""Composition point for canonical Goal, Run, Step, and Trigger services."""
 from __future__ import annotations
 
 from adapters.sqlite.task_automation_repository import SQLiteTaskAutomationRepository
 from adapters.sqlite.task_execution_repository import SQLiteTaskExecutionRepository
-from adapters.sqlite.task_repository import SQLiteTaskRepository
-from adapters.sqlite.task_workspace_repository import SQLiteTaskWorkspaceRepository
-from core.planning_contracts import EvaluationEngine, PlanningEngine
 from core.runtime_settings import RuntimeSettings
 from database import Database
 from modules.tasks.automation import TaskAutomation
-from modules.planning.service import get_planning_engine
 from modules.tasks.execution import TaskExecution
-from modules.tasks.workspace import TaskWorkspace
-from modules.tasks.workflow import TaskWorkflow
 
 
-def get_task_workflow(database: Database, evaluator: EvaluationEngine | None = None) -> TaskWorkflow:
-    repository = SQLiteTaskRepository(database.get_connection)
-    return TaskWorkflow(repository, evaluator=evaluator)
-
-
-def get_task_workspace(
+def get_task_execution(
     database: Database,
-    evaluator: EvaluationEngine | None = None,
-    planner: PlanningEngine | None = None,
     settings: RuntimeSettings | None = None,
-) -> TaskWorkspace:
-    """Compose the task workspace over focused adapters owned by the application."""
-    repository = SQLiteTaskWorkspaceRepository(database.get_connection)
-    workflow = get_task_workflow(database, evaluator=evaluator)
-    return TaskWorkspace(
-        repository, workflow, planner=planner or get_planning_engine(settings)
-    )
-
-
-def get_task_execution(database: Database) -> TaskExecution:
-    """Compose durable execution with optional, conservative review evidence."""
+) -> TaskExecution:
+    """Compose durable execution with conservative review-memory adapters."""
     from adapters.sqlite.personal_context_repository import SQLitePersonalContextRepository
     from modules.personal_context.observation_adapters import (
         TaskReviewMemoryCandidateAdapter,
         TaskReviewObservationAdapter,
     )
     from modules.personal_context.profile import ProfileCognition
+    from modules.planning.service import get_evaluation_engine
 
     context_repository = SQLitePersonalContextRepository(database.get_connection)
     profile = ProfileCognition(context_repository)
@@ -49,10 +28,14 @@ def get_task_execution(database: Database) -> TaskExecution:
         SQLiteTaskExecutionRepository(database.get_connection),
         run_review_observation_sink=TaskReviewObservationAdapter(profile),
         run_review_memory_candidate_sink=TaskReviewMemoryCandidateAdapter(context_repository),
+        evaluation_engine=get_evaluation_engine(settings),
     )
 
 
-def get_task_automation(database: Database) -> TaskAutomation:
+def get_task_automation(
+    database: Database,
+    settings: RuntimeSettings | None = None,
+) -> TaskAutomation:
     """Compose Trigger-to-Run automation over canonical Task Execution."""
     repository = SQLiteTaskAutomationRepository(database.get_connection)
-    return TaskAutomation(repository, get_task_execution(database))
+    return TaskAutomation(repository, get_task_execution(database, settings))

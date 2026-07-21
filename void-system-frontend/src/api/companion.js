@@ -26,25 +26,16 @@ export const companionApi = {
 
   async getProfile() {
     const data = await apiRequest(api.get('/api/companion/profile'))
-    return fromKey(data, 'profile', { raw_claims: [], effective_claims: [], groups: {}, stats: {} })
+    return fromKey(data, 'profile', { facets: [], patterns: [], hypotheses: [], signals: [], sources: {} })
   },
 
-  async reviewClaim(claimId, decision, value = null, reason = '') {
-    const data = await apiRequest(api.patch(`/api/companion/profile/claims/${claimId}/review`, {
-      decision,
-      value,
-      reason
-    }))
-    return data
+  async inferProfile(options = {}) {
+    const data = await apiRequest(api.post('/api/companion/profile/hypotheses/infer', options))
+    return data ?? { hypotheses: [] }
   },
 
-  async listProfileSuggestions() {
-    const data = await apiRequest(api.get('/api/companion/profile/suggestions'))
-    return fromKey(data, 'suggestions', [])
-  },
-
-  async reviewProfileSuggestion(suggestionId, decision, value = null, reason = '') {
-    return apiRequest(api.post(`/api/companion/profile/suggestions/${suggestionId}/review`, {
+  async reviewHypothesis(hypothesisId, decision, value = null, reason = '') {
+    return apiRequest(api.patch(`/api/companion/profile/hypotheses/${hypothesisId}/review`, {
       decision,
       value,
       reason

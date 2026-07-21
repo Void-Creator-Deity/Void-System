@@ -1,10 +1,8 @@
-﻿"""
-Portable planning contracts.
+﻿"""Portable contracts for the canonical planning and evaluation boundary.
 
-Task planning and evaluation currently live in a large legacy chain. These
-contracts define the stable product seam so future implementations can move to
-LangGraph, a multi-agent runtime, or deterministic planners without changing
-route handlers.
+Plan Generation depends on these value types rather than an HTTP route, database
+schema, or a particular model SDK. A future deterministic or multi-agent engine
+can replace the active adapter without changing durable jobs or route handlers.
 """
 from __future__ import annotations
 
@@ -24,8 +22,26 @@ class UserCapability:
 
 
 @dataclass(frozen=True)
+class PlanningInteractionPolicy:
+    """Bounded wording preferences for a planning response.
+
+    Inputs: server-normalized companion settings. Outputs: enum-like values
+    consumed by the planning adapter. This object never carries persona text,
+    permissions, execution mode, or other user-authored instruction content.
+    """
+
+    tone: str = "calm"
+    initiative: str = "balanced"
+
+
+@dataclass(frozen=True)
 class PlanRequest:
-    """Request to turn a user goal into one task or a task group."""
+    """Request to turn a user goal into one task or a task group.
+
+    The interaction policy can affect plan explanation and the optional next
+    action only. It cannot change the output schema, task state, authorization,
+    rewards, or other execution semantics.
+    """
 
     topic: str
     profile_context: str = ""
@@ -33,6 +49,9 @@ class PlanRequest:
     mode: str = "auto"
     max_steps: int = 8
     strict: bool = False
+    interaction_policy: PlanningInteractionPolicy = field(
+        default_factory=PlanningInteractionPolicy
+    )
 
 
 @dataclass(frozen=True)
@@ -44,7 +63,7 @@ class PlannedTask:
     task_type: str = "main"
     priority: str = "medium"
     estimated_time: int = 30
-    reward_coins: int = 20
+    reward_growth_points: int = 20
     attribute_points: int = 0
     related_attrs: Dict[str, float] = field(default_factory=dict)
     completion_type: str = "ai_eval"
@@ -75,12 +94,11 @@ class EvaluationRequest:
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    """Normalized task evaluation result."""
+    """Normalized task evaluation result; rewards are fixed before execution."""
 
     status: str
     feedback: str
     score: int
-    suggested_rewards: Dict[str, int] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 

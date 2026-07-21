@@ -1,4 +1,4 @@
-﻿"""HTTP adapter for permissioned personal context and system companion workflows."""
+"""HTTP adapter for permissioned personal context and system companion workflows."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -12,10 +12,8 @@ from api.http.schemas.personal_context import (
     MemoryCreate,
     MemoryReview,
     MemoryUpdate,
-    ProfileClaimCreate,
-    ProfileClaimReview,
-    ProfileObservationCreate,
-    ProfileSuggestionReview,
+    ProfileHypothesisInferenceRequest,
+    ProfileHypothesisReview,
 )
 from core.personal_context_contracts import PersonalContextError
 from errors import VoidSystemException
@@ -107,109 +105,49 @@ async def get_profile_view(
     return create_success_response("Profile cognition loaded", data={"profile": profile})
 
 
-@router.get(
-    "/profile/suggestions",
-    summary="List reviewable insights from your own action history",
-    response_model=APIResponse,
-)
-async def list_profile_suggestions(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    companion: PersonalContext = Depends(get_personal_context),
-) -> APIResponse:
-    return create_success_response(
-        "Profile suggestions loaded",
-        data={"suggestions": companion.list_profile_suggestions(current_user["user_id"])},
-    )
-
-
 @router.post(
-    "/profile/suggestions/{suggestion_id}/review",
-    summary="Save your decision on a profile suggestion",
+    "/profile/hypotheses/infer",
+    summary="Organize consented profile signals into reviewable hypotheses",
     response_model=APIResponse,
 )
-async def review_profile_suggestion(
-    suggestion_id: str,
-    payload: ProfileSuggestionReview,
+async def infer_profile_hypotheses(
+    payload: ProfileHypothesisInferenceRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
     companion: PersonalContext = Depends(get_personal_context),
 ) -> APIResponse:
     try:
-        claim = companion.review_profile_suggestion(
-            current_user["user_id"], suggestion_id, payload.model_dump()
-        )
-    except PersonalContextError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("Profile suggestion reviewed", data={"claim": claim})
-
-
-@router.post("/profile/observations", summary="Record profile evidence", response_model=APIResponse)
-async def create_profile_observation(
-    payload: ProfileObservationCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    companion: PersonalContext = Depends(get_personal_context),
-) -> APIResponse:
-    try:
-        observation = companion.create_profile_observation(
-            current_user["user_id"], payload.model_dump()
+        result = companion.infer_profile_hypotheses(
+            current_user["user_id"],
+            max_signals=payload.max_signals,
+            max_hypotheses=payload.max_hypotheses,
         )
     except PersonalContextError as exc:
         raise _translate_error(exc) from exc
     return create_success_response(
-        "Profile observation recorded", data={"observation": observation}
+        "Profile hypotheses are ready for your review", data=result
     )
-
-
-@router.get("/profile/observations", summary="List profile evidence", response_model=APIResponse)
-async def list_profile_observations(
-    status: Optional[str] = Query(None),
-    limit: int = Query(100, ge=1, le=200),
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    companion: PersonalContext = Depends(get_personal_context),
-) -> APIResponse:
-    try:
-        observations = companion.list_profile_observations(
-            current_user["user_id"], status=status, limit=limit
-        )
-    except PersonalContextError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response(
-        "Profile observations loaded", data={"observations": observations}
-    )
-
-
-@router.post("/profile/claims", summary="Create an explainable profile claim", response_model=APIResponse)
-async def create_profile_claim(
-    payload: ProfileClaimCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    companion: PersonalContext = Depends(get_personal_context),
-) -> APIResponse:
-    try:
-        claim = companion.create_profile_claim(current_user["user_id"], payload.model_dump())
-    except PersonalContextError as exc:
-        raise _translate_error(exc) from exc
-    return create_success_response("Profile claim created", data={"claim": claim})
 
 
 @router.patch(
-    "/profile/claims/{claim_id}/review",
-    summary="Confirm, correct, reject, or reset a profile claim",
+    "/profile/hypotheses/{hypothesis_id}/review",
+    summary="Confirm, correct, or decline a profile hypothesis",
     response_model=APIResponse,
 )
-async def review_profile_claim(
-    claim_id: str,
-    payload: ProfileClaimReview,
+async def review_profile_hypothesis(
+    hypothesis_id: str,
+    payload: ProfileHypothesisReview,
     current_user: Dict[str, Any] = Depends(get_current_user),
     companion: PersonalContext = Depends(get_personal_context),
 ) -> APIResponse:
     try:
-        claim = companion.review_profile_claim(
-            current_user["user_id"], claim_id, payload.model_dump()
+        hypothesis = companion.review_profile_hypothesis(
+            current_user["user_id"], hypothesis_id, payload.model_dump()
         )
         profile = companion.get_profile_view(current_user["user_id"])
     except PersonalContextError as exc:
         raise _translate_error(exc) from exc
     return create_success_response(
-        "Profile claim reviewed", data={"claim": claim, "profile": profile}
+        "Profile hypothesis reviewed", data={"hypothesis": hypothesis, "profile": profile}
     )
 
 

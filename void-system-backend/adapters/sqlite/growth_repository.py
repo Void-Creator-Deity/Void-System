@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional
 
-from adapters.sqlite.task_repository import ConnectionFactory
+from adapters.sqlite.connection import ConnectionFactory
 from core.growth_contracts import GrowthProfileRepository
 
 
@@ -16,32 +16,22 @@ class SQLiteGrowthProfileRepository(GrowthProfileRepository):
     def get_balance(self, user_id: str) -> int:
         conn = self._connection_factory()
         try:
-            row = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM coins WHERE user_id = ?", (user_id,)).fetchone()
+            row = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM growth_point_ledger WHERE user_id = ?", (user_id,)).fetchone()
             return int(row[0] or 0)
         finally:
             conn.close()
 
-    def list_resources(self, user_id: str) -> Dict[str, int]:
+    def list_growth_point_activity(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
         conn = self._connection_factory()
         try:
             rows = conn.execute(
-                "SELECT resource_key, quantity FROM user_resources WHERE user_id = ?", (user_id,)
-            ).fetchall()
-            return {str(row["resource_key"]): int(row["quantity"]) for row in rows}
-        finally:
-            conn.close()
-
-    def list_coin_history(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
-        conn = self._connection_factory()
-        try:
-            rows = conn.execute(
-                "SELECT * FROM coins WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", (user_id, limit)
+                "SELECT * FROM growth_point_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", (user_id, limit)
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
 
-    def income_expense_stats(self, user_id: str) -> Dict[str, Any]:
+    def growth_point_summary(self, user_id: str) -> Dict[str, Any]:
         conn = self._connection_factory()
         try:
             row = conn.execute(
@@ -50,7 +40,7 @@ class SQLiteGrowthProfileRepository(GrowthProfileRepository):
                        COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0) AS total_expense,
                        COALESCE(SUM(CASE WHEN amount > 0 AND created_at >= date('now', '-7 days') THEN amount ELSE 0 END), 0) AS weekly_income,
                        COALESCE(ABS(SUM(CASE WHEN amount < 0 AND created_at >= date('now', '-7 days') THEN amount ELSE 0 END)), 0) AS weekly_expense
-                   FROM coins WHERE user_id = ?""",
+                   FROM growth_point_ledger WHERE user_id = ?""",
                 (user_id,),
             ).fetchone()
             total_income = int(row["total_income"] or 0)

@@ -5,8 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 import unittest
 
-from api.http.routers.documents import ask_with_user_documents
-from api.http.routers.knowledge import ask_system_knowledge
+from api.http.routers.library import ask_library
 from core.knowledge_contracts import KnowledgeAnswer, KnowledgeChunk, KnowledgeScope
 
 
@@ -51,20 +50,26 @@ class KnowledgeAnswerHttpContractTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        response = await ask_with_user_documents(
+        response = await ask_library(
             question="When is the project review?",
+            include_global_shared=False,
+            document_ids=None,
+            tags=None,
             current_user={"user_id": "member-1"},
             resources=resources,
         )
 
         self.assertEqual(response.data["support"], {"status": "ready", "source_count": 1})
-        self.assertEqual(response.data["sources"][0]["doc_id"], "doc-1")
+        self.assertEqual(response.data["sources"][0]["document_id"], "doc-1")
 
     async def test_shared_answer_returns_needs_more_context(self):
         resources = SimpleNamespace(engine=StaticAnswerEngine(_knowledge_answer(False)))
 
-        response = await ask_system_knowledge(
+        response = await ask_library(
             question="What is the policy?",
+            include_global_shared=True,
+            document_ids=None,
+            tags=None,
             current_user={"user_id": "member-1"},
             resources=resources,
         )

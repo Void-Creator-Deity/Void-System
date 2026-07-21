@@ -268,533 +268,6 @@ class PersonalContextHttpTests(unittest.TestCase):
         self.assertIn({"section": "memories", "reason": "budget"}, record["omitted_sections"])
         self.assertEqual(goal["title"], "Finish an explainable context")
 
-    def test_profile_observations_are_owner_scoped(self) -> None:
-        created = self.client.post(
-            "/api/companion/profile/observations",
-            headers=self.headers,
-            json={
-                "kind": "favorite",
-                "summary": "Saved several practical interface design references.",
-                "source_type": "favorites_import",
-                "source_ref": "collection:design",
-                "attributes": {"platform": "example", "topic": "interface-design"},
-                "weight": 0.8,
-            },
-        )
-        self.assertEqual(created.status_code, 200)
-        observation = created.json()["data"]["observation"]
-        self.assertEqual(observation["attributes"]["topic"], "interface-design")
-        self.assertTrue(observation["observed_at"])
-
-        owned = self.client.get(
-            "/api/companion/profile/observations", headers=self.headers
-        ).json()["data"]["observations"]
-        other = self.client.get(
-            "/api/companion/profile/observations", headers=self.other_headers
-        ).json()["data"]["observations"]
-        self.assertEqual(len(owned), 1)
-        self.assertEqual(other, [])
-
-    def test_profile_claim_review_preserves_raw_value_and_applies_reversible_override(self) -> None:
-        self._enable_profile_analysis(self.headers)
-        created = self.client.post(
-            "/api/companion/profile/claims",
-            headers=self.headers,
-            json={
-                "domain": "communication",
-                "profile_key": "沟通偏好",
-                "value": "Provide detailed background first",
-                "summary": "Preferred answer structure",
-                "rationale": "Inferred from prior feedback.",
-                "confidence": 0.6,
-                "evidence_refs": [{"type": "observation", "id": "feedback-1"}],
-            },
-        )
-        self.assertEqual(created.status_code, 200)
-        claim = created.json()["data"]["claim"]
-        self.assertEqual(claim["profile_key"], "沟通偏好")
-
-        pending_profile = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        self.assertFalse(pending_profile["effective_claims"][0]["context_eligible"])
-        other_profile = self.client.get(
-            "/api/companion/profile", headers=self.other_headers
-        ).json()["data"]["profile"]
-        self.assertEqual(other_profile["raw_claims"], [])
-
-        corrected = self.client.patch(
-            f"/api/companion/profile/claims/{claim['claim_id']}/review",
-            headers=self.headers,
-            json={
-                "decision": "corrected",
-                "value": "Lead with the conclusion, then explain",
-                "reason": "User correction",
-            },
-        )
-        self.assertEqual(corrected.status_code, 200)
-        corrected_profile = corrected.json()["data"]["profile"]
-        self.assertEqual(
-            corrected_profile["raw_claims"][0]["value"],
-            "Provide detailed background first",
-        )
-        self.assertEqual(
-            corrected_profile["effective_claims"][0]["value"],
-            "Lead with the conclusion, then explain",
-        )
-        self.assertEqual(
-            corrected_profile["effective_claims"][0]["effective_source"],
-            "user_override",
-        )
-        feedback = self.client.get(
-            "/api/companion/profile/observations", headers=self.headers
-        ).json()["data"]["observations"]
-        feedback_records = [
-            item for item in feedback if item["source_type"] == "profile_claim_review"
-        ]
-        self.assertEqual(len(feedback_records), 1)
-        feedback_record = feedback_records[0]
-        self.assertEqual(feedback_record["attributes"]["decision"], "corrected")
-        self.assertTrue(feedback_record["attributes"]["has_correction"])
-        self.assertNotIn("Lead with the conclusion", feedback_record["summary"])
-        self.assertNotIn("Lead with the conclusion", str(feedback_record["attributes"]))
-
-        context = self.client.get(
-            "/api/companion/context?sections=profile", headers=self.headers
-        ).json()["data"]["context"]
-        claims = [
-            item for item in context["sections"]["profile"]
-            if item["kind"] == "profile_claim"
-        ]
-        self.assertEqual(claims[0]["data"]["value"], "Lead with the conclusion, then explain")
-        self.assertEqual(claims[0]["provenance"]["source"], "profile_cognition")
-
-        reset = self.client.patch(
-            f"/api/companion/profile/claims/{claim['claim_id']}/review",
-            headers=self.headers,
-            json={"decision": "pending"},
-        )
-        reset_profile = reset.json()["data"]["profile"]
-        self.assertEqual(
-            reset_profile["effective_claims"][0]["value"],
-            "Provide detailed background first",
-        )
-        self.assertFalse(reset_profile["effective_claims"][0]["context_eligible"])
-        reset_feedback = self.client.get(
-            "/api/companion/profile/observations", headers=self.headers
-        ).json()["data"]["observations"]
-        reset_records = [
-            item for item in reset_feedback if item["source_type"] == "profile_claim_review"
-        ]
-        self.assertEqual(len(reset_records), 1)
-        self.assertEqual(reset_records[0]["observation_id"], feedback_record["observation_id"])
-        self.assertEqual(reset_records[0]["attributes"]["decision"], "pending")
-
-        rejected = self.client.patch(
-            f"/api/companion/profile/claims/{claim['claim_id']}/review",
-            headers=self.headers,
-            json={"decision": "rejected", "reason": "Not representative"},
-        )
-        self.assertEqual(rejected.status_code, 200)
-        self.assertEqual(rejected.json()["data"]["profile"]["effective_claims"], [])
-
-    def test_memory_profile_consent_is_explicit_and_reviewable(self) -> None:
-        ordinary_memory = self.client.post(
-            "/api/companion/memories",
-            headers=self.headers,
-            json={
-                "memory_type": "preference",
-                "title": "Ordinary note",
-                "content": "Keep this as a memory, not a profile conclusion.",
-            },
-        ).json()["data"]["memory"]
-        self.assertFalse(ordinary_memory["metadata"].get("contribute_to_profile", False))
-        empty_profile = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        self.assertEqual(empty_profile["raw_claims"], [])
-
-        memory = self.client.post(
-            "/api/companion/memories",
-            headers=self.headers,
-            json={
-                "memory_type": "inference",
-                "title": "Prefers reviewable steps",
-                "content": "Break work into checkpoints with evidence.",
-                "source_type": "run_evaluation",
-                "confidence": 0.82,
-                "contribute_to_profile": True,
-            },
-        ).json()["data"]["memory"]
-        self.assertTrue(memory["metadata"]["contribute_to_profile"])
-        profile = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        self.assertEqual(profile["raw_claims"][0]["review_status"], "pending")
-        self.assertFalse(profile["effective_claims"][0]["context_eligible"])
-
-        self.client.patch(
-            f"/api/companion/memories/{memory['memory_id']}",
-            headers=self.headers,
-            json={"contribute_to_profile": False},
-        )
-        profile_after_opt_out = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        self.assertEqual(profile_after_opt_out["raw_claims"], [])
-
-        disabled = self.client.put(
-            "/api/companion/settings",
-            headers=self.headers,
-            json={"permissions": {"profile": False}},
-        )
-        self.assertEqual(disabled.status_code, 200)
-        context = self.client.get(
-            "/api/companion/context?sections=profile", headers=self.headers
-        ).json()["data"]["context"]
-        self.assertNotIn("profile", context["included_sections"])
-
-        deleted = self.client.delete(
-            f"/api/companion/memories/{memory['memory_id']}", headers=self.headers
-        )
-        self.assertEqual(deleted.status_code, 200)
-        profile_after_delete = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        self.assertEqual(profile_after_delete["raw_claims"], [])
-
-
-    def test_task_history_suggestions_are_reviewable_and_owner_scoped(self) -> None:
-        empty = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        )
-        self.assertEqual(empty.status_code, 200)
-        self.assertEqual(empty.json()["data"]["suggestions"], [])
-        self._enable_profile_analysis(self.headers)
-
-        for index in range(4):
-            goal = self.client.post(
-                "/api/goals",
-                headers=self.headers,
-                json={"title": f"Finish structured action {index}"},
-            ).json()["data"]["goal"]
-            run = self.client.post(
-                f"/api/goals/{goal['goal_id']}/runs",
-                headers=self.headers,
-                json={
-                    "title": f"Structured action {index}",
-                    "mode": "assisted",
-                    "steps": [
-                        {"client_key": "prepare", "title": "Prepare"},
-                        {
-                            "client_key": "finish",
-                            "title": "Finish",
-                            "depends_on": ["prepare"],
-                        },
-                    ],
-                },
-            ).json()["data"]["run"]
-            self.assertEqual(
-                self.client.post(
-                    f"/api/runs/{run['run_id']}/start", headers=self.headers
-                ).status_code,
-                200,
-            )
-            for step in self.client.get(
-                f"/api/runs/{run['run_id']}", headers=self.headers
-            ).json()["data"]["run"]["steps"]:
-                self.assertEqual(
-                    self.client.post(
-                        f"/api/runs/{run['run_id']}/steps/{step['step_id']}/start",
-                        headers=self.headers,
-                    ).status_code,
-                    200,
-                )
-                self.assertEqual(
-                    self.client.post(
-                        f"/api/runs/{run['run_id']}/steps/{step['step_id']}/complete",
-                        headers=self.headers,
-                        json={},
-                    ).status_code,
-                    200,
-                )
-            self.assertEqual(
-                self.client.put(
-                    f"/api/runs/{run['run_id']}/review",
-                    headers=self.headers,
-                    json={"rating": 4, "next_action": "Choose the next small action"},
-                ).status_code,
-                200,
-            )
-
-        suggestions_response = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        )
-        self.assertEqual(suggestions_response.status_code, 200)
-        suggestions = suggestions_response.json()["data"]["suggestions"]
-        self.assertTrue(suggestions)
-        self.assertTrue(all(item["action"] == "review_required" for item in suggestions))
-        self.assertTrue(all(item["source"] == "your_action_history" for item in suggestions))
-        self.assertTrue(all("notes" not in str(item["evidence_refs"]) for item in suggestions))
-        self.assertTrue(all(item["first_observed_at"] for item in suggestions))
-        self.assertTrue(all(item["last_observed_at"] for item in suggestions))
-        self.assertTrue(all(
-            item["evidence_refs"][0]["data"]["observed_from"] == item["first_observed_at"]
-            for item in suggestions
-        ))
-        self.assertTrue(all(
-            item["evidence_refs"][0]["data"]["observed_to"] == item["last_observed_at"]
-            for item in suggestions
-        ))
-        follow_up = next(
-            item for item in suggestions
-            if item["suggestion_id"] == "task_behavior:follow_up_after_review"
-        )
-
-        other = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.other_headers
-        )
-        self.assertEqual(other.status_code, 200)
-        self.assertEqual(other.json()["data"]["suggestions"], [])
-
-        reviewed = self.client.post(
-            f"/api/companion/profile/suggestions/{follow_up['suggestion_id']}/review",
-            headers=self.headers,
-            json={"decision": "confirmed"},
-        )
-        self.assertEqual(reviewed.status_code, 200)
-        claim = reviewed.json()["data"]["claim"]
-        self.assertEqual(claim["review_status"], "confirmed")
-        self.assertEqual(claim["profile_key"], "behavior:follow_up_after_review")
-        self.assertEqual(claim["first_observed_at"], follow_up["first_observed_at"])
-        self.assertEqual(claim["last_observed_at"], follow_up["last_observed_at"])
-        self.assertEqual(
-            claim["value"],
-            {
-                "kind": "task_behavior",
-                "pattern": "follow_up_after_review",
-                "label": "You often turn a completed action into a concrete next step.",
-            },
-        )
-
-        after_review = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        ).json()["data"]["suggestions"]
-        self.assertNotIn(follow_up["suggestion_id"], [item["suggestion_id"] for item in after_review])
-
-        profile = self.client.get("/api/companion/profile", headers=self.headers).json()["data"]["profile"]
-        saved = next(
-            item for item in profile["effective_claims"]
-            if item["profile_key"] == "behavior:follow_up_after_review"
-        )
-        self.assertTrue(saved["context_eligible"])
-
-    def test_knowledge_use_suggestions_require_profile_permission_and_stay_owner_scoped(self) -> None:
-        owner_id = self._owner_id("owner")
-        repository = SQLiteKnowledgeLifecycleRepository(
-            self.client.app.state.database.get_connection
-        )
-        for _ in range(4):
-            repository.record_knowledge_use(
-                owner_id=owner_id,
-                mode="hybrid",
-                candidate_count=3,
-                ranked_count=2,
-                source_count=1,
-                citation_count=1,
-                answerable=True,
-            )
-        repository.record_knowledge_use(
-            owner_id=owner_id,
-            mode="hybrid",
-            candidate_count=2,
-            ranked_count=0,
-            source_count=0,
-            citation_count=0,
-            answerable=False,
-        )
-
-        disabled = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        )
-        self.assertEqual(disabled.status_code, 200)
-        self.assertEqual(disabled.json()["data"]["suggestions"], [])
-
-        self._enable_profile_analysis(self.headers)
-        suggestions = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        ).json()["data"]["suggestions"]
-        suggestion = next(
-            item
-            for item in suggestions
-            if item["suggestion_id"] == "knowledge_behavior:evidence_backed_reference"
-        )
-        self.assertEqual(suggestion["source"], "your_knowledge_use_history")
-        evidence = suggestion["evidence_refs"][0]["data"]
-        self.assertEqual(evidence["knowledge_use_count"], 5)
-        self.assertEqual(evidence["reliable_use_count"], 4)
-        self.assertNotIn("question", str(suggestion).lower())
-        self.assertNotIn("source_id", str(suggestion).lower())
-
-        other = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.other_headers
-        )
-        self.assertEqual(other.status_code, 200)
-        self.assertEqual(other.json()["data"]["suggestions"], [])
-
-    def test_corrected_profile_suggestion_requires_a_value(self) -> None:
-        self._enable_profile_analysis(self.headers)
-        goal = self.client.post(
-            "/api/goals", headers=self.headers, json={"title": "Review action"}
-        ).json()["data"]["goal"]
-        for index in range(3):
-            run = self.client.post(
-                f"/api/goals/{goal['goal_id']}/runs",
-                headers=self.headers,
-                json={
-                    "title": f"Reviewable action {index}",
-                    "steps": [{"client_key": "finish", "title": "Finish"}],
-                },
-            ).json()["data"]["run"]
-            self.client.post(f"/api/runs/{run['run_id']}/start", headers=self.headers)
-            step = self.client.get(
-                f"/api/runs/{run['run_id']}", headers=self.headers
-            ).json()["data"]["run"]["steps"][0]
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/start", headers=self.headers
-            )
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/complete",
-                headers=self.headers,
-                json={},
-            )
-            self.client.put(
-                f"/api/runs/{run['run_id']}/review",
-                headers=self.headers,
-                json={"next_action": "Write the next step"},
-            )
-
-        response = self.client.post(
-            "/api/companion/profile/suggestions/task_behavior:follow_up_after_review/review",
-            headers=self.headers,
-            json={"decision": "corrected", "value": ""},
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error_code"], "PROFILE_CORRECTION_REQUIRED")
-        profile = self.client.get("/api/companion/profile", headers=self.headers).json()["data"]["profile"]
-        self.assertEqual(profile["raw_claims"], [])
-
-    def test_rejected_profile_suggestion_is_not_shown_again(self) -> None:
-        self._enable_profile_analysis(self.headers)
-        goal = self.client.post(
-            "/api/goals", headers=self.headers, json={"title": "Action with a next step"}
-        ).json()["data"]["goal"]
-        for index in range(3):
-            run = self.client.post(
-                f"/api/goals/{goal['goal_id']}/runs",
-                headers=self.headers,
-                json={
-                    "title": f"Reviewable action {index}",
-                    "steps": [{"client_key": "finish", "title": "Finish"}],
-                },
-            ).json()["data"]["run"]
-            self.client.post(f"/api/runs/{run['run_id']}/start", headers=self.headers)
-            step = self.client.get(
-                f"/api/runs/{run['run_id']}", headers=self.headers
-            ).json()["data"]["run"]["steps"][0]
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/start", headers=self.headers
-            )
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/complete",
-                headers=self.headers,
-                json={},
-            )
-            self.client.put(
-                f"/api/runs/{run['run_id']}/review",
-                headers=self.headers,
-                json={"next_action": "Write the next step"},
-            )
-        suggestion_id = "task_behavior:follow_up_after_review"
-        rejected = self.client.post(
-            f"/api/companion/profile/suggestions/{suggestion_id}/review",
-            headers=self.headers,
-            json={"decision": "rejected", "reason": "Not useful"},
-        )
-        self.assertEqual(rejected.status_code, 200)
-        self.assertEqual(rejected.json()["data"]["claim"]["review_status"], "rejected")
-        remaining = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        ).json()["data"]["suggestions"]
-        self.assertNotIn(suggestion_id, [item["suggestion_id"] for item in remaining])
-
-    def test_resetting_a_rejected_suggestion_keeps_a_single_pending_claim(self) -> None:
-        self._enable_profile_analysis(self.headers)
-        goal = self.client.post(
-            "/api/goals", headers=self.headers, json={"title": "Action with a next step"}
-        ).json()["data"]["goal"]
-        for index in range(3):
-            run = self.client.post(
-                f"/api/goals/{goal['goal_id']}/runs",
-                headers=self.headers,
-                json={
-                    "title": f"Reviewable action {index}",
-                    "steps": [{"client_key": "finish", "title": "Finish"}],
-                },
-            ).json()["data"]["run"]
-            self.client.post(f"/api/runs/{run['run_id']}/start", headers=self.headers)
-            step = self.client.get(
-                f"/api/runs/{run['run_id']}", headers=self.headers
-            ).json()["data"]["run"]["steps"][0]
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/start", headers=self.headers
-            )
-            self.client.post(
-                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/complete",
-                headers=self.headers,
-                json={},
-            )
-            self.client.put(
-                f"/api/runs/{run['run_id']}/review",
-                headers=self.headers,
-                json={"next_action": "Write the next step"},
-            )
-
-        suggestion_id = "task_behavior:follow_up_after_review"
-        rejected = self.client.post(
-            f"/api/companion/profile/suggestions/{suggestion_id}/review",
-            headers=self.headers,
-            json={"decision": "rejected"},
-        )
-        self.assertEqual(rejected.status_code, 200)
-        claim_id = rejected.json()["data"]["claim"]["claim_id"]
-
-        reset = self.client.patch(
-            f"/api/companion/profile/claims/{claim_id}/review",
-            headers=self.headers,
-            json={"decision": "pending"},
-        )
-        self.assertEqual(reset.status_code, 200)
-        self.assertEqual(reset.json()["data"]["claim"]["review_status"], "pending")
-
-        suggestions = self.client.get(
-            "/api/companion/profile/suggestions", headers=self.headers
-        ).json()["data"]["suggestions"]
-        self.assertNotIn(suggestion_id, [item["suggestion_id"] for item in suggestions])
-
-        profile = self.client.get(
-            "/api/companion/profile", headers=self.headers
-        ).json()["data"]["profile"]
-        matching = [
-            item
-            for item in profile["raw_claims"]
-            if item["domain"] == "working_style"
-            and item["profile_key"] == "behavior:follow_up_after_review"
-        ]
-        self.assertEqual(len(matching), 1)
-        self.assertEqual(matching[0]["review_status"], "pending")
-
-
     def test_task_review_memory_candidate_requires_confirmation_before_context_use(self) -> None:
         goal_response = self.client.post(
             "/api/goals", headers=self.headers, json={"title": "Reviewable project action"}
@@ -916,6 +389,135 @@ class PersonalContextHttpTests(unittest.TestCase):
             "/api/companion/memories", headers=self.headers
         ).json()["data"]["memories"]
         self.assertNotIn(memory_id, [item["memory_id"] for item in remaining])
+
+
+    def test_briefing_reports_every_visible_permission_as_a_real_context_source(self) -> None:
+        permissions = {
+            "profile": True,
+            "goals": True,
+            "runs": True,
+            "growth": True,
+            "memories": True,
+            "knowledge": True,
+            "rewards": True,
+        }
+        updated = self.client.put(
+            "/api/companion/settings",
+            headers=self.headers,
+            json={"permissions": permissions},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["data"]["settings"]["permissions"], permissions)
+
+        response = self.client.get("/api/companion/briefing", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        sources = response.json()["data"]["briefing"]["context"]["sources"]
+        self.assertEqual({source["section"] for source in sources}, set(permissions))
+        self.assertTrue(all(source["permission"] for source in sources))
+        self.assertFalse(any(source["reason"] == "Not enabled in companion settings." for source in sources))
+
+
+
+    def _seed_profile_hypothesis(self, owner_id: str, *, key: str = "keeps-next-actions") -> str:
+        connection = self.client.app.state.database.get_connection()
+        try:
+            connection.execute(
+                """INSERT INTO profile_signals
+                   (signal_id, owner_id, kind, summary, source_type, source_ref, attributes,
+                    weight, observed_at, sensitivity, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "signal-1", owner_id, "task", "已记录 3 次任务复盘，其中 2 次留下后续行动。",
+                    "workspace_history_summary", "task_reviews:v1", "{}", 0.8,
+                    "2026-07-19T10:00:00+00:00", "private", "active",
+                    "2026-07-19T10:00:00+00:00", "2026-07-19T10:00:00+00:00",
+                ),
+            )
+            connection.execute(
+                """INSERT INTO profile_hypotheses
+                   (hypothesis_id, owner_id, domain, profile_key, value, summary, rationale,
+                    confidence, evidence_refs, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    "hypothesis-1", owner_id, "working_style", key,
+                    "倾向于在复盘后留下下一步行动。", "复盘后倾向于留下下一步行动",
+                    "已授权的任务汇总记录显示，多次复盘保留了后续行动。", 0.8,
+                    '[{"type":"profile_signal","id":"signal-1"}]',
+                    "2026-07-19T10:00:00+00:00", "2026-07-19T10:00:00+00:00",
+                ),
+            )
+            connection.commit()
+            return "hypothesis-1"
+        finally:
+            connection.close()
+
+    def test_profile_workspace_uses_canonical_layers_and_hides_raw_text(self) -> None:
+        self._enable_profile_analysis(self.headers)
+        owner_id = self._owner_id("owner")
+        self._seed_profile_hypothesis(owner_id)
+
+        profile = self.client.get("/api/companion/profile", headers=self.headers)
+        self.assertEqual(profile.status_code, 200)
+        payload = profile.json()["data"]["profile"]
+        self.assertEqual(payload["summary"]["reviewing"], 1)
+        self.assertEqual(payload["signals"][0]["label"], "任务复盘")
+        self.assertEqual(payload["hypotheses"][0]["hypothesis_id"], "hypothesis-1")
+        self.assertNotIn("signal-1", str(payload))
+        self.assertNotIn("observations", payload)
+
+    def test_confirmed_hypothesis_becomes_the_only_profile_context_projection(self) -> None:
+        self._enable_profile_analysis(self.headers)
+        owner_id = self._owner_id("owner")
+        hypothesis_id = self._seed_profile_hypothesis(owner_id)
+
+        reviewed = self.client.patch(
+            f"/api/companion/profile/hypotheses/{hypothesis_id}/review",
+            headers=self.headers,
+            json={"decision": "confirmed"},
+        )
+        self.assertEqual(reviewed.status_code, 200)
+        profile = reviewed.json()["data"]["profile"]
+        self.assertEqual(profile["summary"]["established"], 1)
+        self.assertEqual(profile["summary"]["reviewing"], 0)
+
+        context = self.client.get(
+            "/api/companion/context?sections=profile", headers=self.headers
+        )
+        self.assertEqual(context.status_code, 200)
+        items = context.json()["data"]["context"]["sections"]["profile"]
+        facets = [item for item in items if item["kind"] == "profile_facet"]
+        self.assertEqual(len(facets), 1)
+        self.assertEqual(facets[0]["data"]["value"], "倾向于在复盘后留下下一步行动。")
+        self.assertEqual(facets[0]["provenance"]["source"], "layered_profile")
+
+    def test_rejected_hypothesis_suppresses_the_same_key_and_legacy_routes_are_gone(self) -> None:
+        self._enable_profile_analysis(self.headers)
+        owner_id = self._owner_id("owner")
+        hypothesis_id = self._seed_profile_hypothesis(owner_id, key="review-style")
+        rejected = self.client.patch(
+            f"/api/companion/profile/hypotheses/{hypothesis_id}/review",
+            headers=self.headers,
+            json={"decision": "rejected", "reason": "不符合我的实际情况"},
+        )
+        self.assertEqual(rejected.status_code, 200)
+        connection = self.client.app.state.database.get_connection()
+        try:
+            suppression = connection.execute(
+                "SELECT status FROM profile_suppressions WHERE owner_id = ? AND profile_key = ?",
+                (owner_id, "review-style"),
+            ).fetchone()
+            self.assertEqual(suppression["status"], "active")
+        finally:
+            connection.close()
+        self.assertEqual(
+            self.client.get("/api/companion/profile/suggestions", headers=self.headers).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get("/api/companion/profile/observations", headers=self.headers).status_code,
+            404,
+        )
+
 
 
 if __name__ == "__main__":

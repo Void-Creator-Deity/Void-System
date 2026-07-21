@@ -86,7 +86,7 @@ class FakePlanner:
 
 class FakeEvaluator:
     def evaluate(self, request):
-        return EvaluationResult(status="pass", feedback="good", score=90, suggested_rewards={"coins": 10})
+        return EvaluationResult(status="pass", feedback="good", score=90)
 
 
 class CoreEngineTests(unittest.IsolatedAsyncioTestCase):
@@ -267,7 +267,7 @@ class PlanningContractTests(unittest.TestCase):
     def test_evaluation_engine_contract_shape(self):
         result = FakeEvaluator().evaluate(EvaluationRequest(task={}, submission={}, user_stats={}))
         self.assertEqual(result.status, "pass")
-        self.assertEqual(result.suggested_rewards["coins"], 10)
+        self.assertEqual(result.score, 90)
 
 
 if __name__ == "__main__":

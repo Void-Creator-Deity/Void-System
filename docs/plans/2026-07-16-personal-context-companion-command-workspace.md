@@ -317,3 +317,6 @@ Phase D 完成后，用户不需要理解“单任务、任务链、自动任务
 - 构建：Vite production build 成功，1543 modules transformed。
 - 浏览器：刷新后的 console errors、page errors、HTTP errors 均为空；LM Studio 未调用。
 - 清理：本轮创建的 .browser-test-runtime 与 .pnpm-store 已核验并删除。
+
+
+> **Superseded on 2026-07-18:** D5's temporary compatibility decision is no longer current. Migration 23 verifies legacy task and reward mappings, moves all valid history to Goal / Run / Step records, and deletes the legacy task routes, repositories, projection layer, mapping links, and database tables. Historical notes above describe the earlier staged rollout only; they are not an operating contract.

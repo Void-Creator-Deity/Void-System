@@ -21,7 +21,13 @@ def _review_weight(review: Mapping[str, Any]) -> float:
 
 
 class TaskReviewObservationAdapter(RunReviewObservationSink):
-    """Records a stable task-review fact; it never infers a profile claim."""
+    """Records a safe task-review signal; it never infers an understanding.
+
+    Input: one run and its structured review metadata.
+    Output: an idempotent profile signal containing only review structure, never a
+    task title, goal text, review note, next-action text, or produced content.
+    Called by: Task Execution after saving a task review.
+    """
 
     def __init__(self, profile: ProfileCognition) -> None:
         self._profile = profile
@@ -35,27 +41,17 @@ class TaskReviewObservationAdapter(RunReviewObservationSink):
         run_id = str(run.get("run_id") or "").strip()
         if not run_id:
             raise ValueError("run review evidence requires a run_id")
-        title = " ".join(str(run.get("title") or run.get("goal_title") or "Action").split())
-        title = title[:180] or "Action"
         outcome = review.get("outcome")
         rating = review.get("rating")
-        detail = []
-        if outcome:
-            detail.append(str(outcome))
-        if rating is not None:
-            detail.append(f"rating {rating}/5")
-        suffix = f" ({', '.join(detail)})" if detail else ""
-        self._profile.upsert_observation(
+        self._profile.upsert_signal(
             owner_id,
             {
                 "kind": "task",
-                "summary": f"Action review: {title}{suffix}",
+                "summary": "一次任务复盘已记录。",
                 "source_type": "task_run_review",
                 "source_ref": f"run:{run_id}:review",
                 "attributes": {
-                    "run_id": run_id,
-                    "goal_id": run.get("goal_id"),
-                    "outcome": outcome,
+                    "review_outcome_recorded": bool(outcome),
                     "rating": rating,
                     "has_notes": bool(review.get("notes")),
                     "has_next_action": bool(review.get("next_action")),

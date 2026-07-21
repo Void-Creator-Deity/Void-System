@@ -1,23 +1,25 @@
 # Void System Backend
 
-The FastAPI backend for the Void System personal growth workspace. New execution behavior is built around Goal → Run → Step and portable Core interfaces; legacy task and RAG implementations remain behind compatibility adapters during their deprecation window.
+The FastAPI backend for the Void System personal growth workspace. Execution is built around Goal → Run → Step and portable Core interfaces. The retired task, task-chain, and task-category model is not a runtime compatibility surface.
 
 ## Canonical modules
 
-- **Task Execution** owns Goal, Run, Step, Action, Event, Artifact, Approval, Worker Lease, Checkpoint, Run Command, and atomic Reward Settlement rules.
+- **Task Execution** owns Goal, Run, Step, Action, Event, Artifact, Approval, and atomic Reward Settlement rules. Manual completion and system-assisted evidence review are the only execution modes.
 - **Task Automation** owns Trigger lifecycle and idempotent Trigger Firing, then delegates execution state to Task Execution.
 - **Planning Engine** creates reviewable Goal and Run specifications without coupling callers to advisor-chain output modes.
 - **Knowledge Engine** owns ingestion, retrieval, answer support, citations, traces, evaluation, and index lifecycle behind portable interfaces.
 - **Identity, Conversations, Growth, Analytics, and Administration** expose focused domain operations through HTTP adapters.
 
-Legacy `/api/tasks`, `/api/task-chains`, task categories, reward paths, and optional LangServe routes are compatibility surfaces. New product behavior belongs to the canonical modules, and legacy writes are projected into the same execution records.
+Task execution exposes only canonical Goal, Run, Step, Approval, and Trigger contracts. A Trigger creates an ordinary Run; task progress uses explicit state transitions and evidence review rather than worker commands. Migration 23 verifies every legacy task and reward link before retiring the old task tables; reward settlement now references canonical Run and Step identities directly. Optional LangServe routes remain independently opt-in.
+
+SQLite migration history is an executable Schema Contract. Startup and `/api/health` require a contiguous, name-matching history at the current version. Migrations 24 and 25 normalize Task Execution object fields and enforce them as JSON objects at the database layer, including writes made outside repositories. Migration 27 adds owner-scoped, versioned Plan Draft persistence and an atomic publish bridge to the canonical Goal/Run model.
 
 ## API contract
 
 - JSON authentication: `POST /api/auth/register`, `/api/auth/login`, `/api/auth/refresh`, and `/api/auth/logout`
 - Goals and execution: `/api/goals`, `/api/runs`, `/api/approvals`
-- Planning: `/api/plans`
-- Automation and steering: `/api/triggers`, `/api/runs/{run_id}/commands`
+- Durable planning and reviewable drafts: `/api/plan-generations`, `/api/plan-drafts`
+- Automation: `/api/triggers`
 - Personal and shared knowledge: `/api/user/documents`, `/api/user/qa`, `/api/knowledge`
 - Administration: `/api/admin/system`, `/api/admin/rag`
 - OpenAPI UI: `/api/docs`; schema: `/api/openapi.json`
@@ -36,6 +38,8 @@ uv run main.py
 The default server is `http://127.0.0.1:8000`, with API docs at `http://127.0.0.1:8000/api/docs`.
 
 ## Configuration
+
+There is one effective environment file: `void-system-backend/.env`. It contains deployment boundaries (server, storage, encryption, authentication, browser origins) and the current AI connection profile. The administrator AI page reads and writes only that same AI profile; loading the page never contacts an upstream provider, while model discovery and connection testing are explicit actions. The frontend holds no secrets and does not own a second configuration source.
 
 Set a unique `SECRET_KEY` of at least 32 characters in production. Configure explicit `CORS_ORIGINS`, persistent `DATABASE_URL`, file and Chroma locations, and the selected chat and embedding providers. `BOOTSTRAP_ADMIN_ENABLED`, `ENABLE_TEST_USER_ENDPOINT`, and `ENABLE_LANGSERVE_ROUTES` are opt-in.
 
@@ -64,7 +68,7 @@ uv run python -m unittest discover -s tests -v
 
 Use only an environment synchronized from pyproject.toml and uv.lock. An unrelated global Python may import part of the suite while missing FastAPI and other runtime dependencies.
 
-The suite covers SQLite migrations, identity and token rotation, Goal/Run/Step transitions, worker leases and checkpoints, triggers and commands, legacy projections, reward idempotency, conversations, knowledge lifecycle, planning, administration, and HTTP owner isolation.
+The suite covers SQLite migrations and legacy-data retirement, identity and token rotation, Goal/Run/Step transitions, assisted evidence review, trigger idempotency, reward idempotency, conversations, knowledge lifecycle, planning, administration, and HTTP owner isolation.
 
 For the explicit local LM Studio smoke test only:
 

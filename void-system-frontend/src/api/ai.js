@@ -7,7 +7,9 @@
  * routes and user-facing model preferences from leaking back into the UI.
  */
 
-import api, { apiRequest } from './index'
+import api, { apiRequest } from './index.js'
+import { consumeCompleteSseEvents, eventData, streamEventDelta } from './streaming.js'
+import { clearAuthSession, refreshAccessToken } from './user.js'
 
 function streamHeaders() {
   const headers = { 'Content-Type': 'application/json' }
@@ -25,16 +27,28 @@ async function streamErrorMessage(response) {
   }
 }
 
+
 async function readSse(payload, onMessage, onError, signal) {
   let reader
   try {
-    const response = await fetch('/api/stream-chat', {
+    const requestStream = () => fetch('/api/stream-chat', {
       method: 'POST',
       headers: streamHeaders(),
       credentials: 'include',
       body: JSON.stringify(payload),
       signal
     })
+
+    let response = await requestStream()
+    if (response.status === 401 && localStorage.getItem('access_token')) {
+      try {
+        await refreshAccessToken()
+      } catch {
+        clearAuthSession()
+        throw new Error('登录状态已失效，请重新登录后继续')
+      }
+      response = await requestStream()
+    }
 
     if (!response.ok) throw new Error(await streamErrorMessage(response))
     if (!response.body) throw new Error('服务未返回可读取的回复内容')
@@ -43,23 +57,24 @@ async function readSse(payload, onMessage, onError, signal) {
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
     let completed = false
+    let receivedText = ''
 
-    const emitLine = (line) => {
-      const value = line.trim()
-      if (!value.startsWith('data:')) return
+    const emitEvent = (rawEvent) => {
+      const data = eventData(rawEvent)
 
-      const raw = value.slice(5).trim()
-      if (!raw || raw === '[DONE]') {
+      if (!data || data === '[DONE]') {
         completed = true
         return
       }
 
       try {
-        const event = JSON.parse(raw)
-        if (event?.message && !event?.content) {
+        const event = JSON.parse(data)
+        if (event?.message && !event?.content && !event?.delta) {
           throw new Error(event.message)
         }
-        onMessage?.(event?.content ?? '', Boolean(event?.finished), event)
+        const delta = streamEventDelta(receivedText, event)
+        if (delta) receivedText += delta
+        onMessage?.(delta, Boolean(event?.finished), event)
         if (event?.finished) completed = true
       } catch (error) {
         if (error instanceof SyntaxError) return
@@ -71,16 +86,14 @@ async function readSse(payload, onMessage, onError, signal) {
       const { done, value } = await reader.read()
       if (value) {
         buffer += decoder.decode(value, { stream: !done })
-        const parts = buffer.split(/\r?\n/)
-        parts.forEach(emitLine)
+        buffer = consumeCompleteSseEvents(buffer, emitEvent)
       }
 
       if (done) {
-        if (buffer.trim()) emitLine(buffer)
+        if (buffer.trim()) emitEvent(buffer)
         break
       }
     }
-
     return { completed, endedByStream: !completed }
   } catch (error) {
     onError?.(error)

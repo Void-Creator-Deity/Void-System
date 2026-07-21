@@ -120,8 +120,9 @@ class KnowledgeWorkspace:
             for trace in traces
         ]
 
-    async def rebuild_index(self, owner_id: str) -> Dict[str, Any]:
-        return await self._maintenance.rebuild_index(owner_id)
+    def enqueue_rebuild_jobs(self, owner_id: str) -> Dict[str, Any]:
+        """Queue all active sources for rebuild; workers perform the expensive work later."""
+        return self._maintenance.enqueue_rebuild_jobs(owner_id)
 
     def index_stats(self, owner_id: str) -> Dict[str, Any]:
         return self._maintenance.index_stats(owner_id)

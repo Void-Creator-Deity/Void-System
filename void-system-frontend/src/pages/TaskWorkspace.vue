@@ -230,6 +230,7 @@
     </el-dialog>
 
     <el-drawer v-model="runDrawerOpen" size="min(760px, 100vw)" :with-header="false" class="run-drawer" @closed="handleRunDrawerClosed">
+      <div v-if="runDetailLoading && !selectedRun" class="run-detail-loading"><el-icon class="is-loading"><Loading /></el-icon><span>正在读取行动详情...</span></div>
       <div v-if="selectedRun" class="run-detail">
         <header class="run-detail__header">
           <button type="button" class="drawer-close" aria-label="关闭详情" @click="runDrawerOpen = false"><el-icon><Close /></el-icon></button>
@@ -283,6 +284,8 @@
           <el-button text type="danger" @click="cancelRun">结束本次行动</el-button>
         </div>
 
+        <section v-if="terminalRun(selectedRun) && runDetailErrors.review" class="detail-load-error" role="status"><span><strong>结果与复盘暂时没有载入</strong><small>{{ runDetailErrorMessage('review') }}</small></span><el-button text :icon="Refresh" :loading="retryingRunResource === 'review'" @click="retryRunResource('review')">重试</el-button></section>
+
         <section v-if="terminalRun(selectedRun) && runReview" class="detail-section result-review" aria-labelledby="result-title">
           <div class="detail-section__heading"><div><p class="section-kicker">结果与复盘</p><h3 id="result-title">把这次行动留下来</h3></div><span>{{ runStatusLabel(selectedRun.status) }}</span></div>
           <p class="result-review__summary">{{ resultReviewSummary }}</p>
@@ -290,7 +293,7 @@
             <div class="evidence-block"><strong>已记录成果</strong><ul v-if="runReview.artifacts?.length" class="evidence-list"><li v-for="artifact in runReview.artifacts" :key="artifact.artifact_id || artifact.title"><a v-if="artifact.uri" :href="artifact.uri" target="_blank" rel="noreferrer">{{ artifact.title || '未命名成果' }}</a><span v-else>{{ artifact.title || '未命名成果' }}</span><small>{{ artifactKindLabel(artifact.kind) }}</small></li></ul><p v-else>尚未记录可交付的成果。</p></div>
             <div class="evidence-block"><strong>步骤产出</strong><ul v-if="runReview.outputs?.length" class="evidence-list"><li v-for="output in runReview.outputs" :key="output.step_id"><span>{{ output.step_title || '行动步骤' }}</span><small>{{ outputSummary(output.data) }}</small></li></ul><p v-else>没有额外的步骤产出记录。</p></div>
             <div class="evidence-block"><strong>确认记录</strong><ul v-if="runReview.approvals?.length" class="evidence-list"><li v-for="approval in runReview.approvals" :key="approval.approval_id"><span>{{ approval.summary }}</span><small>{{ approvalStatusLabel(approval.status) }}</small></li></ul><p v-else>这次行动不需要额外确认。</p></div>
-            <div class="evidence-block"><strong>已结算奖励</strong><p>{{ rewardSummary }}</p></div>
+            <div class="evidence-block"><strong>成长积分记录</strong><p>{{ rewardSummary }}</p></div>
           </div>
           <div class="reflection-form">
             <div><strong>留下复盘</strong><p>这不会改动已完成的步骤、成果或执行记录。</p></div>
@@ -320,14 +323,8 @@
           </ol>
         </section>
 
-        <section v-if="canSteerRun || runCommands.length" class="detail-section command-section">
-          <div class="detail-section__heading"><div><p class="section-kicker">调整要求</p><h3>告诉系统接下来怎么调整</h3></div><span v-if="pendingCommands.length">{{ pendingCommands.length }} 条待处理</span></div>
-          <div v-if="canSteerRun" class="command-composer"><el-input v-model="commandText" type="textarea" :rows="2" maxlength="4000" placeholder="补充限制、纠正方向，或说明新的要求" /><el-button type="primary" :icon="Promotion" :loading="submitting" :disabled="!commandText.trim()" @click="submitCommand">发送</el-button></div>
-          <div v-if="pendingCommands.length" class="command-group"><strong>等待处理</strong><div class="command-list"><div v-for="command in pendingCommands" :key="command.command_id"><span>{{ command.instruction }}</span><small>已提交，等待系统采纳</small></div></div></div>
-          <div v-if="acknowledgedCommands.length" class="command-group"><strong>已采纳</strong><div class="command-list"><div v-for="command in acknowledgedCommands" :key="command.command_id"><span>{{ command.instruction }}</span><small>已纳入后续行动</small></div></div></div>
-        </section>
 
-        <el-collapse class="history-collapse"><el-collapse-item name="history"><template #title><span class="history-title"><el-icon><Clock /></el-icon>查看执行记录</span></template><div v-if="runEvents.length" class="event-list"><div v-for="event in runEvents" :key="event.event_id"><span></span><p><strong>{{ eventLabel(event.event_type) }}</strong><small>{{ formatDateTime(event.created_at) }}</small></p></div></div><p v-else class="history-empty">还没有执行记录。</p></el-collapse-item></el-collapse>
+        <el-collapse class="history-collapse"><el-collapse-item name="history"><template #title><span class="history-title"><el-icon><Clock /></el-icon>查看执行记录</span></template><div v-if="runDetailErrors.events" class="detail-load-error" role="status"><span><strong>执行记录暂时没有载入</strong><small>{{ runDetailErrorMessage('events') }}</small></span><el-button text :icon="Refresh" :loading="retryingRunResource === 'events'" @click="retryRunResource('events')">重试</el-button></div><div v-else-if="runEvents.length" class="event-list"><div v-for="event in runEvents" :key="event.event_id"><span></span><p><strong>{{ eventLabel(event.event_type) }}</strong><small>{{ formatDateTime(event.created_at) }}</small></p></div></div><p v-else class="history-empty">还没有执行记录。</p></el-collapse-item></el-collapse>
       </div>
     </el-drawer>
   </section>
@@ -337,13 +334,14 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowRight, Bell, Calendar, Check, CircleCheckFilled, Clock, Close, Delete, Edit, List, Loading, MagicStick, MoreFilled, Plus, Promotion, Refresh, RefreshRight, VideoPause, VideoPlay, Warning } from '@element-plus/icons-vue'
+import { ArrowRight, Bell, Calendar, Check, CircleCheckFilled, Clock, Close, Delete, Edit, List, Loading, MagicStick, MoreFilled, Plus, Refresh, RefreshRight, VideoPause, VideoPlay, Warning } from '@element-plus/icons-vue'
 import { goalsApi } from '@/api/goals'
 import { runsApi } from '@/api/runs'
 import { triggersApi } from '@/api/triggers'
 import { formatAxiosErrorMessage } from '@/utils/apiPayload'
 import { buildStepCompletionInput, createStepCompletionDraft, STEP_RESULT_KIND_OPTIONS } from '@/domain/stepCompletion'
 import { artifactKindLabel, mergeDeclaredDeliverables } from '@/domain/runReviewPresentation'
+import { isTerminalRun, loadRunDetail, loadRunDetailResource } from '@/domain/runDetailLoader'
 import Advisor from '@/pages/Advisor.vue'
 
 const route = useRoute()
@@ -357,9 +355,11 @@ const activeView = ref('focus')
 const goalFilter = ref('active')
 const selectedRun = ref(null)
 const runEvents = ref([])
-const runCommands = ref([])
 const runReview = ref(null)
-const commandText = ref('')
+const runDetailLoading = ref(false)
+const runDetailErrors = reactive({ events: null, review: null })
+const runDetailRequest = ref(0)
+const retryingRunResource = ref('')
 const runDrawerOpen = ref(false)
 const goalDialogOpen = ref(false)
 const runDialogOpen = ref(false)
@@ -377,7 +377,7 @@ const reviewDraft = reactive(defaultReviewDraft())
 const stepCompletionDraft = reactive(createStepCompletionDraft())
 
 const priorityOptions = [{ label: '稍后', value: 'low' }, { label: '正常', value: 'medium' }, { label: '优先', value: 'high' }]
-const runModeOptions = [{ label: '自己完成', value: 'manual' }, { label: '和系统一起', value: 'assisted' }, { label: '交给系统', value: 'agent' }]
+const runModeOptions = [{ label: '自己完成', value: 'manual' }, { label: '和系统一起', value: 'assisted' }]
 const triggerTypeOptions = [{ label: '按时间', value: 'schedule' }, { label: '收到通知', value: 'event' }]
 const scheduleOptions = [{ label: '每天', value: 'daily' }, { label: '每周', value: 'weekly' }, { label: '按间隔', value: 'interval' }]
 const weekdays = [{ label: '周一', value: 1 }, { label: '周二', value: 2 }, { label: '周三', value: 3 }, { label: '周四', value: 4 }, { label: '周五', value: 5 }, { label: '周六', value: 6 }, { label: '周日', value: 0 }]
@@ -390,10 +390,7 @@ const recentRuns = computed(() => runs.value.filter(terminalRun).slice(0, 6))
 const filteredGoals = computed(() => goals.value.filter((goal) => goal.status === goalFilter.value))
 const pendingApprovals = computed(() => (selectedRun.value?.approvals || []).filter((approval) => approval.status === 'pending'))
 const resolvedApprovals = computed(() => (selectedRun.value?.approvals || []).filter((approval) => approval.status !== 'pending').slice().reverse())
-const pendingCommands = computed(() => runCommands.value.filter((command) => command.status !== 'acknowledged').slice().reverse())
-const acknowledgedCommands = computed(() => runCommands.value.filter((command) => command.status === 'acknowledged').slice().reverse())
 const completedStepCount = computed(() => (selectedRun.value?.steps || []).filter((step) => ['completed', 'skipped'].includes(step.status)).length)
-const canSteerRun = computed(() => selectedRun.value && !terminalRun(selectedRun.value) && ['assisted', 'agent'].includes(selectedRun.value.mode))
 const canRetryRun = computed(() => selectedRun.value?.status === 'failed' && (selectedRun.value.steps || []).some(stepCanRetry))
 const reviewCompletion = computed(() => runReview.value?.completion || null)
 const reviewDeliverables = computed(() => mergeDeclaredDeliverables(reviewCompletion.value?.deliverables?.declared))
@@ -422,8 +419,8 @@ const resultReviewSummary = computed(() => {
 })
 const rewardSummary = computed(() => {
   const totals = runReview.value?.rewards?.totals
-  if (!totals?.settlements) return '暂无已结算奖励。'
-  return '已结算 ' + totals.settlements + ' 次：' + totals.coins + ' 金币，' + totals.experience + ' 经验。'
+  if (!totals?.settlements) return '本次行动尚未结算成长积分。'
+  return '已记录 ' + totals.settlements + ' 次完成：共 ' + totals.growth_points + ' 成长积分。'
 })
 const summary = computed(() => ({
   activeGoals: activeGoals.value.length,
@@ -452,7 +449,7 @@ function syncReviewDraft(review = null) {
     nextAction: reflection.next_action || ''
   })
 }
-function terminalRun(run) { return ['completed', 'failed', 'cancelled'].includes(run?.status) }
+const terminalRun = isTerminalRun
 function stepCanRetry(step) { return step.status === 'failed' && Number(step.attempt_count || 0) < Number(step.max_attempts || 1) }
 function failedStepSummary(run) { return (run?.steps || []).find((step) => step.status === 'failed')?.error_summary || '' }
 function approvalSummary(approval) { return approval?.summary || approval?.request_data?.summary || '请确认是否继续这次行动。' }
@@ -478,7 +475,7 @@ function nextActionDescription(run) {
   const readyStep = (run?.steps || []).find((step) => step.status === 'ready')
   const failedStep = (run?.steps || []).find((step) => step.status === 'failed')
   if (run?.status === 'queued') return '确认后按既定步骤开始推进。'
-  if (run?.status === 'running') return readyStep ? '可以开始下一步，也可以先补充新的要求。' : '当前步骤完成后，系统会继续检查后续路径。'
+  if (run?.status === 'running') return readyStep ? '可以开始下一步；如需改变方向，可结束后根据复盘创建下一次行动。' : '当前步骤完成后，系统会继续检查后续路径。'
   if (run?.status === 'paused') return '继续后会保留当前进度和已完成记录。'
   if (run?.status === 'waiting_approval') return '确认影响后，行动才能继续。'
   if (run?.status === 'failed') return stepCanRetry(failedStep || {}) ? '会保留已有步骤、执行记录和交付物。' : '请调整计划后创建新的行动。'
@@ -493,13 +490,13 @@ function stepStatusLabel(status) { return ({ pending: '等待前序', ready: '�
 function stepTagType(status) { return ({ ready: 'primary', running: 'primary', waiting_approval: 'warning', completed: 'success', failed: 'danger', skipped: 'info', cancelled: 'info', pending: 'info' })[status] || 'info' }
 function goalStatusLabel(status) { return ({ active: '进行中', completed: '已达成', archived: '已归档' })[status] || status }
 function priorityLabel(priority) { return ({ low: '稍后', medium: '正常', high: '优先' })[priority] || '正常' }
-function modeLabel(mode) { return ({ manual: '自己完成', assisted: '和系统一起', agent: '交给系统' })[mode] || '自己完成' }
+function modeLabel(mode) { return ({ manual: '自己完成', assisted: '和系统一起' })[mode] || '自己完成' }
 function nextStepSummary(run) { return run.status === 'waiting_approval' ? '有一步需要你确认后才能继续。' : '打开查看下一步行动。' }
 function goalTitle(goalId) { return goals.value.find((goal) => goal.goal_id === goalId)?.title || '关联目标' }
 function isThisWeek(value) { if (!value) return false; const date = new Date(value); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return date >= start }
 function formatRelativeTime(value) { if (!value) return ''; const delta = Date.now() - new Date(value).getTime(); const minutes = Math.max(1, Math.floor(delta / 60000)); if (minutes < 60) return minutes + ' 分钟前'; const hours = Math.floor(minutes / 60); if (hours < 24) return hours + ' 小时前'; return Math.floor(hours / 24) + ' 天前' }
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '' }
-function eventLabel(type) { return ({ 'run.created': '行动已创建', 'run.started': '开始行动', 'run.paused': '暂停行动', 'run.resumed': '继续行动', 'run.completed': '行动已完成', 'run.cancelled': '行动已结束', 'step.started': '步骤已开始', 'step.completed': '步骤已完成', 'step.skipped': '步骤已跳过', 'step.failed': '步骤遇到问题', 'approval.requested': '请求确认', 'approval.resolved': '确认已处理', 'run.command_added': '补充了新要求', 'run.command_acknowledged': '新要求已采纳' })[type] || '执行状态已更新' }
+function eventLabel(type) { return ({ 'run.created': '行动已创建', 'run.started': '开始行动', 'run.paused': '暂停行动', 'run.resumed': '继续行动', 'run.completed': '行动已完成', 'run.cancelled': '行动已结束', 'step.started': '步骤已开始', 'step.completed': '步骤已完成', 'step.skipped': '步骤已跳过', 'step.failed': '步骤遇到问题', 'approval.requested': '请求确认', 'approval.resolved': '确认已处理' })[type] || '执行状态已更新' }
 function approvalStatusLabel(status) { return ({ approved: '已确认继续', rejected: '已选择暂不继续', pending: '仍在等待确认' })[status] || '已处理' }
 function outputSummary(data) {
   if (!data || typeof data !== 'object') return '已记录产出'
@@ -568,7 +565,7 @@ async function createRun() {
   submitting.value = true
   try {
     const lines = runDraft.stepsText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-    const steps = lines.length ? lines.map((title, index) => ({ client_key: 'step-' + (index + 1), title, kind: runDraft.mode === 'agent' ? 'agent' : 'manual', depends_on: index ? ['step-' + index] : [], max_attempts: runDraft.mode === 'agent' ? 3 : 1 })) : undefined
+    const steps = lines.length ? lines.map((title, index) => ({ client_key: 'step-' + (index + 1), title, kind: 'manual', depends_on: index ? ['step-' + index] : [], max_attempts: 1 })) : undefined
     let run = await runsApi.create(runGoal.value.goal_id, { title: runGoal.value.title, objective: runDraft.objective.trim(), mode: runDraft.mode, steps })
     if (runDraft.startNow) run = await runsApi.start(run.run_id)
     runDialogOpen.value = false
@@ -578,30 +575,46 @@ async function createRun() {
   } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '创建行动失败。')) } finally { submitting.value = false }
 }
 
+function applyRunDetail(detail) {
+  selectedRun.value = detail.run
+  runEvents.value = detail.events
+  runReview.value = detail.review
+  Object.assign(runDetailErrors, detail.errors)
+  syncReviewDraft(detail.review)
+}
+function runDetailErrorMessage(resource) {
+  const fallback = ({ events: '读取执行记录失败。', review: '读取结果与复盘失败。' })[resource]
+  return formatAxiosErrorMessage(runDetailErrors[resource], fallback)
+}
 async function openRun(run) {
+  const requestId = ++runDetailRequest.value
   runDrawerOpen.value = true
+  runDetailLoading.value = true
+  selectedRun.value = null
+  Object.assign(runDetailErrors, { events: null, review: null })
   try {
-    const detail = await runsApi.get(run.run_id)
-    const [events, commands, review] = await Promise.all([
-      runsApi.events(detail.run_id),
-      terminalRun(detail) ? Promise.resolve([]) : runsApi.listCommands(detail.run_id),
-      runsApi.review(detail.run_id)
-    ])
-    selectedRun.value = detail
-    runEvents.value = events
-    runCommands.value = commands
-    runReview.value = review
-    syncReviewDraft(review)
-    if (route.query.run !== detail.run_id || route.query.view !== 'focus') {
-      await router.replace({ query: { ...route.query, view: 'focus', run: detail.run_id } })
+    const detail = await loadRunDetail(runsApi, run.run_id)
+    if (requestId !== runDetailRequest.value || !runDrawerOpen.value) return
+    applyRunDetail(detail)
+    if (route.query.run !== detail.run.run_id || route.query.view !== 'focus') {
+      await router.replace({ query: { ...route.query, view: 'focus', run: detail.run.run_id } })
     }
-  } catch (error) { runDrawerOpen.value = false; ElMessage.error(formatAxiosErrorMessage(error, '无法打开行动详情。')) }
+  } catch (error) {
+    if (requestId !== runDetailRequest.value) return
+    runDrawerOpen.value = false
+    ElMessage.error(formatAxiosErrorMessage(error, '无法打开行动详情。'))
+  } finally {
+    if (requestId === runDetailRequest.value) runDetailLoading.value = false
+  }
 }
 function handleRunDrawerClosed() {
+  runDetailRequest.value += 1
+  runDetailLoading.value = false
+  retryingRunResource.value = ''
   selectedRun.value = null
   runEvents.value = []
-  runCommands.value = []
   runReview.value = null
+  Object.assign(runDetailErrors, { events: null, review: null })
   syncReviewDraft()
   if (route.query.run) {
     const query = { ...route.query }
@@ -611,14 +624,33 @@ function handleRunDrawerClosed() {
 }
 async function refreshSelectedRun(run = null) {
   if (!selectedRun.value && !run) return
+  const requestId = ++runDetailRequest.value
   const runId = run?.run_id || selectedRun.value.run_id
-  selectedRun.value = run || await runsApi.get(runId)
-  const [events, review] = await Promise.all([runsApi.events(runId), runsApi.review(runId)])
-  runEvents.value = events
-  runReview.value = review
-  syncReviewDraft(review)
-  runCommands.value = terminalRun(selectedRun.value) ? [] : await runsApi.listCommands(runId)
+  const detail = await loadRunDetail(runsApi, runId, { run })
+  if (requestId !== runDetailRequest.value || !runDrawerOpen.value) return
+  applyRunDetail(detail)
   await loadWorkspace()
+}
+async function retryRunResource(resource) {
+  if (!selectedRun.value || retryingRunResource.value) return
+  const runId = selectedRun.value.run_id
+  retryingRunResource.value = resource
+  try {
+    const result = await loadRunDetailResource(runsApi, selectedRun.value, resource)
+    if (selectedRun.value?.run_id !== runId) return
+    if (result.error) {
+      runDetailErrors[resource] = result.error
+      return
+    }
+    runDetailErrors[resource] = null
+    if (resource === 'events') runEvents.value = result.value
+    if (resource === 'review') {
+      runReview.value = result.value
+      syncReviewDraft(result.value)
+    }
+  } finally {
+    if (selectedRun.value?.run_id === runId) retryingRunResource.value = ''
+  }
 }
 async function transitionRun(action) { if (!selectedRun.value) return; submitting.value = true; try { const run = await runsApi[action](selectedRun.value.run_id); await refreshSelectedRun(run); ElMessage.success(action === 'start' ? '行动已开始' : action === 'pause' ? '行动已暂停' : '继续行动') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '更新行动状态失败。')) } finally { submitting.value = false } }
 async function cancelRun() { if (!selectedRun.value) return; try { await ElMessageBox.confirm('结束后仍可查看记录，但不能继续推进。', '结束本次行动', { confirmButtonText: '结束行动', cancelButtonText: '取消', type: 'warning' }); const run = await runsApi.cancel(selectedRun.value.run_id, '用户主动结束'); await refreshSelectedRun(run); ElMessage.success('本次行动已结束') } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(formatAxiosErrorMessage(error, '结束行动失败。')) } }
@@ -653,7 +685,6 @@ function canSkipStep(step) { return selectedRun.value?.status === 'running' && [
 async function skipStep(step) { try { await ElMessageBox.confirm('跳过后，依赖它的后续步骤可以继续。', '跳过步骤', { confirmButtonText: '跳过', cancelButtonText: '取消', type: 'warning' }); const run = await runsApi.skipStep(selectedRun.value.run_id, step.step_id); await refreshSelectedRun(run); ElMessage.success('步骤已跳过') } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(formatAxiosErrorMessage(error, '无法跳过这个步骤。')) } }
 async function retryRun() { if (!selectedRun.value) return; submitting.value = true; try { const run = await runsApi.retry(selectedRun.value.run_id); await refreshSelectedRun(run); ElMessage.success('已从失败步骤继续行动') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '暂时无法重新开始这次行动。')) } finally { submitting.value = false } }
 async function resolveApproval(approval, decision) { try { const run = await runsApi.resolveApproval(approval.approval_id, decision); await refreshSelectedRun(run); ElMessage.success(decision === 'approved' ? '已同意继续' : '已拒绝') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '处理确认失败。')) } }
-async function submitCommand() { if (!commandText.value.trim() || !selectedRun.value) return; submitting.value = true; try { await runsApi.submitCommand(selectedRun.value.run_id, { command_type: 'instruction', instruction: commandText.value.trim(), idempotency_key: 'web-' + Date.now() }); commandText.value = ''; runCommands.value = await runsApi.listCommands(selectedRun.value.run_id); runEvents.value = await runsApi.events(selectedRun.value.run_id); ElMessage.success('补充要求已发送') } catch (error) { ElMessage.error(formatAxiosErrorMessage(error, '发送补充要求失败。')) } finally { submitting.value = false } }
 async function saveReview() {
   if (!selectedRun.value || !terminalRun(selectedRun.value)) return
   const values = {
@@ -823,20 +854,20 @@ onMounted(async () => {
 .empty-state, .loading-state { display: grid; justify-items: center; gap: 11px; padding: 72px 20px; color: var(--text-muted); text-align: center; }.empty-state > .el-icon { color: var(--color-primary); font-size: 30px; }.empty-state h3 { margin: 0; color: var(--text-primary); }.empty-state p { max-width: 390px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }.loading-state { grid-template-columns: auto auto; justify-content: center; }
 .dialog-context { display: grid; gap: 3px; margin-bottom: 18px; border-left: 3px solid var(--color-primary); padding: 6px 12px; background: var(--bg-tertiary); }.dialog-context span { color: var(--text-muted); font-size: 11px; }.dialog-context strong { font-size: 13px; }
 .form-row :deep(.el-select), .form-row :deep(.el-input-number), .form-row :deep(.el-input) { width: 100%; }.form-row--two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }.field-help { margin-top: 6px; color: var(--text-muted); font-size: 11px; }
+.run-detail-loading { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 44vh; color: var(--text-muted); font-size: 13px; }.run-detail-loading .el-icon { color: var(--color-primary); font-size: 24px; }
 .run-detail { min-height: 100%; padding: 28px 30px 48px; }
 .run-detail__header { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; gap: 14px; }.drawer-close { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border-color); border-radius: 7px; color: var(--text-secondary); background: transparent; cursor: pointer; }.run-detail__identity { min-width: 0; }.run-detail__identity > span { color: var(--color-primary); font-size: 11px; font-weight: 700; }.run-detail__identity h2 { margin: 4px 0 0; color: var(--text-primary); font-size: 24px; }.run-detail__identity p { margin: 8px 0 0; color: var(--text-secondary); line-height: 1.6; }
 .run-progress { display: grid; gap: 9px; margin: 28px 0 22px; }.run-progress > div { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 12px; }.run-progress strong { color: var(--text-primary); }
 .approval-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px; margin: 0 0 16px; border: 1px solid color-mix(in srgb, var(--color-warning) 42%, var(--border-color)); border-radius: 8px; padding: 15px 16px; background: color-mix(in srgb, var(--color-warning) 8%, var(--bg-secondary)); }.approval-panel__copy { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }.approval-panel__copy > .el-icon { flex: 0 0 auto; margin-top: 1px; color: var(--color-warning); font-size: 20px; }.approval-panel__copy span { display: grid; gap: 3px; min-width: 0; }.approval-panel__copy small, .approval-panel__impact { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }.approval-panel__impact { grid-column: 1; margin: -4px 0 0 30px; }.approval-panel__actions { display: flex; align-items: center; gap: 8px; }.approval-history { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 0 2px; color: var(--text-secondary); font-size: 12px; }.approval-history > span { display: inline-flex; align-items: center; gap: 6px; color: var(--color-success); font-weight: 600; }.approval-history small { color: var(--text-muted); }
 .next-action { display: flex; align-items: center; justify-content: space-between; gap: 18px; border-top: 2px solid var(--color-primary); border-bottom: 1px solid var(--border-color); padding: 17px 0 18px; }.next-action--failed { border-top-color: var(--color-danger); }.next-action--waiting_approval { border-top-color: var(--color-warning); }.next-action > div:first-child { display: grid; gap: 4px; min-width: 0; }.next-action strong { color: var(--text-primary); font-size: 17px; }.next-action small { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }.next-action__controls { display: flex; flex: 0 0 auto; gap: 8px; }.run-problem { display: grid; gap: 7px; margin: 18px 0 0; border-left: 3px solid var(--color-danger); padding: 2px 0 2px 12px; }.run-problem > span { display: inline-flex; align-items: center; gap: 6px; color: var(--color-danger); font-size: 13px; font-weight: 700; }.run-problem p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }.run-problem small { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .run-toolbar { display: flex; flex-wrap: wrap; gap: 8px; min-height: 38px; margin: 20px 0 30px; }
-.detail-section { margin-top: 30px; }.detail-section__heading h3 { margin: 0; color: var(--text-primary); font-size: 17px; }
+.detail-section { margin-top: 30px; }.detail-section__heading h3 { margin: 0; color: var(--text-primary); font-size: 17px; }.detail-load-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 22px 0 0; border-left: 2px solid var(--color-warning); padding: 10px 0 10px 14px; background: color-mix(in srgb, var(--color-warning) 5%, transparent); }.detail-load-error > span { display: grid; gap: 3px; min-width: 0; }.detail-load-error strong { color: var(--text-primary); font-size: 12px; }.detail-load-error small { color: var(--text-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .step-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border-color); }.step-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 12px; border-bottom: 1px solid var(--border-color-light); padding: 16px 0; }.step-index { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border-color); border-radius: 50%; color: var(--text-muted); font-size: 11px; font-weight: 700; }.step-item--completed .step-index { border-color: color-mix(in srgb, var(--color-success) 35%, var(--border-color)); color: var(--color-success); background: color-mix(in srgb, var(--color-success) 8%, var(--bg-secondary)); }.step-item--running .step-index, .step-item--ready .step-index { border-color: color-mix(in srgb, var(--color-primary) 40%, var(--border-color)); color: var(--color-primary); }.step-item--failed .step-index { border-color: color-mix(in srgb, var(--color-danger) 45%, var(--border-color)); color: var(--color-danger); }
 .step-copy { min-width: 0; }.step-copy > div { display: flex; align-items: center; gap: 8px; }.step-copy h4 { margin: 0; color: var(--text-primary); font-size: 14px; }.step-copy p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }.step-copy small { display: block; margin-top: 6px; color: var(--text-muted); font-size: 10px; }.step-copy__problem { color: var(--color-danger) !important; }.step-actions { display: flex; align-items: center; gap: 4px; }
-.command-section { border-top: 1px solid var(--border-color); padding-top: 26px; }.command-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }.command-group { margin-top: 18px; }.command-group > strong { color: var(--text-primary); font-size: 12px; }.command-list { display: grid; gap: 8px; margin-top: 9px; }.command-list > div { display: grid; gap: 3px; border-left: 2px solid var(--border-color); padding: 7px 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.command-group:first-of-type .command-list > div { border-left-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 5%, transparent); }.command-group + .command-group .command-list > div { border-left-color: var(--color-success); }.command-list small { color: var(--text-muted); font-size: 11px; }
 .history-collapse { margin-top: 30px; border-top: 1px solid var(--border-color); }.history-title { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }.event-list { display: grid; gap: 0; }.event-list > div { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 10px; min-height: 48px; }.event-list > div > span { position: relative; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--color-primary); }.event-list > div > span::after { position: absolute; top: 10px; left: 3px; width: 1px; height: 35px; background: var(--border-color); content: ''; }.event-list > div:last-child > span::after { display: none; }.event-list p { display: grid; gap: 3px; margin: 0; }.event-list strong { font-size: 12px; }.event-list small, .history-empty { color: var(--text-muted); font-size: 10px; }
 @media (max-width: 1050px) { .focus-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; }.goal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 820px) { .page-heading h1 { font-size: 32px; } .action-workspace { width: min(100% - 28px, 760px); padding-top: 28px; }.page-heading { align-items: flex-start; flex-direction: column; }.page-heading__actions { width: 100%; }.page-heading__actions :deep(.el-button) { flex: 1; }.summary-strip { grid-template-columns: repeat(2, 1fr); }.summary-strip > div:nth-child(2) { border-right: 0; }.summary-strip > div:nth-child(n + 3) { border-top: 1px solid var(--border-color-light); }.focus-layout { grid-template-columns: 1fr; }.goal-rail { padding: 28px 0 0; border-top: 1px solid var(--border-color); border-left: 0; }.goal-rail__list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; }.catalog-toolbar { align-items: flex-start; flex-direction: column; }.goal-grid { grid-template-columns: 1fr; }.automation-row { grid-template-columns: 42px minmax(0, 1fr); }.automation-actions { grid-column: 2; justify-content: flex-start; }.run-detail { padding: 20px 18px 40px; } }
-@media (max-width: 560px) { .view-switcher { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: start; gap: 8px; border-bottom: 0; }.view-switcher__tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }.view-switcher__tabs > button { justify-content: center; min-width: 0; min-height: 42px; border: 1px solid var(--border-color-light); border-radius: 6px; padding: 0 8px; background: var(--bg-secondary); font-size: 13px; }.view-switcher__tabs > button::after { display: none; }.view-switcher__tabs > button.is-active { border-color: color-mix(in srgb, var(--color-primary) 38%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); color: var(--color-primary-dark); }.view-switcher__tabs small { min-width: 18px; padding: 1px 5px; }.view-switcher__refresh { width: 40px; min-height: 42px; margin-left: 0; border: 1px solid var(--border-color-light); border-radius: 6px; background: var(--bg-secondary); }.summary-strip > div { padding: 15px 14px; }.run-card { padding: 16px; }.run-card__body { gap: 12px; }.run-card__percent { font-size: 18px; }.goal-rail__list { grid-template-columns: 1fr; }.form-row--two { grid-template-columns: 1fr; }.run-detail__header { grid-template-columns: 34px minmax(0, 1fr); }.run-detail__header > .el-tag { grid-column: 2; justify-self: start; }.approval-panel { grid-template-columns: 1fr; }.approval-panel__impact { grid-column: auto; margin-left: 30px; }.approval-panel__actions { width: 100%; justify-content: flex-end; }.approval-history, .next-action { align-items: flex-start; flex-direction: column; }.next-action__controls { width: 100%; }.next-action__controls :deep(.el-button) { flex: 1; }.step-item { grid-template-columns: 30px minmax(0, 1fr); }.step-actions { grid-column: 2; }.command-composer { grid-template-columns: 1fr; }.command-composer :deep(.el-button) { width: 100%; }.automation-row { align-items: start; }.automation-actions { flex-wrap: wrap; } }
+@media (max-width: 560px) { .view-switcher { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: start; gap: 8px; border-bottom: 0; }.view-switcher__tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }.view-switcher__tabs > button { justify-content: center; min-width: 0; min-height: 42px; border: 1px solid var(--border-color-light); border-radius: 6px; padding: 0 8px; background: var(--bg-secondary); font-size: 13px; }.view-switcher__tabs > button::after { display: none; }.view-switcher__tabs > button.is-active { border-color: color-mix(in srgb, var(--color-primary) 38%, var(--border-color)); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); color: var(--color-primary-dark); }.view-switcher__tabs small { min-width: 18px; padding: 1px 5px; }.view-switcher__refresh { width: 40px; min-height: 42px; margin-left: 0; border: 1px solid var(--border-color-light); border-radius: 6px; background: var(--bg-secondary); }.summary-strip > div { padding: 15px 14px; }.run-card { padding: 16px; }.run-card__body { gap: 12px; }.run-card__percent { font-size: 18px; }.goal-rail__list { grid-template-columns: 1fr; }.form-row--two { grid-template-columns: 1fr; }.run-detail__header { grid-template-columns: 34px minmax(0, 1fr); }.run-detail__header > .el-tag { grid-column: 2; justify-self: start; }.approval-panel { grid-template-columns: 1fr; }.approval-panel__impact { grid-column: auto; margin-left: 30px; }.approval-panel__actions { width: 100%; justify-content: flex-end; }.approval-history, .next-action { align-items: flex-start; flex-direction: column; }.next-action__controls { width: 100%; }.next-action__controls :deep(.el-button) { flex: 1; }.step-item { grid-template-columns: 30px minmax(0, 1fr); }.step-actions { grid-column: 2; }.automation-row { align-items: start; }.automation-actions { flex-wrap: wrap; } }
 .completion-context { display: grid; gap: 4px; margin: -4px 0 20px; border-left: 2px solid var(--color-primary); padding: 4px 0 4px 12px; }
 .completion-context span { color: var(--text-muted); font-size: 11px; }
 .completion-context strong { color: var(--text-primary); font-size: 15px; line-height: 1.5; }

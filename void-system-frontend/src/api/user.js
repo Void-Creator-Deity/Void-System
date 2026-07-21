@@ -57,7 +57,7 @@ const isAuthenticationRequest = (url = '') => (
   url.includes('/api/auth/register')
 )
 
-const refreshAccessToken = async () => {
+export const refreshAccessToken = async () => {
   const refreshToken = localStorage.getItem('refresh_token')
   if (!refreshToken) throw new Error('No refresh token is available')
 

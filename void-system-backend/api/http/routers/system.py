@@ -37,7 +37,7 @@ async def health_check(health: SystemHealth = Depends(get_system_health)) -> API
     """Return service health and database connectivity without masking dependency failures."""
     timestamp = datetime.now(timezone.utc).isoformat()
     try:
-        health.database_is_healthy()
+        health_data = health.inspect()
     except Exception as exc:
         logger.error("Database health check failed: %s", exc)
         return JSONResponse(
@@ -49,6 +49,7 @@ async def health_check(health: SystemHealth = Depends(get_system_health)) -> API
                     "status": "unhealthy",
                     "timestamp": timestamp,
                     "database": "unhealthy",
+                    "schema": "incompatible_or_unavailable",
                     "version": _API_VERSION,
                 },
                 error_code="DATABASE_UNAVAILABLE",
@@ -60,7 +61,7 @@ async def health_check(health: SystemHealth = Depends(get_system_health)) -> API
         data={
             "status": "healthy",
             "timestamp": timestamp,
-            "database": "healthy",
+            **health_data,
             "version": _API_VERSION,
         },
     )

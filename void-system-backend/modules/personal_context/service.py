@@ -1,12 +1,15 @@
-﻿"""Personal Context use cases for settings, memories, snapshots, and briefings."""
+"""Personal Context use cases for settings, memories, snapshots, and briefings."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from core.personal_context_contracts import PersonalContextError, PersonalContextRepository
-from modules.personal_context.behavior_insights import BehaviorInsightEngine
 from modules.personal_context.context import ContextAssembler, SECTION_ORDER
+from modules.personal_context.evidence import ProfileEvidenceCollector
+from modules.personal_context.inference import MINIMUM_PROFILE_EVIDENCE, ProfileInference
+from modules.personal_context.layered_profile import LayeredProfileWorkspace
+from modules.personal_context.policy import resolve_context_policy
 from modules.personal_context.profile import ProfileCognition
 
 
@@ -25,6 +28,11 @@ MEMORY_REVIEW_STATUSES = {"pending", "confirmed", "corrected", "rejected"}
 CONTEXT_ELIGIBLE_MEMORY_REVIEWS = {"confirmed", "corrected"}
 TONES = {"calm", "warm", "direct"}
 INITIATIVES = {"quiet", "balanced", "proactive"}
+DEFAULT_PERSONA = {
+    "name": "系统精灵",
+    "role": "协作伙伴",
+    "brief": "",
+}
 
 
 def _now() -> str:
@@ -39,12 +47,16 @@ class PersonalContext:
         repository: PersonalContextRepository,
         assembler: ContextAssembler,
         profile_cognition: Optional[ProfileCognition] = None,
-        behavior_insights: Optional[BehaviorInsightEngine] = None,
+        profile_inference: Optional[ProfileInference] = None,
+        profile_evidence_collector: Optional[ProfileEvidenceCollector] = None,
+        layered_profile: Optional[LayeredProfileWorkspace] = None,
     ) -> None:
         self._repository = repository
         self._assembler = assembler
         self._profile = profile_cognition or ProfileCognition(repository)
-        self._behavior_insights = behavior_insights
+        self._profile_inference = profile_inference
+        self._profile_evidence_collector = profile_evidence_collector
+        self._layered_profile = layered_profile or LayeredProfileWorkspace()
 
     def get_settings(self, owner_id: str) -> Dict[str, Any]:
         stored = self._repository.get_settings(owner_id)
@@ -54,11 +66,13 @@ class PersonalContext:
                 "enabled": True,
                 "tone": "calm",
                 "initiative": "balanced",
+                "persona": dict(DEFAULT_PERSONA),
                 "permissions": dict(DEFAULT_PERMISSIONS),
                 "created_at": None,
                 "updated_at": None,
             }
         stored["permissions"] = self._permissions(stored.get("permissions"))
+        stored["persona"] = self._persona(stored.get("persona"), strict=False)
         return stored
 
     def update_settings(
@@ -73,6 +87,10 @@ class PersonalContext:
             raise PersonalContextError(
                 "Invalid companion initiative.", "INVALID_COMPANION_INITIATIVE"
             )
+        persona = self._persona(
+            values.get("persona", current["persona"]),
+            fallback=current["persona"],
+        )
         permissions = dict(current["permissions"])
         submitted = values.get("permissions")
         if submitted is not None:
@@ -92,9 +110,50 @@ class PersonalContext:
                 "enabled": bool(values.get("enabled", current["enabled"])),
                 "tone": tone,
                 "initiative": initiative,
+                "persona": persona,
                 "permissions": permissions,
             },
         )
+
+    @staticmethod
+    def _persona(
+        value: Any,
+        *,
+        fallback: Optional[Mapping[str, Any]] = None,
+        strict: bool = True,
+    ) -> Dict[str, str]:
+        """Return a bounded, presentation-only companion identity.
+
+        Inputs: a partial API payload or a persisted JSON value. Output: the
+        normalized name, role, and brief used only by persona-chain language
+        instructions. Invalid persisted historical values fall back safely;
+        invalid client input raises a stable domain error.
+        """
+        base = dict(DEFAULT_PERSONA)
+        if isinstance(fallback, Mapping):
+            for key in base:
+                candidate = fallback.get(key)
+                if isinstance(candidate, str):
+                    base[key] = candidate.strip()
+        if value is None:
+            return base
+        if not isinstance(value, Mapping):
+            if strict:
+                raise PersonalContextError("Persona must be an object.", "INVALID_COMPANION_PERSONA")
+            return dict(DEFAULT_PERSONA)
+        unknown = set(value) - set(DEFAULT_PERSONA)
+        if unknown:
+            raise PersonalContextError("Unknown persona field.", "INVALID_COMPANION_PERSONA")
+        limits = {"name": (1, 48), "role": (1, 80), "brief": (0, 500)}
+        for key, raw_value in value.items():
+            if not isinstance(raw_value, str):
+                raise PersonalContextError("Persona fields must be text.", "INVALID_COMPANION_PERSONA")
+            cleaned = raw_value.strip()
+            minimum, maximum = limits[key]
+            if not minimum <= len(cleaned) <= maximum:
+                raise PersonalContextError("Persona field length is invalid.", "INVALID_COMPANION_PERSONA")
+            base[key] = cleaned
+        return base
 
     def create_memory(
         self, owner_id: str, values: Mapping[str, Any]
@@ -139,86 +198,117 @@ class PersonalContext:
         )
 
     def get_profile_view(self, owner_id: str) -> Dict[str, Any]:
+        """Return the canonical layered profile workspace for one owner.
+
+        Inputs:
+            owner_id: The account whose consented signals and profile records are read.
+        Outputs:
+            A public workspace with signals, deterministic patterns, pending
+            hypotheses, confirmed facets, and an explicit context projection.
+        Privacy:
+            Raw task titles, chat content, document bodies, and storage IDs are
+            never included in the returned payload.
+        """
+        settings = self.get_settings(owner_id)
         memories = self._repository.list_memories(owner_id, limit=500)
         self._profile.sync_memories(owner_id, memories)
-        return self._profile.view(owner_id)
+        if settings["permissions"]["profile"] and self._profile_evidence_collector is not None:
+            self._profile_evidence_collector.collect(owner_id)
+        profile_view = self._profile.view(owner_id)
+        workspace = self._layered_profile.build(settings=settings, profile_view=profile_view)
+        workspace["evidence"] = self._profile_evidence_state(
+            settings, profile_view["signals"], memories
+        )
+        return workspace
 
-    def list_profile_suggestions(self, owner_id: str) -> Sequence[Dict[str, Any]]:
-        settings = self.get_settings(owner_id)
-        if self._behavior_insights is None or not settings["permissions"]["profile"]:
-            return []
-        existing_claim_keys = {
-            (claim["domain"], claim["profile_key"])
-            for claim in self._repository.list_claims(owner_id, status="active", limit=500)
-        }
-        return [
-            suggestion
-            for suggestion in self._behavior_insights.suggest(owner_id)
-            if (suggestion["domain"], suggestion["profile_key"]) not in existing_claim_keys
+    @staticmethod
+    def _profile_evidence_state(
+        settings: Mapping[str, Any],
+        signals: Sequence[Mapping[str, Any]],
+        memories: Sequence[Mapping[str, Any]],
+    ) -> Dict[str, Any]:
+        """Describe inference readiness without leaking private source content."""
+        eligible = [
+            item for item in signals
+            if item.get("status") == "active"
+            and item.get("sensitivity") in {"personal", "private"}
+            and str(item.get("summary") or "").strip()
         ]
-
-    def review_profile_suggestion(
-        self, owner_id: str, suggestion_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        suggestions = {
-            item["suggestion_id"]: item
-            for item in self.list_profile_suggestions(owner_id)
+        source_type_counts: Dict[str, int] = {}
+        for item in eligible:
+            source_type = str(item.get("source_type") or "manual")
+            source_type_counts[source_type] = source_type_counts.get(source_type, 0) + 1
+        explicit_memory_count = sum(
+            1 for memory in memories
+            if memory.get("status") == "active"
+            and bool(memory.get("use_in_context", True))
+            and str(memory.get("review_status") or "confirmed") in CONTEXT_ELIGIBLE_MEMORY_REVIEWS
+            and isinstance(memory.get("metadata"), Mapping)
+            and memory["metadata"].get("contribute_to_profile") is True
+        )
+        profile_permission = bool((settings.get("permissions") or {}).get("profile"))
+        return {
+            "eligible_signal_count": len(eligible),
+            "minimum_signal_count": MINIMUM_PROFILE_EVIDENCE,
+            "permission_enabled": profile_permission,
+            "ready_for_inference": profile_permission and len(eligible) >= MINIMUM_PROFILE_EVIDENCE,
+            "sources": [
+                {"key": "task_history", "count": source_type_counts.get("workspace_history_summary", 0), "inference_eligible": True},
+                {"key": "task_reviews", "count": source_type_counts.get("task_run_review", 0), "inference_eligible": True},
+                {"key": "profile_feedback", "count": source_type_counts.get("profile_hypothesis_review", 0), "inference_eligible": True},
+                {"key": "manual_evidence", "count": sum(count for source_type, count in source_type_counts.items() if source_type not in {"workspace_history_summary", "task_run_review", "profile_hypothesis_review", "explicit_memory"}), "inference_eligible": True},
+                {"key": "explicit_memories", "count": explicit_memory_count, "inference_eligible": False},
+            ],
         }
-        suggestion = suggestions.get(suggestion_id)
-        if suggestion is None:
+
+    def infer_profile_hypotheses(
+        self,
+        owner_id: str,
+        *,
+        max_signals: int = 24,
+        max_hypotheses: int = 4,
+    ) -> Dict[str, Any]:
+        """Ask the configured model to organize safe signals into reviewable hypotheses."""
+        settings = self.get_settings(owner_id)
+        if not settings["permissions"]["profile"]:
             raise PersonalContextError(
-                "Profile suggestion not found.", "PROFILE_SUGGESTION_NOT_FOUND", 404
+                "Enable profile understanding before asking AI to organize hypotheses.",
+                "PROFILE_PERMISSION_REQUIRED", 403,
             )
-        decision = str(values.get("decision") or "")
-        if decision not in {"confirmed", "rejected", "corrected"}:
-            raise PersonalContextError("Invalid profile review decision.", "INVALID_PROFILE_REVIEW")
-        if decision == "corrected" and not str(values.get("value") or "").strip():
-            raise PersonalContextError(
-                "A corrected value is required.", "PROFILE_CORRECTION_REQUIRED"
-            )
-        claim = self._profile.create_claim(
-            owner_id,
-            {
-                **suggestion,
-                "value": suggestion["value"],
-                "review_status": "pending",
-                "status": "active",
-            },
+        if self._profile_inference is None:
+            raise PersonalContextError("Profile inference is unavailable.", "PROFILE_INFERENCE_UNAVAILABLE", 503)
+        if not 3 <= max_signals <= 48 or not 1 <= max_hypotheses <= 6:
+            raise PersonalContextError("Invalid profile inference limits.", "INVALID_PROFILE_INFERENCE_LIMITS")
+        collected = (
+            self._profile_evidence_collector.collect(owner_id)
+            if self._profile_evidence_collector is not None
+            else []
         )
-        return self._profile.review_claim(
+        signals = self._profile.list_signals(owner_id, status="active", limit=max_signals)
+        candidates = self._profile_inference.infer(signals, max_hypotheses=max_hypotheses)
+        hypotheses = []
+        for candidate in candidates:
+            try:
+                hypotheses.append(self._profile.create_hypothesis(owner_id, candidate))
+            except PersonalContextError as exc:
+                if exc.code in {"PROFILE_HYPOTHESIS_SUPPRESSED", "PROFILE_FACET_ALREADY_CONFIRMED"}:
+                    continue
+                raise
+        return {
+            "hypotheses": hypotheses,
+            "signal_count": len([
+                item for item in signals if item.get("sensitivity") in {"personal", "private"}
+            ]),
+            "review_required": True,
+            "refreshed_signal_count": len(collected),
+        }
+
+    def review_profile_hypothesis(
+        self, owner_id: str, hypothesis_id: str, values: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return self._profile.review_hypothesis(
             owner_id,
-            claim["claim_id"],
-            decision=decision,
-            value=values.get("value"),
-            reason=str(values.get("reason") or ""),
-        )
-
-    def create_profile_observation(
-        self, owner_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        return self._profile.create_observation(owner_id, values)
-
-    def upsert_profile_observation(
-        self, owner_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        return self._profile.upsert_observation(owner_id, values)
-
-    def list_profile_observations(
-        self, owner_id: str, *, status: Optional[str] = None, limit: int = 100
-    ) -> Sequence[Dict[str, Any]]:
-        return self._profile.list_observations(owner_id, status=status, limit=limit)
-
-    def create_profile_claim(
-        self, owner_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        return self._profile.create_claim(owner_id, values)
-
-    def review_profile_claim(
-        self, owner_id: str, claim_id: str, values: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        return self._profile.review_claim(
-            owner_id,
-            claim_id,
+            hypothesis_id,
             decision=str(values.get("decision") or ""),
             value=values.get("value"),
             reason=str(values.get("reason") or ""),
@@ -307,6 +397,8 @@ class PersonalContext:
         purpose: str = "companion_context",
         requested_sections: Optional[Sequence[str]] = None,
         item_budget: int = 24,
+        profile_domains: Optional[Sequence[str]] = None,
+        include_account_profile: bool = True,
     ) -> Dict[str, Any]:
         settings = self.get_settings(owner_id)
         requested = self._requested_sections(requested_sections)
@@ -327,6 +419,8 @@ class PersonalContext:
                 permissions=settings["permissions"],
                 requested_sections=requested,
                 item_budget=item_budget,
+                profile_domains=profile_domains,
+                include_account_profile=include_account_profile,
             )
         else:
             snapshot = {
@@ -372,6 +466,46 @@ class PersonalContext:
         snapshot["audit_id"] = audit.get("audit_id")
         return snapshot
 
+    def build_ai_context(
+        self,
+        owner_id: str,
+        profile: Mapping[str, Any],
+        *,
+        purpose: str,
+    ) -> Dict[str, Any]:
+        policy = resolve_context_policy(purpose)
+        snapshot = self.build_context(
+            owner_id,
+            profile,
+            purpose=policy.purpose,
+            requested_sections=policy.requested_sections,
+            item_budget=policy.item_budget,
+            profile_domains=policy.profile_domains,
+            include_account_profile=policy.include_account_profile,
+        )
+        snapshot["manifest"] = {
+            "purpose": policy.purpose,
+            "used": bool(snapshot["item_count"]),
+            "audit_id": snapshot["audit_id"],
+            "included_sections": snapshot["included_sections"],
+            "omitted_sections": snapshot["omitted_sections"],
+            "item_count": snapshot["item_count"],
+            "user_explanation": policy.user_explanation,
+            "review_rule": "Only confirmed or corrected profile understandings are eligible.",
+        }
+        return snapshot
+
+    @staticmethod
+    def render_ai_context(snapshot: Mapping[str, Any]) -> str:
+        rows = []
+        for section in snapshot.get("included_sections", []):
+            for item in snapshot.get("sections", {}).get(section, []):
+                title = " ".join(str(item.get("title") or "").split())
+                summary = " ".join(str(item.get("summary") or "").split())
+                if title and summary:
+                    rows.append(f"[{section}] {title}: {summary}")
+        return "\n".join(rows)
+
     def build_briefing(
         self,
         owner_id: str,
@@ -380,11 +514,15 @@ class PersonalContext:
         item_budget: int = 24,
     ) -> Dict[str, Any]:
         settings = self.get_settings(owner_id)
+        policy = resolve_context_policy("companion_briefing")
         snapshot = self.build_context(
             owner_id,
             profile,
-            purpose="companion_briefing",
-            item_budget=item_budget,
+            purpose=policy.purpose,
+            requested_sections=policy.requested_sections,
+            item_budget=min(item_budget, policy.item_budget),
+            profile_domains=policy.profile_domains,
+            include_account_profile=policy.include_account_profile,
         )
         goals = snapshot["sections"].get("goals", [])
         runs = snapshot["sections"].get("runs", [])

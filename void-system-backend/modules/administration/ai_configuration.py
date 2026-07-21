@@ -5,19 +5,30 @@ from __future__ import annotations
 import json
 import logging
 import os
+from copy import copy
+from dataclasses import is_dataclass, replace
+from threading import RLock
 import re
 import shlex
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Protocol, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from core.model_connection_profile import (
+    ModelConnectionError,
+    ModelConnectionProfile,
+    SUPPORTED_CHAT_PROVIDERS,
+    normalize_lmstudio_base_url,
+    resolve_chat_connection,
+)
+
 
 logger = logging.getLogger("void-system.administration")
 
-KNOWN_PROVIDERS = {"ollama", "openai", "deepseek", "gemini", "openai_compat", "lmstudio"}
+KNOWN_PROVIDERS = set(SUPPORTED_CHAT_PROVIDERS)
 CONFIG_FIELD_MAP = {
     "llm_provider": "LLM_PROVIDER",
     "embedding_provider": "EMBEDDING_PROVIDER",
@@ -43,23 +54,25 @@ ALLOWED_EXTRA_PREFIXES = (
 SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 
 
-class AIConfigurationError(Exception):
-    """An administration-safe configuration or connection error."""
-
-    def __init__(self, message: str, code: str = "AI_CONFIGURATION_INVALID") -> None:
-        super().__init__(message)
-        self.message = message
-        self.code = code
+AIConfigurationError = ModelConnectionError
 
 
 class AIConnectionProbe(Protocol):
     """External model service checks used by AI configuration."""
 
     def list_ollama_models(self, base_url: str) -> List[str]: ...
-
     def list_openai_models(self, base_url: str, api_key: str) -> List[str]: ...
-
     def list_gemini_models(self, api_key: str) -> List[str]: ...
+    def verify_ollama_chat(self, base_url: str, model: str) -> None: ...
+    def verify_openai_chat(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        *,
+        local: bool = False,
+        request_body_options: Mapping[str, Any] | None = None,
+    ) -> None: ...
 
 
 class HTTPAIConnectionProbe:
@@ -80,28 +93,101 @@ class HTTPAIConnectionProbe:
 
     def list_openai_models(self, base_url: str, api_key: str) -> List[str]:
         base = base_url.rstrip("/")
-        request = Request(
-            f"{base}/models",
-            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-            method="GET",
-        )
+        request = Request(f"{base}/models", headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"}, method="GET")
         data = self._read_json(request)
         rows = data.get("data") if isinstance(data, dict) else []
         return [str(row["id"]) for row in rows or [] if isinstance(row, dict) and row.get("id")]
 
     def list_gemini_models(self, api_key: str) -> List[str]:
-        request = Request(
-            "https://generativelanguage.googleapis.com/v1beta/models?key=" + quote(api_key),
-            headers={"Accept": "application/json"},
-            method="GET",
-        )
+        request = Request("https://generativelanguage.googleapis.com/v1beta/models?key=" + quote(api_key), headers={"Accept": "application/json"}, method="GET")
         data = self._read_json(request)
         rows = data.get("models") if isinstance(data, dict) else []
-        return [
-            str(row["name"]).removeprefix("models/")
-            for row in rows or []
-            if isinstance(row, dict) and row.get("name")
-        ]
+        return [str(row["name"]).removeprefix("models/") for row in rows or [] if isinstance(row, dict) and row.get("name")]
+
+    def verify_ollama_chat(self, base_url: str, model: str) -> None:
+        base = (base_url or "http://localhost:11434").rstrip("/")
+        request = Request(
+            f"{base}/api/chat",
+            data=json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "stream": False,
+                "options": {"temperature": 0, "num_predict": 64},
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        data = self._read_json(request)
+        content = ((data.get("message") or {}).get("content") if isinstance(data, dict) else "") or ""
+        if not str(content).strip():
+            raise AIConfigurationError("Model returned no visible chat text.", "AI_CHAT_TEST_FAILED")
+
+    def verify_openai_chat(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        *,
+        local: bool = False,
+        request_body_options: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "temperature": 0,
+            "max_tokens": 64,
+            "stream": False,
+        }
+        if request_body_options:
+            payload.update(dict(request_body_options))
+        elif local:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        request = Request(
+            f"{base_url.rstrip('/')}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        data = self._read_json(request)
+        choices = data.get("choices") if isinstance(data, dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        if str(choice.get("finish_reason") or "") == "length":
+            raise AIConfigurationError("Model test response was truncated.", "AI_CHAT_TEST_TRUNCATED")
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = message.get("content") or ""
+        if isinstance(content, list):
+            content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
+        if str(content).strip():
+            return
+
+        streaming_payload = dict(payload)
+        streaming_payload["stream"] = True
+        streaming_request = Request(
+            f"{base_url.rstrip('/')}/chat/completions",
+            data=json.dumps(streaming_payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"},
+            method="POST",
+        )
+        streamed_text: List[str] = []
+        with urlopen(streaming_request, timeout=self.timeout_seconds) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                try:
+                    event = json.loads(line[6:])
+                except ValueError:
+                    continue
+                choices = event.get("choices") if isinstance(event, dict) else None
+                choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                delta_content = delta.get("content") or ""
+                if isinstance(delta_content, list):
+                    delta_content = "".join(str(item.get("text") or "") for item in delta_content if isinstance(item, dict))
+                if str(delta_content):
+                    streamed_text.append(str(delta_content))
+        if not "".join(streamed_text).strip():
+            raise AIConfigurationError("Model returned no visible chat text.", "AI_CHAT_TEST_FAILED")
 
 
 class AIConfigurationManager:
@@ -110,14 +196,15 @@ class AIConfigurationManager:
     def __init__(
         self,
         env_path: Path,
-        config_type: Any,
         runtime_config: Any,
         probe: AIConnectionProbe | None = None,
+        runtime_update_callback: Callable[[Any], None] | None = None,
     ) -> None:
         self.env_path = env_path
-        self.config_type = config_type
         self.runtime_config = runtime_config
         self.probe = probe or HTTPAIConnectionProbe()
+        self.runtime_update_callback = runtime_update_callback
+        self._update_lock = RLock()
 
     def warn_malformed_env_lines(self) -> None:
         bad_lines = self._find_malformed_env_lines()
@@ -125,41 +212,37 @@ class AIConfigurationManager:
             logger.warning("AI configuration file has malformed lines: %s", bad_lines)
 
     def read_profile(self) -> Dict[str, Any]:
-        provider = str(getattr(self.config_type, "LLM_PROVIDER", "ollama") or "ollama").lower()
-        model_options: List[str] = []
-        model_error = ""
-        if provider == "ollama":
-            try:
-                model_options = self.probe.list_ollama_models(
-                    str(getattr(self.config_type, "OLLAMA_BASE_URL", "http://localhost:11434"))
-                )
-            except Exception as exc:
-                model_error = self._connection_error_message(exc)
-        elif provider == "lmstudio":
-            try:
-                model_options = self.probe.list_openai_models(
-                    str(getattr(self.config_type, "OPENAI_BASE_URL", "") or "http://127.0.0.1:1234/v1"),
-                    "lm-studio",
-                )
-            except Exception as exc:
-                model_error = self._connection_error_message(exc)
+        """Return the saved runtime profile without contacting an upstream service.
 
+        Callers: the administrator configuration page on first load.
+        Input: the application-owned RuntimeSettings snapshot.
+        Output: credential-safe profile fields only. Model discovery is deliberately
+        separate so an unavailable upstream cannot make saved settings appear lost.
+        """
+        provider = str(getattr(self.runtime_config, "LLM_PROVIDER", "ollama") or "ollama").lower()
         return {
             "llm_provider": provider,
-            "embedding_provider": str(getattr(self.config_type, "EMBEDDING_PROVIDER", "ollama") or "ollama"),
-            "ollama_base_url": str(getattr(self.config_type, "OLLAMA_BASE_URL", "") or ""),
-            "chat_model": str(getattr(self.config_type, "CHAT_MODEL", "") or ""),
-            "embedding_model": str(getattr(self.config_type, "EMBEDDING_MODEL", "") or ""),
-            "openai_base_url": str(getattr(self.config_type, "OPENAI_BASE_URL", "") or ""),
-            "openai_api_key_set": bool(getattr(self.config_type, "OPENAI_API_KEY", None)),
-            "google_api_key_set": bool(getattr(self.config_type, "GOOGLE_API_KEY", None)),
+            "embedding_provider": str(getattr(self.runtime_config, "EMBEDDING_PROVIDER", "ollama") or "ollama"),
+            "ollama_base_url": str(getattr(self.runtime_config, "OLLAMA_BASE_URL", "") or ""),
+            "chat_model": str(getattr(self.runtime_config, "CHAT_MODEL", "") or ""),
+            "embedding_model": str(getattr(self.runtime_config, "EMBEDDING_MODEL", "") or ""),
+            "openai_base_url": str(getattr(self.runtime_config, "OPENAI_BASE_URL", "") or ""),
+            "openai_api_key_set": bool(getattr(self.runtime_config, "OPENAI_API_KEY", None)),
+            "google_api_key_set": bool(getattr(self.runtime_config, "GOOGLE_API_KEY", None)),
             "env_entries": self._public_env_entries(),
-            "model_options": model_options,
-            "model_options_error": model_error,
+            "model_options": [],
+            "model_options_error": "",
             "supported_providers": sorted(KNOWN_PROVIDERS),
         }
 
     def update_profile(self, values: Mapping[str, Any]) -> Dict[str, Any]:
+        # Persisted environment edits and the runtime snapshot swap must be one
+        # administration transaction. Existing requests keep their old immutable
+        # snapshot; later requests observe the fully updated one.
+        with self._update_lock:
+            return self._update_profile_locked(values)
+
+    def _update_profile_locked(self, values: Mapping[str, Any]) -> Dict[str, Any]:
         update_map: Dict[str, str] = {}
         for field_name, env_key in CONFIG_FIELD_MAP.items():
             if values.get(field_name) is None:
@@ -169,6 +252,12 @@ class AIConfigurationManager:
         provider = update_map.get("LLM_PROVIDER")
         if provider and provider.lower() not in KNOWN_PROVIDERS:
             raise AIConfigurationError("暂不支持这个模型来源，请选择列表中的连接方式。")
+
+        if str(update_map.get("LLM_PROVIDER") or "").lower() == "lmstudio":
+            update_map["OPENAI_BASE_URL"] = normalize_lmstudio_base_url(
+                update_map.get("OPENAI_BASE_URL")
+                or getattr(self.runtime_config, "OPENAI_BASE_URL", "")
+            )
 
         extra_env = values.get("extra_env")
         if isinstance(extra_env, Mapping):
@@ -195,63 +284,105 @@ class AIConfigurationManager:
             "apply_runtime": apply_runtime,
         }
 
-    def test_profile(self, values: Mapping[str, Any]) -> Dict[str, Any]:
-        provider = str(values.get("llm_provider") or getattr(self.config_type, "LLM_PROVIDER", "ollama")).strip().lower()
-        if provider not in KNOWN_PROVIDERS:
-            raise AIConfigurationError("暂不支持这个模型来源。", "AI_PROVIDER_NOT_SUPPORTED")
+    def _connection_profile(
+        self,
+        values: Mapping[str, Any],
+        *,
+        require_model: bool,
+    ) -> ModelConnectionProfile:
+        """Resolve form values against the same runtime profile used by AI calls.
 
+        Unpersisted administrator form values are accepted only for discovery and
+        verification. Saving still happens through update_profile; runtime calls
+        always resolve the application-owned RuntimeSettings instance.
+        """
+        return resolve_chat_connection(
+            self.runtime_config,
+            values,
+            require_model=require_model,
+        )
+
+    def test_profile(self, values: Mapping[str, Any]) -> Dict[str, Any]:
+        """Verify discovery and one visible chat response using one profile.
+
+        A successful result means the selected model and protocol options are
+        exactly those that get_chat_llm will use after the same values are saved.
+        """
         started = time.perf_counter()
         try:
-            models = self._probe_provider(provider, values)
+            profile = self._connection_profile(values, require_model=True)
+            models = self._probe_provider(profile)
+            if models and profile.model not in models:
+                raise AIConfigurationError(
+                    f"Connection succeeded but model '{profile.model}' was not discovered.",
+                    "AI_MODEL_NOT_FOUND",
+                )
+            self._verify_chat_generation(profile)
         except AIConfigurationError:
             raise
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             raise AIConfigurationError(
-                f"无法连接到模型服务：{self._connection_error_message(exc)}",
-                "AI_CONNECT_TEST_FAILED",
+                f"Unable to verify model generation: {self._connection_error_message(exc)}",
+                "AI_CHAT_TEST_FAILED",
             ) from exc
-
-        model = str(values.get("chat_model") or getattr(self.config_type, "CHAT_MODEL", "") or "").strip()
-        if model and models and model not in models:
-            raise AIConfigurationError(
-                f"连接正常，但没有找到模型“{model}”。请刷新模型列表或更换模型。",
-                "AI_MODEL_NOT_FOUND",
-            )
         return {
-            "provider": provider,
+            "provider": profile.provider,
             "model_count": len(models),
-            "selected_model_available": not model or not models or model in models,
+            "selected_model_available": not models or profile.model in models,
+            "model_options": models,
+            "chat_generation_verified": True,
             "latency_ms": round((time.perf_counter() - started) * 1000),
+            "runtime_profile": profile.public_diagnostics(),
         }
 
-    def _probe_provider(self, provider: str, values: Mapping[str, Any]) -> List[str]:
-        if provider == "ollama":
-            base_url = str(values.get("ollama_base_url") or getattr(self.config_type, "OLLAMA_BASE_URL", "http://localhost:11434")).strip()
-            return self.probe.list_ollama_models(base_url)
-        if provider == "lmstudio":
-            base_url = str(
-                values.get("openai_base_url")
-                or getattr(self.config_type, "OPENAI_BASE_URL", "")
-                or "http://127.0.0.1:1234/v1"
-            ).strip()
-            return self.probe.list_openai_models(base_url, "lm-studio")
-        if provider in {"openai", "deepseek", "openai_compat"}:
-            api_key = str(values.get("openai_api_key") or getattr(self.config_type, "OPENAI_API_KEY", "") or "").strip()
-            if not api_key:
-                raise AIConfigurationError("请先填写 API Key。", "AI_CONNECT_TEST_FAILED")
-            base_url = str(values.get("openai_base_url") or getattr(self.config_type, "OPENAI_BASE_URL", "") or "").strip()
-            if not base_url:
-                if provider == "openai":
-                    base_url = "https://api.openai.com/v1"
-                elif provider == "deepseek":
-                    base_url = "https://api.deepseek.com/v1"
-                else:
-                    raise AIConfigurationError("兼容接口需要填写服务地址。")
-            return self.probe.list_openai_models(base_url, api_key)
-        api_key = str(values.get("google_api_key") or getattr(self.config_type, "GOOGLE_API_KEY", "") or "").strip()
-        if not api_key:
-            raise AIConfigurationError("请先填写 Gemini API Key。", "AI_CONNECT_TEST_FAILED")
-        return self.probe.list_gemini_models(api_key)
+    def discover_models(self, values: Mapping[str, Any]) -> Dict[str, Any]:
+        """List upstream models using the canonical, credential-safe profile."""
+        try:
+            profile = self._connection_profile(values, require_model=False)
+            models = self._probe_provider(profile)
+        except AIConfigurationError:
+            raise
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+            raise AIConfigurationError(
+                f"Unable to discover upstream models: {self._connection_error_message(exc)}",
+                "AI_MODEL_DISCOVERY_FAILED",
+            ) from exc
+        return {
+            "provider": profile.provider,
+            "model_options": models,
+            "model_count": len(models),
+            "runtime_profile": profile.public_diagnostics(),
+        }
+
+    def _verify_chat_generation(self, profile: ModelConnectionProfile) -> None:
+        if profile.protocol == "ollama":
+            self.probe.verify_ollama_chat(profile.base_url or "http://localhost:11434", profile.model)
+            return
+        if profile.protocol == "openai":
+            self.probe.verify_openai_chat(
+                profile.base_url or "",
+                profile.api_key or "",
+                profile.model,
+                local=profile.is_local,
+                request_body_options=profile.request_body_options,
+            )
+            return
+        raise AIConfigurationError(
+            "Gemini connection verification is not implemented by this HTTP probe.",
+            "AI_CHAT_TEST_NOT_SUPPORTED",
+        )
+
+    def _probe_provider(self, profile: ModelConnectionProfile) -> List[str]:
+        if profile.protocol == "ollama":
+            return self.probe.list_ollama_models(profile.base_url or "http://localhost:11434")
+        if profile.protocol == "openai":
+            return self.probe.list_openai_models(profile.base_url or "", profile.api_key or "")
+        if profile.protocol == "gemini":
+            return self.probe.list_gemini_models(profile.api_key or "")
+        raise AIConfigurationError(
+            f"Unsupported discovery protocol: {profile.protocol}.",
+            "AI_PROTOCOL_NOT_SUPPORTED",
+        )
 
     def _find_malformed_env_lines(self) -> List[int]:
         if not self.env_path.exists():
@@ -319,10 +450,19 @@ class AIConfigurationManager:
         self.env_path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
 
     def _apply_runtime(self, updates: Mapping[str, str]) -> None:
+        """Publish a complete RuntimeSettings replacement after one config save.
+
+        The prior settings object is never mutated. Requests and workers that
+        already captured it can finish consistently, while the callback makes
+        the new snapshot authoritative for subsequent dependency resolution.
+        """
+        next_runtime = replace(self.runtime_config) if is_dataclass(self.runtime_config) else copy(self.runtime_config)
         for key, value in updates.items():
-            setattr(self.config_type, key, value)
-            setattr(self.runtime_config, key, value)
+            setattr(next_runtime, key, value)
             os.environ[key] = value
+        self.runtime_config = next_runtime
+        if self.runtime_update_callback is not None:
+            self.runtime_update_callback(next_runtime)
 
     @staticmethod
     def _serialize_env_value(value: str) -> str:

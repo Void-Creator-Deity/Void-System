@@ -1,4 +1,4 @@
-"""Behavior tests for Trigger-to-Run automation and durable Run commands."""
+"""Behavior tests for Trigger-to-Run automation over canonical execution."""
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -45,17 +45,15 @@ class TaskAutomationTests(unittest.TestCase):
                 "trigger_type": "event",
                 "configuration": {"event_type": "review.ready"},
                 "run_template": {
-                    "mode": "agent",
+                    "mode": "manual",
                     "steps": [
                         {
                             "client_key": "collect",
                             "title": "Collect evidence",
-                            "kind": "agent",
                         },
                         {
                             "client_key": "publish",
                             "title": "Publish review",
-                            "kind": "review",
                             "depends_on": ["collect"],
                         },
                     ],
@@ -114,70 +112,12 @@ class TaskAutomationTests(unittest.TestCase):
             )
         self.assertEqual(context.exception.code, "TRIGGER_NOT_ACTIVE")
 
-    def test_trigger_and_run_commands_are_owner_scoped(self) -> None:
+    def test_trigger_is_owner_scoped(self) -> None:
         trigger = self.create_trigger()
-        fired = self.automation.fire_trigger(
-            "user-1", trigger["trigger_id"], "owner-scope"
-        )
-        with self.assertRaises(TaskAutomationError) as trigger_error:
-            self.automation.get_trigger("user-2", trigger["trigger_id"])
-        self.assertEqual(trigger_error.exception.code, "TRIGGER_NOT_FOUND")
-        with self.assertRaises(TaskAutomationError) as run_error:
-            self.automation.list_commands(
-                "user-2", fired["run"]["run_id"]
-            )
-        self.assertEqual(run_error.exception.code, "RUN_NOT_FOUND")
-
-    def test_commands_are_idempotent_and_acknowledged_once(self) -> None:
-        fired = self.automation.fire_trigger(
-            "user-1", self.create_trigger()["trigger_id"], "steering"
-        )
-        run_id = fired["run"]["run_id"]
-        values = {
-            "command_type": "follow_up",
-            "instruction": "Include the deployment evidence.",
-            "payload": {"priority": "high"},
-            "idempotency_key": "follow-up-1",
-        }
-        first = self.automation.submit_command("user-1", run_id, values)
-        duplicate = self.automation.submit_command("user-1", run_id, values)
-        self.assertEqual(first["command_id"], duplicate["command_id"])
-        self.assertEqual(
-            [item["command_id"] for item in self.automation.list_commands(
-                "user-1", run_id, "pending"
-            )],
-            [first["command_id"]],
-        )
-
-        acknowledged = self.automation.acknowledge_command(
-            "user-1", run_id, first["command_id"]
-        )
-        replay = self.automation.acknowledge_command(
-            "user-1", run_id, first["command_id"]
-        )
-        self.assertEqual(acknowledged["status"], "acknowledged")
-        self.assertEqual(acknowledged["command_id"], replay["command_id"])
-        events = self.execution.list_events("user-1", run_id)
-        event_types = [event["event_type"] for event in events]
-        self.assertEqual(event_types.count("run.command_added"), 1)
-        self.assertEqual(event_types.count("run.command_acknowledged"), 1)
-
-    def test_terminal_run_rejects_new_command(self) -> None:
-        goal = self.create_goal()
-        run = self.execution.create_run(
-            "user-1", goal["goal_id"], {"steps": [{"title": "Finish"}]}
-        )
-        run = self.execution.start_run("user-1", run["run_id"])
-        step_id = run["steps"][0]["step_id"]
-        self.execution.start_step("user-1", run["run_id"], step_id)
-        self.execution.complete_step("user-1", run["run_id"], step_id)
+        self.automation.fire_trigger("user-1", trigger["trigger_id"], "owner-scope")
         with self.assertRaises(TaskAutomationError) as context:
-            self.automation.submit_command(
-                "user-1",
-                run["run_id"],
-                {"command_type": "instruction", "instruction": "Do more"},
-            )
-        self.assertEqual(context.exception.code, "RUN_COMMANDS_CLOSED")
+            self.automation.get_trigger("user-2", trigger["trigger_id"])
+        self.assertEqual(context.exception.code, "TRIGGER_NOT_FOUND")
 
     def test_firing_record_and_event_are_atomic(self) -> None:
         trigger = self.create_trigger()
@@ -228,30 +168,6 @@ class TaskAutomationTests(unittest.TestCase):
             1,
         )
         connection.close()
-
-    def test_command_and_event_are_atomic(self) -> None:
-        fired = self.automation.fire_trigger(
-            "user-1", self.create_trigger()["trigger_id"], "command-atomic"
-        )
-        run_id = fired["run"]["run_id"]
-        connection = self.database.get_connection()
-        connection.execute(
-            """CREATE TRIGGER fail_command_event
-               BEFORE INSERT ON task_events
-               WHEN NEW.event_type = 'run.command_added'
-               BEGIN
-                   SELECT RAISE(ABORT, 'event append failed');
-               END"""
-        )
-        connection.commit()
-        connection.close()
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.automation.submit_command(
-                "user-1",
-                run_id,
-                {"command_type": "instruction", "instruction": "Inspect tests"},
-            )
-        self.assertEqual(self.automation.list_commands("user-1", run_id), [])
 
 
 if __name__ == "__main__":

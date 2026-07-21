@@ -4,16 +4,17 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from adapters.sqlite.task_repository import ConnectionFactory
+from adapters.sqlite.connection import ConnectionFactory
+from adapters.sqlite.object_json import decode_object, encode_object
 from core.task_execution_contracts import TaskExecutionRepository
 
 
 _JSON_FIELDS = {
-    "metadata", "completion_criteria", "input_data", "output_data", "payload",
-    "request_data", "decision_data", "checkpoint_data",
+    "metadata", "completion_criteria", "input_data", "reward_spec", "output_data", "payload",
+    "request_data", "decision_data",
 }
 
 
@@ -22,7 +23,7 @@ def _now() -> str:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value if value is not None else {}, ensure_ascii=False)
+    return encode_object(value)
 
 
 def _observation_range(row: Optional[sqlite3.Row]) -> Dict[str, Optional[str]]:
@@ -38,11 +39,7 @@ def _decode(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
     for field in _JSON_FIELDS:
         if field not in value:
             continue
-        raw = value.get(field)
-        try:
-            value[field] = json.loads(raw) if raw else {}
-        except (TypeError, json.JSONDecodeError):
-            value[field] = {}
+        value[field] = decode_object(value.get(field))
     for field in ("requires_approval",):
         if field in value:
             value[field] = bool(value[field])
@@ -75,6 +72,58 @@ def _insert_event(
         "event_type": event_type,
         "payload": dict(payload or {}),
         "created_at": created_at,
+    }
+
+
+def _settle_completed_step_reward(
+    conn: sqlite3.Connection,
+    user_id: str,
+    run_id: str,
+    step_id: str,
+    *,
+    now: str,
+) -> Dict[str, Any]:
+    """Persist a published Step reward within the completion transaction.
+
+    Inputs are the canonical Step identity and an already-open SQLite transaction. The
+    function reads only the Step's persisted reward specification, writes one immutable
+    settlement and its matching growth-ledger entry, then returns a public event payload.
+    Callers invoke it only after the Step status changed to completed; any malformed
+    specification or ledger failure raises and rolls back the entire transition.
+    """
+    row = conn.execute(
+        """SELECT reward_spec FROM task_steps
+           WHERE step_id = ? AND run_id = ? AND user_id = ?""",
+        (step_id, run_id, user_id),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Completed step disappeared before reward settlement")
+    reward_spec = decode_object(row["reward_spec"])
+    growth_points = reward_spec.get("growth_points", 0)
+    if isinstance(growth_points, bool) or not isinstance(growth_points, int):
+        raise ValueError("Step reward growth_points must be an integer")
+    if not 0 <= growth_points <= 1000:
+        raise ValueError("Step reward growth_points is outside the allowed range")
+    if growth_points == 0:
+        return {"growth_points": 0, "settled": False}
+    settlement_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO task_reward_settlements
+           (settlement_id, user_id, run_id, step_id, growth_points, source, created_at)
+           VALUES (?, ?, ?, ?, ?, 'task_step_completed', ?)""",
+        (settlement_id, user_id, run_id, step_id, growth_points, now),
+    )
+    ledger_record_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO growth_point_ledger (record_id, user_id, amount, type, source, created_at)
+           VALUES (?, ?, ?, 'earn', ?, ?)""",
+        (ledger_record_id, user_id, growth_points, f"task_step:{step_id}", now),
+    )
+    return {
+        "settlement_id": settlement_id,
+        "growth_points": growth_points,
+        "ledger_record_id": ledger_record_id,
+        "settled": True,
     }
 
 
@@ -303,7 +352,7 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (
                         str(uuid.uuid4()), goal_id, user_id, change_kind,
-                        _json(sorted(changed_fields)), now,
+                        json.dumps(sorted(changed_fields), ensure_ascii=False), now,
                     ),
                 )
             conn.commit()
@@ -363,13 +412,14 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                     """INSERT INTO task_steps
                        (step_id, run_id, user_id, client_key, title, description, kind, status,
                         position, parallel_group, attempt_count, max_attempts, requires_approval,
-                        progress, completion_criteria, input_data, output_data, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, ?, ?, 0, ?, ?, '{}', ?, ?)""",
+                        progress, completion_criteria, input_data, reward_spec, output_data, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, ?, ?, 0, ?, ?, ?, '{}', ?, ?)""",
                     (
                         step_id, run_id, user_id, client_key, step["title"], step.get("description", ""),
                         step.get("kind", "manual"), position, step.get("parallel_group"),
                         int(step.get("max_attempts", 1)), 1 if step.get("requires_approval") else 0,
-                        _json(step.get("completion_criteria")), _json(step.get("input_data")), now, now,
+                        _json(step.get("completion_criteria")), _json(step.get("input_data")),
+                        _json(step.get("reward_spec")), now, now,
                     ),
                 )
             for step_id, _client_key, step, _position in normalized_steps:
@@ -435,6 +485,13 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
         """Return aggregate execution signals without exposing review text or artifacts."""
         conn = self._connection_factory()
         try:
+            goals = conn.execute(
+                """SELECT COUNT(*) AS goal_count,
+                          MIN(created_at) AS observed_from,
+                          MAX(updated_at) AS observed_to
+                   FROM task_goals WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
             totals = conn.execute(
                 """SELECT
                        COUNT(*) AS run_count,
@@ -442,8 +499,8 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                            AS completed_run_count,
                        COALESCE(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0)
                            AS cancelled_run_count,
-                       COALESCE(SUM(CASE WHEN mode = 'agent' THEN 1 ELSE 0 END), 0)
-                           AS agent_run_count,
+                       COALESCE(SUM(CASE WHEN mode = 'assisted' THEN 1 ELSE 0 END), 0)
+                           AS assisted_run_count,
                        MIN(created_at) AS observed_from,
                        MAX(COALESCE(completed_at, updated_at, created_at)) AS observed_to
                    FROM task_runs WHERE user_id = ?""",
@@ -514,10 +571,11 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                 (user_id,),
             ).fetchone()
             return {
+                "goal_count": int(goals['goal_count'] or 0),
                 "run_count": int(totals['run_count'] or 0),
                 "completed_run_count": int(totals['completed_run_count'] or 0),
                 "cancelled_run_count": int(totals['cancelled_run_count'] or 0),
-                "agent_run_count": int(totals['agent_run_count'] or 0),
+                "assisted_run_count": int(totals['assisted_run_count'] or 0),
                 "step_count": int(steps['step_count'] or 0),
                 "finished_step_count": int(steps['finished_step_count'] or 0),
                 "review_count": int(reviews['review_count'] or 0),
@@ -586,17 +644,12 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                     (run_id, user_id),
                 ).fetchall()
             ]
-            lease = _decode(conn.execute(
-                """SELECT run_id, user_id, worker_id, acquired_at, heartbeat_at,
-                          expires_at, checkpoint_data, released_at, version
-                   FROM task_run_leases WHERE run_id = ? AND user_id = ?""",
-                (run_id, user_id),
-            ).fetchone())
-            if lease is not None:
-                lease["is_expired"] = bool(
-                    lease.get("released_at") is None and lease.get("expires_at") <= _now()
-                )
-            run["lease"] = lease
+            run["actions"] = [
+                _decode(row) or {} for row in conn.execute(
+                    "SELECT * FROM task_actions WHERE run_id = ? AND user_id = ? ORDER BY created_at",
+                    (run_id, user_id),
+                ).fetchall()
+            ]
             return run
         finally:
             conn.close()
@@ -740,6 +793,11 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
             ):
                 conn.rollback()
                 return {"changed": False}
+            settlement = (
+                _settle_completed_step_reward(conn, user_id, run_id, step_id, now=now)
+                if target == "completed"
+                else {"growth_points": 0, "settled": False}
+            )
             for artifact in artifacts:
                 artifact_id = str(uuid.uuid4())
                 conn.execute(
@@ -755,6 +813,8 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
                 )
                 artifact_ids.append(artifact_id)
             event_payload = dict(payload or {})
+            if settlement["settled"]:
+                event_payload["reward_settlement"] = settlement
             if artifact_ids:
                 event_payload["artifact_ids"] = artifact_ids
             _insert_event(
@@ -794,6 +854,7 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
             conn.commit()
             return {
                 "changed": True,
+                "reward_settlement": settlement,
                 "artifact_ids": artifact_ids,
                 "ready_step_ids": ready_step_ids,
                 "run_completed": run_completed,
@@ -953,8 +1014,7 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
         conn = self._connection_factory()
         try:
             return [_decode(row) or {} for row in conn.execute(
-                """SELECT settlement_id, task_id, run_id, step_id, coins, experience,
-                          attribute_increments, source, created_at
+                """SELECT settlement_id, run_id, step_id, growth_points, source, created_at
                    FROM task_reward_settlements
                    WHERE user_id = ? AND run_id = ?
                    ORDER BY created_at, settlement_id""",
@@ -1228,169 +1288,6 @@ class SQLiteTaskExecutionRepository(TaskExecutionRepository):
             )
             conn.commit()
             return str(run_id)
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def claim_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        worker_id: str,
-        lease_seconds: int,
-    ) -> Optional[Dict[str, Any]]:
-        conn = self._connection_factory()
-        now_dt = datetime.now(timezone.utc)
-        now = now_dt.isoformat()
-        expires_at = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            run = conn.execute(
-                "SELECT mode, status FROM task_runs WHERE run_id = ? AND user_id = ?",
-                (run_id, user_id),
-            ).fetchone()
-            if run is None or run["mode"] != "agent" or run["status"] != "running":
-                conn.rollback()
-                return None
-            existing = conn.execute(
-                "SELECT * FROM task_run_leases WHERE run_id = ? AND user_id = ?",
-                (run_id, user_id),
-            ).fetchone()
-            reclaimed = False
-            previous_worker_id = None
-            if existing is not None:
-                is_active = existing["released_at"] is None and existing["expires_at"] > now
-                if is_active and existing["worker_id"] != worker_id:
-                    conn.rollback()
-                    return None
-                if is_active:
-                    conn.execute(
-                        """UPDATE task_run_leases
-                           SET heartbeat_at = ?, expires_at = ?, version = version + 1
-                           WHERE run_id = ? AND user_id = ?""",
-                        (now, expires_at, run_id, user_id),
-                    )
-                else:
-                    reclaimed = existing["released_at"] is None
-                    previous_worker_id = existing["worker_id"]
-                    lease_token = str(uuid.uuid4())
-                    conn.execute(
-                        """UPDATE task_run_leases
-                           SET worker_id = ?, lease_token = ?, acquired_at = ?, heartbeat_at = ?,
-                               expires_at = ?, released_at = NULL, version = version + 1
-                           WHERE run_id = ? AND user_id = ?""",
-                        (worker_id, lease_token, now, now, expires_at, run_id, user_id),
-                    )
-            else:
-                lease_token = str(uuid.uuid4())
-                conn.execute(
-                    """INSERT INTO task_run_leases
-                       (run_id, user_id, worker_id, lease_token, acquired_at, heartbeat_at,
-                        expires_at, checkpoint_data, released_at, version)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, '{}', NULL, 1)""",
-                    (run_id, user_id, worker_id, lease_token, now, now, expires_at),
-                )
-            event_type = "run.lease_reclaimed" if reclaimed else "run.lease_claimed"
-            _insert_event(
-                conn, user_id, run_id, event_type,
-                payload={
-                    "worker_id": worker_id,
-                    "previous_worker_id": previous_worker_id,
-                    "expires_at": expires_at,
-                },
-                now=now,
-            )
-            conn.commit()
-            return _decode(conn.execute(
-                "SELECT * FROM task_run_leases WHERE run_id = ? AND user_id = ?",
-                (run_id, user_id),
-            ).fetchone())
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def heartbeat_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        lease_seconds: int,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        conn = self._connection_factory()
-        now_dt = datetime.now(timezone.utc)
-        now = now_dt.isoformat()
-        expires_at = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            assignments = ["heartbeat_at = ?", "expires_at = ?", "version = version + 1"]
-            params: list[Any] = [now, expires_at]
-            if checkpoint_data is not None:
-                assignments.append("checkpoint_data = ?")
-                params.append(_json(checkpoint_data))
-            params.extend((run_id, user_id, lease_token, now))
-            cursor = conn.execute(
-                f"""UPDATE task_run_leases SET {', '.join(assignments)}
-                    WHERE run_id = ? AND user_id = ? AND lease_token = ?
-                      AND released_at IS NULL AND expires_at > ?""",
-                params,
-            )
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return None
-            if checkpoint_data is not None:
-                _insert_event(
-                    conn, user_id, run_id, "run.checkpointed",
-                    payload={"checkpoint": dict(checkpoint_data)}, now=now,
-                )
-            conn.commit()
-            return _decode(conn.execute(
-                "SELECT * FROM task_run_leases WHERE run_id = ? AND user_id = ?",
-                (run_id, user_id),
-            ).fetchone())
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def release_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        *,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> bool:
-        conn = self._connection_factory()
-        now = _now()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            assignments = ["released_at = ?", "heartbeat_at = ?", "version = version + 1"]
-            params: list[Any] = [now, now]
-            if checkpoint_data is not None:
-                assignments.append("checkpoint_data = ?")
-                params.append(_json(checkpoint_data))
-            params.extend((run_id, user_id, lease_token))
-            cursor = conn.execute(
-                f"""UPDATE task_run_leases SET {', '.join(assignments)}
-                    WHERE run_id = ? AND user_id = ? AND lease_token = ?
-                      AND released_at IS NULL""",
-                params,
-            )
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return False
-            _insert_event(
-                conn, user_id, run_id, "run.lease_released",
-                payload={"checkpoint_saved": checkpoint_data is not None}, now=now,
-            )
-            conn.commit()
-            return True
         except Exception:
             conn.rollback()
             raise

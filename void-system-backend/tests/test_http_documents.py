@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from api.http.application import ApplicationOptions, create_app
+from adapters.sqlite.knowledge_lifecycle_repository import SQLiteKnowledgeLifecycleRepository
 from api.http.dependencies import get_user_knowledge_workspace
 from core.runtime_settings import RuntimeSettings
 
@@ -61,6 +62,7 @@ class KnowledgeWorkspaceHttpTests(unittest.TestCase):
                 database_path=str(Path(self.temp_dir.name) / "documents.db"),
                 enable_ai_routes=False,
                 enable_langserve_routes=False,
+                enable_knowledge_job_worker=False,
                 settings=settings,
             )
         )
@@ -105,7 +107,7 @@ class KnowledgeWorkspaceHttpTests(unittest.TestCase):
     def test_workspace_reads_do_not_load_optional_retrieval_infrastructure(self) -> None:
         self.app.dependency_overrides.pop(get_user_knowledge_workspace)
         with patch(
-            "modules.knowledge.service._create_legacy_user_knowledge_managers",
+            "modules.knowledge.service.ChromaKnowledgeStore",
             side_effect=AssertionError("retrieval infrastructure loaded"),
         ):
             response = self.client.get(
@@ -121,6 +123,67 @@ class KnowledgeWorkspaceHttpTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["pagination"]["total"], 0)
         self.assertEqual(activity_response.status_code, 200)
         self.assertEqual(activity_response.json()["data"]["activity"], [])
+
+
+    def test_knowledge_job_endpoints_expose_durable_public_state(self) -> None:
+        connection = self.app.state.database.get_connection()
+        try:
+            owner_id = connection.execute(
+                "SELECT user_id FROM users WHERE username = ?", ("admin",)
+            ).fetchone()["user_id"]
+        finally:
+            connection.close()
+        repository = SQLiteKnowledgeLifecycleRepository(self.app.state.database.get_connection)
+        started = repository.start_ingestion(
+            document_id="doc-http-1",
+            owner_id=owner_id,
+            content_fingerprint="http-source",
+            source_size=12,
+            index_version="test-index-v1",
+        )
+
+        listed = self.client.get("/api/user/knowledge/jobs", headers=self.headers)
+        fetched = self.client.get(
+            f"/api/user/knowledge/jobs/{started['job_id']}", headers=self.headers
+        )
+        cancelled = self.client.post(
+            f"/api/user/knowledge/jobs/{started['job_id']}/cancel", headers=self.headers
+        )
+        retried = self.client.post(
+            f"/api/user/knowledge/jobs/{started['job_id']}/retry", headers=self.headers
+        )
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["data"]["jobs"][0]["job_id"], started["job_id"])
+        self.assertNotIn("lease_token", listed.json()["data"]["jobs"][0])
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["data"]["status"], "queued")
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["data"]["status"], "cancelled")
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(retried.json()["data"]["status"], "queued")
+        self.assertNotEqual(retried.json()["data"]["job_id"], started["job_id"])
+
+        active_retry = self.client.post(
+            f"/api/user/knowledge/jobs/{retried.json()['data']['job_id']}/retry",
+            headers=self.headers,
+        )
+        self.assertEqual(active_retry.status_code, 409)
+        self.assertEqual(active_retry.json()["error_code"], "KNOWLEDGE_JOB_NOT_RETRYABLE")
+
+    def test_unknown_knowledge_job_returns_not_found(self) -> None:
+        response = self.client.get(
+            "/api/user/knowledge/jobs/missing-job", headers=self.headers
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error_code"], "KNOWLEDGE_JOB_NOT_FOUND")
+
+    def test_library_tags_default_to_the_unified_library_scope(self) -> None:
+        """The tags endpoint must not send the retired all-library scope to the catalogue."""
+        response = self.client.get("/api/library/tags", headers=self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], {"tags": []})
 
 
 if __name__ == "__main__":

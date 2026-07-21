@@ -1,4 +1,4 @@
-﻿"""Budgeted context assembly with provenance and permission enforcement."""
+"""Budgeted context assembly with provenance and permission enforcement."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -105,13 +105,16 @@ class ContextAssembler:
         permissions: Mapping[str, bool],
         requested_sections: Sequence[str],
         item_budget: int,
+        profile_domains: Optional[Sequence[str]] = None,
+        include_account_profile: bool = True,
     ) -> Dict[str, Any]:
         requested = [section for section in SECTION_ORDER if section in requested_sections]
         allowed = [section for section in requested if permissions.get(section, False)]
         candidates: Dict[str, list[Dict[str, Any]]] = {}
         for section in allowed:
             candidates[section] = self._collect_section(
-                section, owner_id, profile, profile_view or {}, memories, item_budget
+                section, owner_id, profile, profile_view or {}, memories, item_budget,
+                profile_domains=profile_domains, include_account_profile=include_account_profile,
             )
 
         selected: Dict[str, list[Dict[str, Any]]] = {section: [] for section in allowed}
@@ -207,47 +210,56 @@ class ContextAssembler:
         profile_view: Mapping[str, Any],
         memories: Sequence[Mapping[str, Any]],
         limit: int,
+        *,
+        profile_domains: Optional[Sequence[str]] = None,
+        include_account_profile: bool = True,
     ) -> list[Dict[str, Any]]:
         if section == "profile":
-            items = [
-                _item(
-                    "profile",
-                    "user_profile",
-                    owner_id,
-                    str(profile.get("username") or "User"),
-                    "Personal account profile available to the companion.",
-                    updated_at=profile.get("updated_at"),
-                    data={"username": profile.get("username"), "role": profile.get("role", "user")},
+            items = []
+            if include_account_profile:
+                items.append(
+                    _item(
+                        "profile",
+                        "user_profile",
+                        owner_id,
+                        str(profile.get("username") or "User"),
+                        "Personal account profile available to the companion.",
+                        updated_at=profile.get("updated_at"),
+                        data={"username": profile.get("username"), "role": profile.get("role", "user")},
+                    )
                 )
-            ]
-            for claim in profile_view.get("effective_claims", []):
-                if not claim.get("context_eligible", False):
+            allowed_domains = set(profile_domains) if profile_domains is not None else None
+            for facet in profile_view.get("facets", []):
+                if facet.get("status") != "active" or not facet.get("context_enabled", False):
                     continue
-                claim_id = str(claim.get("claim_id") or claim.get("profile_key"))
-                claim_item = _item(
+                if allowed_domains is not None and facet.get("domain") not in allowed_domains:
+                    continue
+                facet_id = str(facet.get("facet_id") or facet.get("profile_key"))
+                facet_item = _item(
                     "profile",
-                    "profile_claim",
-                    claim_id,
-                    str(claim.get("summary") or claim.get("profile_key") or "Profile insight"),
-                    str(claim.get("value") or claim.get("rationale") or ""),
-                    updated_at=claim.get("updated_at"),
+                    "profile_facet",
+                    facet_id,
+                    str(facet.get("label") or facet.get("profile_key") or "已确认的个人理解"),
+                    _text(facet.get("value") or ""),
+                    updated_at=facet.get("updated_at"),
                     sensitivity="private",
                     data={
-                        "domain": claim.get("domain"),
-                        "profile_key": claim.get("profile_key"),
-                        "value": claim.get("value"),
-                        "confidence": claim.get("confidence"),
-                        "review_status": claim.get("review_status"),
-                        "effective_source": claim.get("effective_source"),
-                        "rationale": _text(claim.get("rationale"), 500),
+                        "domain": facet.get("domain"),
+                        "profile_key": facet.get("profile_key"),
+                        "value": facet.get("value"),
+                        "source": facet.get("source"),
+                        "context_enabled": True,
                     },
                 )
-                claim_item["provenance"] = {
-                    "source": "profile_cognition",
-                    "source_ref": claim_id,
-                    "evidence_refs": claim.get("evidence_refs", []),
+                facet_item["provenance"] = {
+                    "source": "layered_profile",
+                    "source_ref": facet_id,
+                    "source_hypothesis_id": facet.get("source_hypothesis_id"),
                 }
-                items.append(claim_item)
+                facet_item["_selection_reason"] = (
+                    "你已确认或修正，并允许在当前 AI 上下文中使用。"
+                )
+                items.append(facet_item)
             return items[:limit]
         if section == "goals":
             goals = self._tasks.list_goals(owner_id, status="active")
@@ -345,13 +357,12 @@ class ContextAssembler:
                 for document in documents
             ]
         if section == "rewards":
-            balance = self._growth.balance(owner_id)
-            resources = self._growth.resources(owner_id)
+            growth_points = self._growth.balance(owner_id)
             return [
                 _item(
-                    "rewards", "reward_summary", owner_id, "Reward balance",
-                    f"{balance} coins and {sum(resources.values())} stored resources",
-                    data={"balance": balance, "resources": resources},
+                    "rewards", "growth_points_summary", owner_id, "Growth points",
+                    f"{growth_points} growth points recorded from completed work",
+                    data={"growth_points": growth_points},
                 )
             ]
         return []

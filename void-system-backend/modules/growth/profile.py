@@ -13,14 +13,11 @@ class GrowthProfile:
     def balance(self, user_id: str) -> int:
         return self._repository.get_balance(user_id)
 
-    def resources(self, user_id: str) -> Dict[str, int]:
-        return self._repository.list_resources(user_id)
+    def growth_point_activity(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self._repository.list_growth_point_activity(user_id, limit)
 
-    def coin_history(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
-        return self._repository.list_coin_history(user_id, limit)
-
-    def economy_summary(self, user_id: str) -> Dict[str, Any]:
-        return self._repository.income_expense_stats(user_id)
+    def growth_point_summary(self, user_id: str) -> Dict[str, Any]:
+        return self._repository.growth_point_summary(user_id)
 
     def list_capabilities(self, user_id: str) -> List[Dict[str, Any]]:
         return self._repository.list_attributes(user_id)

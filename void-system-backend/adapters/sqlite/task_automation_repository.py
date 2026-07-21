@@ -1,11 +1,12 @@
-"""SQLite adapter for Trigger-to-Run automation and durable Run commands."""
+"""SQLite adapter for Trigger-to-Run automation."""
 from __future__ import annotations
 
-import json
 import sqlite3
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
+
+from adapters.sqlite.object_json import decode_object, encode_object
 
 
 def _now() -> str:
@@ -13,7 +14,7 @@ def _now() -> str:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value if value is not None else {}, ensure_ascii=False)
+    return encode_object(value)
 
 
 def _decode(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
@@ -22,10 +23,7 @@ def _decode(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
     value = dict(row)
     for field in ("configuration", "run_template", "payload"):
         if field in value:
-            try:
-                value[field] = json.loads(value[field]) if value[field] else {}
-            except (TypeError, json.JSONDecodeError):
-                value[field] = {}
+            value[field] = decode_object(value[field])
     return value
 
 
@@ -157,99 +155,6 @@ class SQLiteTaskAutomationRepository:
             conn.commit()
             return {"firing_id": firing_id, "trigger_id": trigger_id, "user_id": user_id,
                     "source_key": source_key, "run_id": run_id, "payload": dict(payload), "fired_at": now}
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def create_command(self, user_id: str, run_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
-        conn, now = self._connection_factory(), _now()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            key = values.get("idempotency_key")
-            if key:
-                existing = conn.execute(
-                    """SELECT * FROM task_run_commands
-                       WHERE run_id = ? AND user_id = ? AND idempotency_key = ?""",
-                    (run_id, user_id, key),
-                ).fetchone()
-                if existing is not None:
-                    conn.rollback()
-                    return _decode(existing) or {}
-            command_id = str(uuid.uuid4())
-            conn.execute(
-                """INSERT INTO task_run_commands
-                   (command_id, run_id, user_id, command_type, instruction, payload,
-                    status, idempotency_key, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                (command_id, run_id, user_id, values["command_type"], values["instruction"],
-                 _json(values.get("payload")), key, now),
-            )
-            conn.execute(
-                """INSERT INTO task_events
-                   (event_id, run_id, user_id, event_type, payload, created_at)
-                   VALUES (?, ?, ?, 'run.command_added', ?, ?)""",
-                (str(uuid.uuid4()), run_id, user_id,
-                 _json({"command_id": command_id, "command_type": values["command_type"]}), now),
-            )
-            conn.commit()
-            return {"command_id": command_id, "run_id": run_id, "user_id": user_id,
-                    "command_type": values["command_type"], "instruction": values["instruction"],
-                    "payload": dict(values.get("payload") or {}), "status": "pending",
-                    "idempotency_key": key, "created_at": now, "acknowledged_at": None}
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def get_command(self, user_id: str, run_id: str, command_id: str) -> Optional[Dict[str, Any]]:
-        conn = self._connection_factory()
-        try:
-            return _decode(conn.execute(
-                """SELECT * FROM task_run_commands
-                   WHERE command_id = ? AND run_id = ? AND user_id = ?""",
-                (command_id, run_id, user_id),
-            ).fetchone())
-        finally:
-            conn.close()
-
-    def list_commands(self, user_id: str, run_id: str, status: Optional[str] = None) -> Sequence[Dict[str, Any]]:
-        conn = self._connection_factory()
-        try:
-            if status:
-                rows = conn.execute(
-                    """SELECT * FROM task_run_commands WHERE run_id = ? AND user_id = ? AND status = ?
-                       ORDER BY created_at""", (run_id, user_id, status)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM task_run_commands WHERE run_id = ? AND user_id = ? ORDER BY created_at",
-                    (run_id, user_id),
-                ).fetchall()
-            return [_decode(row) or {} for row in rows]
-        finally:
-            conn.close()
-
-    def acknowledge_command(self, user_id: str, run_id: str, command_id: str) -> bool:
-        conn, now = self._connection_factory(), _now()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute(
-                """UPDATE task_run_commands SET status = 'acknowledged', acknowledged_at = ?
-                   WHERE command_id = ? AND run_id = ? AND user_id = ? AND status = 'pending'""",
-                (now, command_id, run_id, user_id),
-            )
-            if cursor.rowcount:
-                conn.execute(
-                    """INSERT INTO task_events
-                       (event_id, run_id, user_id, event_type, payload, created_at)
-                       VALUES (?, ?, ?, 'run.command_acknowledged', ?, ?)""",
-                    (str(uuid.uuid4()), run_id, user_id, _json({"command_id": command_id}), now),
-                )
-            conn.commit()
-            return cursor.rowcount > 0
         except Exception:
             conn.rollback()
             raise

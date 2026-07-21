@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from adapters.legacy.planning_adapters import LegacyAdvisorPlanningEngine, LegacyTaskEvaluationEngine
+from adapters.ai.planning_engines import AdvisorPlanningEngine, TaskEvaluationEngine
 from core.planning_contracts import EvaluationEngine, PlanningEngine
 from core.runtime_settings import RuntimeSettings
 
 
 def get_planning_engine(settings: Optional[RuntimeSettings] = None) -> PlanningEngine:
     """Create a planning adapter bound to one application runtime."""
-    return LegacyAdvisorPlanningEngine(settings=settings)
+    return AdvisorPlanningEngine(settings=settings)
 
 
 def get_evaluation_engine(settings: Optional[RuntimeSettings] = None) -> EvaluationEngine:
     """Create an evaluation adapter bound to one application runtime."""
-    return LegacyTaskEvaluationEngine(settings=settings)
+    return TaskEvaluationEngine(settings=settings)

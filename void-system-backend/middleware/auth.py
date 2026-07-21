@@ -12,7 +12,7 @@ from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
-from config import config
+from core.runtime_settings import RuntimeSettings
 from database import Database
 from errors import ErrorCode, VoidSystemException
 
@@ -40,7 +40,7 @@ def _create_token(
     expires_delta: timedelta,
     settings: Any = None,
 ) -> str:
-    active_settings = settings or config
+    active_settings = settings or RuntimeSettings.from_environment()
     payload = data.copy()
     now = utc_now()
     payload.pop("expires_delta", None)
@@ -53,7 +53,7 @@ def _create_token(
 
 def create_access_token(data: Dict[str, Any], settings: Any = None) -> str:
     """Create a short-lived access token with an explicit purpose claim."""
-    active_settings = settings or config
+    active_settings = settings or RuntimeSettings.from_environment()
     expires_delta = data.get("expires_delta") or timedelta(
         minutes=active_settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
@@ -62,7 +62,7 @@ def create_access_token(data: Dict[str, Any], settings: Any = None) -> str:
 
 def create_refresh_token(data: Dict[str, Any], settings: Any = None) -> str:
     """Create a long-lived refresh token with an explicit purpose claim."""
-    active_settings = settings or config
+    active_settings = settings or RuntimeSettings.from_environment()
     expires_delta = data.get("expires_delta") or timedelta(
         days=active_settings.REFRESH_TOKEN_EXPIRE_DAYS
     )
@@ -71,7 +71,7 @@ def create_refresh_token(data: Dict[str, Any], settings: Any = None) -> str:
 
 def decode_token(token: str, expected_type: str, settings: Any = None) -> Dict[str, Any]:
     """Decode one JWT and reject tokens minted for another purpose."""
-    active_settings = settings or config
+    active_settings = settings or RuntimeSettings.from_environment()
     try:
         payload = jwt.decode(
             token,
@@ -117,7 +117,7 @@ def get_password_hash(password: str) -> str:
 
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    db: Database = Depends(lambda: Database(config.get_database_path())),
+    db: Database = Depends(lambda: Database(RuntimeSettings.from_environment().get_database_path())),
 ) -> Optional[Dict[str, Any]]:
     """Legacy dependency retained for callers outside the application factory."""
     if not token:

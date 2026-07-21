@@ -49,45 +49,67 @@ class PersonalContextRepository(Protocol):
 
     def delete_memory(self, owner_id: str, memory_id: str) -> bool: ...
 
-    def create_observation(
+    def create_signal(
         self, owner_id: str, values: Mapping[str, Any]
     ) -> Dict[str, Any]: ...
 
-    def upsert_observation(
+    def upsert_signal(
         self, owner_id: str, values: Mapping[str, Any]
     ) -> Dict[str, Any]: ...
 
-    def list_observations(
+    def list_signals(
         self, owner_id: str, *, status: Optional[str] = None, limit: int = 100
     ) -> Sequence[Dict[str, Any]]: ...
 
-    def upsert_claim(
+    def upsert_pattern(
         self, owner_id: str, values: Mapping[str, Any]
     ) -> Dict[str, Any]: ...
 
-    def create_claim(
+    def list_patterns(
+        self, owner_id: str, *, status: Optional[str] = None, limit: int = 100
+    ) -> Sequence[Dict[str, Any]]: ...
+
+    def create_hypothesis(
         self, owner_id: str, values: Mapping[str, Any]
     ) -> Dict[str, Any]: ...
 
-    def list_claims(
+    def list_hypotheses(
         self, owner_id: str, *, status: Optional[str] = None, limit: int = 200
     ) -> Sequence[Dict[str, Any]]: ...
 
-    def get_claim(self, owner_id: str, claim_id: str) -> Optional[Dict[str, Any]]: ...
+    def get_hypothesis(
+        self, owner_id: str, hypothesis_id: str
+    ) -> Optional[Dict[str, Any]]: ...
 
-    def update_claim(
-        self, owner_id: str, claim_id: str, values: Mapping[str, Any]
+    def get_hypothesis_by_key(
+        self, owner_id: str, domain: str, profile_key: str
+    ) -> Optional[Dict[str, Any]]: ...
+
+    def update_hypothesis(
+        self, owner_id: str, hypothesis_id: str, values: Mapping[str, Any]
     ) -> bool: ...
 
-    def upsert_override(
+    def upsert_facet(
         self, owner_id: str, values: Mapping[str, Any]
     ) -> Dict[str, Any]: ...
 
-    def list_overrides(
-        self, owner_id: str, *, status: Optional[str] = None
+    def list_facets(
+        self, owner_id: str, *, status: Optional[str] = None, limit: int = 200
     ) -> Sequence[Dict[str, Any]]: ...
 
-    def archive_override(self, owner_id: str, domain: str, profile_key: str) -> bool: ...
+    def create_feedback(
+        self, owner_id: str, values: Mapping[str, Any]
+    ) -> Dict[str, Any]: ...
+
+    def upsert_suppression(
+        self, owner_id: str, values: Mapping[str, Any]
+    ) -> Dict[str, Any]: ...
+
+    def get_suppression(
+        self, owner_id: str, domain: str, profile_key: str
+    ) -> Optional[Dict[str, Any]]: ...
+
+    def archive_suppression(self, owner_id: str, domain: str, profile_key: str) -> bool: ...
 
     def record_access(
         self, owner_id: str, values: Mapping[str, Any]
@@ -130,8 +152,6 @@ class GrowthContextSource(Protocol):
     """Growth reads consumed by Personal Context."""
 
     def balance(self, user_id: str) -> int: ...
-
-    def resources(self, user_id: str) -> Dict[str, int]: ...
 
     def list_capabilities(self, user_id: str) -> Sequence[Dict[str, Any]]: ...
 

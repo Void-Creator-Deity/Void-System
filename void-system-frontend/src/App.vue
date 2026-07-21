@@ -23,7 +23,7 @@
           <p class="nav-label nav-label--secondary">管理</p>
           <RouterLink to="/admin/rag" class="workspace-nav__item">
             <el-icon><Files /></el-icon>
-            <span>共享知识维护</span>
+            <span>共享馆藏管理</span>
           </RouterLink>
           <RouterLink to="/admin/ai" class="workspace-nav__item">
             <el-icon><Cpu /></el-icon>
@@ -31,6 +31,18 @@
           </RouterLink>
         </template>
       </nav>
+
+      <button
+        v-if="isAuthenticated"
+        class="background-progress-trigger"
+        type="button"
+        aria-label="打开后台进度"
+        @click="backgroundProgressOpen = true"
+      >
+        <el-icon><Clock /></el-icon>
+        <span>后台进度</span>
+        <span v-if="backgroundProgress.activeCount" class="background-progress-trigger__count">{{ backgroundProgress.activeCount }}</span>
+      </button>
 
       <div class="sidebar-account">
         <el-dropdown v-if="isAuthenticated" trigger="click" placement="top-start" @command="handleAccountCommand">
@@ -55,7 +67,14 @@
         <span class="brand-mark" aria-hidden="true">V</span>
         <span class="brand-copy"><strong>虚空系统</strong><small>{{ route.meta.title || '工作区' }}</small></span>
       </button>
-      <el-button text circle aria-label="打开导航" @click="mobileNavOpen = true"><el-icon><Menu /></el-icon></el-button>
+      <div class="mobile-header__actions">
+        <el-button v-if="isAuthenticated" text circle aria-label="打开后台进度" @click="backgroundProgressOpen = true">
+          <el-badge :value="backgroundProgress.activeCount" :hidden="!backgroundProgress.activeCount" :max="9">
+            <el-icon><Clock /></el-icon>
+          </el-badge>
+        </el-button>
+        <el-button text circle aria-label="打开导航" @click="mobileNavOpen = true"><el-icon><Menu /></el-icon></el-button>
+      </div>
     </header>
 
     <header v-else class="public-header">
@@ -86,7 +105,7 @@
         </RouterLink>
         <RouterLink v-if="isAdmin" to="/admin/rag" @click="mobileNavOpen = false">
           <el-icon><Files /></el-icon>
-          <span>共享知识维护</span>
+          <span>共享馆藏管理</span>
         </RouterLink>
         <RouterLink v-if="isAdmin" to="/admin/ai" @click="mobileNavOpen = false">
           <el-icon><Cpu /></el-icon>
@@ -105,15 +124,17 @@
         <RouterView />
       </div>
     </main>
+    <BackgroundProgressDrawer v-if="isAuthenticated" v-model="backgroundProgressOpen" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ArrowRight,
   ChatDotRound,
+  Clock,
   Collection,
   Compass,
   Document,
@@ -128,14 +149,18 @@ import {
   User
 } from '@element-plus/icons-vue'
 import { authState, logout as logoutApi } from '@/api/user'
+import BackgroundProgressDrawer from '@/components/BackgroundProgressDrawer.vue'
+import { useBackgroundProgressStore } from '@/stores/backgroundProgress'
 
 const router = useRouter()
 const route = useRoute()
 const mobileNavOpen = ref(false)
+const backgroundProgressOpen = ref(false)
+const backgroundProgress = useBackgroundProgressStore()
 const workspaceNavigation = [
   { to: '/', label: '工作台', icon: House },
   { to: '/tasks', label: '行动', icon: List },
-  { to: '/documents', label: '资料库', icon: Document },
+  { to: '/documents', label: '资料馆', icon: Document },
   { to: '/growth', label: '成长', icon: TrendCharts }
 ]
 
@@ -170,6 +195,23 @@ function openSettings() {
   router.push('/settings')
 }
 
+/**
+ * Tie global background recovery to the authenticated application lifecycle.
+ * Input: Reactive authentication state maintained by the shared API client.
+ * Output: Starts one owner-scoped recovery/polling loop after login and stops it after logout.
+ * Called by: This root application shell for initial load and subsequent auth changes.
+ * Side effects: Reads recent durable work and clears transient state when the user session ends.
+ * Failure: Initial recovery stays non-blocking because individual pages remain usable while the progress center retries.
+ * Invariant: Polling is never kept alive for a logged-out user or restored from another user's browser state.
+ */
+watch(isAuthenticated, (authenticated) => {
+  if (authenticated) backgroundProgress.start().catch(() => {})
+  else {
+    backgroundProgressOpen.value = false
+    backgroundProgress.stop()
+  }
+}, { immediate: true })
+
 onMounted(() => {
   try {
     const saved = JSON.parse(localStorage.getItem('settings_cache') || '{}')
@@ -177,6 +219,10 @@ onMounted(() => {
   } catch {
     document.documentElement.setAttribute('data-theme', 'light')
   }
+})
+
+onUnmounted(() => {
+  backgroundProgress.stop()
 })
 </script>
 
@@ -196,7 +242,11 @@ onMounted(() => {
 .workspace-nav__item:hover { color: var(--text-primary); background: var(--bg-tertiary); transform: translateX(2px); }
 .workspace-nav__item.router-link-exact-active { border-color: color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-secondary)); font-weight: 750; }
 .workspace-nav__item .el-icon { width: 18px; color: currentColor; font-size: 17px; }
-.sidebar-account { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-color-light); }
+.background-progress-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; margin-top: auto; border: 1px solid transparent; border-radius: 8px; padding: 0 12px; color: var(--text-secondary); background: transparent; cursor: pointer; font-size: 13px; font-weight: 700; text-align: left; }
+.background-progress-trigger:hover { border-color: var(--border-color-light); color: var(--text-primary); background: var(--bg-tertiary); }
+.background-progress-trigger .el-icon { font-size: 17px; }
+.background-progress-trigger__count { display: grid; min-width: 19px; height: 19px; place-items: center; margin-left: auto; border-radius: 999px; color: #fff; background: var(--color-primary); font-size: 10px; font-weight: 800; }
+.sidebar-account { padding-top: 14px; border-top: 1px solid var(--border-color-light); }
 .account-trigger, .mobile-account { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid transparent; border-radius: 8px; padding: 8px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
 .account-trigger:hover, .mobile-account:hover { border-color: var(--border-color-light); background: var(--bg-tertiary); }
 .account-avatar { display: grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--border-color)); border-radius: 50%; color: var(--color-primary-dark); background: color-mix(in srgb, var(--color-primary) 12%, var(--bg-secondary)); font-size: 12px; font-weight: 800; }
@@ -208,6 +258,7 @@ onMounted(() => {
 .main--fullbleed { width: 100%; }
 .main-inner--fullbleed { width: 100%; }
 .mobile-header { display: none; }
+.mobile-header__actions { display: flex; align-items: center; gap: 2px; }
 .public-header { display: flex; align-items: center; justify-content: space-between; min-height: 68px; padding: 0 clamp(16px, 4vw, 38px); border-bottom: 1px solid var(--border-color-light); background: var(--bg-secondary); }
 .public-header .brand { padding-left: 0; }
 .public-header__actions { display: flex; align-items: center; gap: 6px; }

@@ -54,11 +54,12 @@
 
       <section v-if="isLoading" class="planning-state" aria-live="polite">
         <div class="planning-state__indicator"><el-icon class="is-loading"><Loading /></el-icon></div>
-        <div>
-          <p class="planning-state__title">正在梳理行动路径</p>
-          <p class="planning-state__copy">正在结合目标和已有成长资料，整理出可以逐步完成的安排。</p>
+        <div class="planning-state__body">
+          <p class="planning-state__title">{{ generationPresentation.title }}</p>
+          <p class="planning-state__copy">{{ generationPresentation.copy }}</p>
+          <el-progress class="planning-state__progress" :percentage="generationProgress" :stroke-width="5" :show-text="false" />
         </div>
-        <el-button text type="primary" @click="cancelGeneration">取消</el-button>
+        <el-button text type="primary" @click="cancelGeneration">停止等待</el-button>
       </section>
 
       <section v-if="advisorResult && !isLoading" class="plan-result" aria-labelledby="plan-title">
@@ -110,10 +111,10 @@
           </div>
           <div class="plan-result__actions">
             <span v-if="estimatedDuration" class="duration-chip"><el-icon><Clock /></el-icon>{{ estimatedDuration }}</span>
-            <el-button v-if="canEditPlan" :icon="EditPen" @click="togglePlanEditing">
+            <el-button v-if="canEditPlan" :icon="EditPen" :loading="isSavingDraft" @click="togglePlanEditing">
               {{ isEditingPlan ? '完成调整' : '调整方案' }}
             </el-button>
-            <el-button type="primary" :icon="CircleCheck" :loading="isPublishing" :disabled="!canPublish" @click="publishPlan">
+            <el-button type="primary" :icon="CircleCheck" :loading="isPublishing" :disabled="!canUsePublicationAction" @click="publishPlan">
               {{ publicationActionLabel }}
             </el-button>
           </div>
@@ -145,7 +146,7 @@
                 <el-input v-if="isEditingPlan" v-model="step.title" class="step-title-input" maxlength="160" :aria-label="'第 ' + (index + 1) + ' 步名称'" />
                 <h3 v-else>{{ step.title }}</h3>
                 <div class="step-topline-actions">
-                  <span class="priority-badge" :class="'priority-badge--' + step.kind">{{ kindLabel(step.kind) }}</span>
+                  <span class="priority-badge priority-badge--manual">{{ kindLabel() }}</span>
                   <el-tooltip v-if="isEditingPlan" content="移除这一步" placement="top">
                     <el-button text type="danger" :icon="Delete" :disabled="learningSteps.length <= 1" :aria-label="'移除第 ' + (index + 1) + ' 步'" @click="removePlanStep(index)" />
                   </el-tooltip>
@@ -163,12 +164,6 @@
               />
               <p v-else>{{ step.description }}</p>
               <div v-if="isEditingPlan" class="step-editor-grid">
-                <label class="editor-field">
-                  <span>由谁完成</span>
-                  <el-select v-model="step.kind" aria-label="步骤完成方式">
-                    <el-option v-for="option in stepKindOptions" :key="option.value" :label="option.label" :value="option.value" />
-                  </el-select>
-                </label>
                 <label class="editor-field">
                   <span>开始前需要完成</span>
                   <el-select
@@ -229,21 +224,18 @@
       <template #header>
         <div class="drawer-title">
           <div>
-            <p class="section-kicker">本机记录</p>
+            <p class="section-kicker">可恢复的服务端记录</p>
             <h2>最近方案</h2>
           </div>
-          <el-tooltip content="清空方案历史" placement="bottom">
-            <el-button :icon="Delete" circle text type="danger" :disabled="!historyList.length" aria-label="清空方案历史" @click="clearHistory" />
-          </el-tooltip>
         </div>
       </template>
       <div v-if="historyList.length" class="history-list">
-        <button v-for="item in historyList" :key="item.id" class="history-item" type="button" @click="restoreFromHistory(item)">
+        <button v-for="item in historyList" :key="item.draft_id" class="history-item" type="button" @click="restoreFromHistory(item)">
           <span class="history-item__topline">
             <span class="history-item__title">{{ item.goal.title }}</span>
-            <span class="history-item__status" :data-status="item.publication?.status">{{ publicationStatusLabel(item.publication?.status) }}</span>
+            <span class="history-item__status" :data-status="item.status">{{ publicationStatusLabel(item.status) }}</span>
           </span>
-          <span class="history-item__meta">{{ formatHistoryDate(item.createdAt) }} · {{ item.run.steps.length }} 步</span>
+          <span class="history-item__meta">{{ formatHistoryDate(item.created_at) }} · {{ item.run.steps.length }} 步</span>
         </button>
       </div>
       <el-empty v-else description="还没有生成过方案" />
@@ -252,20 +244,18 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { ArrowRight, CircleCheck, Clock, Delete, Document, EditPen, Loading, MagicStick, Plus } from '@element-plus/icons-vue'
 import { plansApi } from '@/api/plans'
-import { goalsApi } from '@/api/goals'
-import { runsApi } from '@/api/runs'
+import { backgroundWorkPresentation, planGenerationToBackgroundWork } from '@/domain/backgroundWork'
+import { useBackgroundProgressStore } from '@/stores/backgroundProgress'
 import {
-  PUBLICATION_STATUS,
-  buildGoalCreateInput,
-  buildRunSpecification,
-  normalizeHistoryEntry,
-  normalizePlanDraft,
-  resetMissingPublication
+  PLAN_DRAFT_STATUS,
+  buildPlanDraftPayload,
+  createPublicationKey,
+  normalizePlanDraft
 } from '@/domain/planDraft'
 import { formatAxiosErrorMessage } from '@/utils/apiPayload'
 
@@ -273,23 +263,14 @@ const props = defineProps({ embedded: { type: Boolean, default: false } })
 const emit = defineEmits(['published'])
 const embedded = computed(() => props.embedded)
 
-const HISTORY_KEY = 'advisor_plan_history_v2'
-const HISTORY_LIMIT = 12
 const executionModes = [
   { label: '自己完成', value: 'manual' },
-  { label: '和系统一起', value: 'assisted' },
-  { label: '交给系统', value: 'agent' }
+  { label: '和系统一起', value: 'assisted' }
 ]
 const priorityOptions = [
   { label: '一般', value: 'low' },
   { label: '重要', value: 'medium' },
   { label: '优先', value: 'high' }
-]
-const stepKindOptions = [
-  { label: '自己完成', value: 'manual' },
-  { label: '交给系统', value: 'agent' },
-  { label: '使用工具', value: 'tool' },
-  { label: '检查确认', value: 'review' }
 ]
 const quickTopics = [
   { id: 'project', text: '完成一个可以公开展示的个人作品' },
@@ -299,221 +280,243 @@ const quickTopics = [
 ]
 
 const router = useRouter()
+const route = useRoute()
+const backgroundProgress = useBackgroundProgressStore()
 const userQuery = ref('')
 const executionMode = ref('assisted')
-const isLoading = ref(false)
 const isPublishing = ref(false)
+const isSavingDraft = ref(false)
 const isEditingPlan = ref(false)
 const advisorResult = ref(null)
 const showHistory = ref(false)
-const historyList = ref(readHistory())
-const advisorAbortController = ref(null)
+const historyList = ref([])
+const activeGenerationId = ref('')
+const openingGenerationId = ref('')
+const publicationKey = ref('')
 
 const learningSteps = computed(() => advisorResult.value?.run?.steps || [])
+const isLoading = computed(() => Boolean(activeGenerationId.value) && !['failed', 'cancelled'].includes(generation.value?.status || 'queued'))
 const estimatedDuration = computed(() => {
   const value = String(advisorResult.value?.estimated_duration || '').trim()
   return value && value !== '—' ? value : ''
 })
 const canPublish = computed(() => {
   const goal = advisorResult.value?.goal
-  return Boolean(goal?.title?.trim() && learningSteps.value.length && learningSteps.value.every((step) => step?.title?.trim()))
+  return advisorResult.value?.status === PLAN_DRAFT_STATUS.READY && !isSavingDraft.value && Boolean(
+    goal?.title?.trim() && learningSteps.value.length && learningSteps.value.every((step) => step?.title?.trim())
+  )
 })
-const canEditPlan = computed(() => advisorResult.value?.publication?.status === PUBLICATION_STATUS.DRAFT && !isPublishing.value)
-const publicationActionLabel = computed(() => {
-  const status = advisorResult.value?.publication?.status
-  if (status === PUBLICATION_STATUS.PUBLISHED) return '打开行动'
-  if (status === PUBLICATION_STATUS.GOAL_CREATED || status === PUBLICATION_STATUS.RUN_CREATED) return '继续发布'
-  return '创建并开始'
+const canUsePublicationAction = computed(() => canPublish.value || advisorResult.value?.status === PLAN_DRAFT_STATUS.PUBLISHED)
+const generation = computed(() => backgroundProgress.getPlanGeneration(activeGenerationId.value))
+const generationWork = computed(() => {
+  const job = generation.value
+  return job ? planGenerationToBackgroundWork(job) : null
 })
-const publicationNotice = computed(() => {
-  const status = advisorResult.value?.publication?.status
-  if (status === PUBLICATION_STATUS.GOAL_CREATED) return '目标已经保存。继续发布会从创建行动这一步接着进行。'
-  if (status === PUBLICATION_STATUS.RUN_CREATED) return '行动已经建立。继续发布会从启动这一步接着进行。'
-  if (status === PUBLICATION_STATUS.PUBLISHED) return '这份方案已经发布，可以直接打开对应行动。'
-  return ''
-})
+const generationProgress = computed(() => generationWork.value?.progress || 0)
+const generationPresentation = computed(() => generationWork.value
+  ? backgroundWorkPresentation(generationWork.value)
+  : { title: '正在生成方案', copy: '处理仍在后台进行，可以继续使用其他页面。' })
+const canEditPlan = computed(() => advisorResult.value?.status === PLAN_DRAFT_STATUS.READY && !isPublishing.value && !isSavingDraft.value)
+const publicationActionLabel = computed(() => advisorResult.value?.status === PLAN_DRAFT_STATUS.PUBLISHED ? '打开行动' : '开始推进')
+const publicationNotice = computed(() => advisorResult.value?.status === PLAN_DRAFT_STATUS.PUBLISHED
+  ? '这份方案已经开始推进，可以直接打开对应行动。'
+  : '')
 
-function readHistory() {
-  try {
-    const value = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
-    if (!Array.isArray(value)) return []
-    const normalized = []
-    for (const item of value) {
-      try {
-        normalized.push(normalizeHistoryEntry(item))
-      } catch {
-        // A damaged local entry is skipped without hiding the remaining plans.
-      }
+/**
+ * Apply a server Plan Draft snapshot to the page without fabricating local publication state.
+ * Input: A public Plan Draft response and an optional flag controlling composer synchronization.
+ * Output: Updates the current render model, selected execution mode, and retry-key lifecycle.
+ * Called by: Draft history loading, generation completion, explicit save, and publish responses.
+ * Side effects: Replaces the in-memory view state only; durable history stays on the server.
+ * Failure: Throws malformed payload errors to the caller.
+ * Invariant: Advisor always displays the latest normalized server draft and only server ids are used.
+ */
+function applyDraft(record, { syncComposer = true } = {}) {
+  const draft = normalizePlanDraft(record, executionMode.value)
+  advisorResult.value = draft
+  if (syncComposer) {
+    userQuery.value = draft.goal.desired_outcome || draft.goal.title
+    executionMode.value = draft.run.mode
+  }
+  if (draft.status === PLAN_DRAFT_STATUS.PUBLISHED) publicationKey.value = ''
+  return draft
+}
+
+function clearActiveGeneration() {
+  activeGenerationId.value = ''
+  openingGenerationId.value = ''
+}
+
+/**
+ * Refresh durable Plan Draft history from the owner-scoped backend endpoint.
+ * Input: None; authentication is supplied by the shared API client.
+ * Output: Updates the drawer list with records that the user can still review or open.
+ * Called by: Page recovery, generation completion, draft save, and publication completion.
+ * Side effects: Performs one HTTP read and replaces the local display cache.
+ * Failure: Rethrows transport errors so initial recovery can remain non-blocking while explicit actions surface errors.
+ * Invariant: No localStorage or sessionStorage is used for plan history.
+ */
+async function loadDraftHistory() {
+  const response = await plansApi.listDrafts({ timeout: 15000 })
+  const items = Array.isArray(response?.items) ? response.items : []
+  historyList.value = items
+    .map((item) => normalizePlanDraft(item, executionMode.value))
+    .filter((item) => item.status !== PLAN_DRAFT_STATUS.DISCARDED)
+  return historyList.value
+}
+
+/**
+ * Retrieve and render one authoritative draft before allowing a user to act on it.
+ * Input: Server draft id and optional history-drawer closing choice.
+ * Output: The normalized current draft.
+ * Called by: Global progress navigation, persisted-history selection, and publish conflict recovery.
+ * Side effects: Reads one owner-scoped Draft and updates the page's transient display state.
+ * Failure: Propagates stable PLAN_DRAFT_NOT_FOUND/transport errors to the caller for user-visible handling.
+ * Invariant: The client never reconstructs a Draft from a generation result or a legacy task-chain response.
+ */
+async function openDraft(draftId, { closeHistory = false } = {}) {
+  const record = await plansApi.getDraft(draftId, { timeout: 15000 })
+  const draft = applyDraft(record)
+  isEditingPlan.value = false
+  publicationKey.value = ''
+  if (closeHistory) showHistory.value = false
+  return draft
+}
+
+/**
+ * React to one server-owned generation state change selected by the page.
+ * Input: The current Plan Generation snapshot from the shared background-progress store.
+ * Output: Opens its persisted Plan Draft once ready or releases page-local selection for terminal states.
+ * Called by: A watcher over the global store; the page never owns a polling timer.
+ * Side effects: Reads the ready Draft, refreshes history, and may show a one-time status notification.
+ * Failure: Keeps the global work item available when its Draft cannot be opened, so recovery remains possible.
+ * Invariant: Completion resolves only through draft_id; job.result and browser-local plan payloads are never used.
+ */
+async function handleGenerationUpdate(job) {
+  if (!job?.generation_id || openingGenerationId.value === job.generation_id) return
+  if (job.status === 'ready') {
+    if (!job.draft_id) {
+      openingGenerationId.value = job.generation_id
+      ElMessage.error('方案生成已结束，但结果没有可恢复的草稿标识。请重新生成并反馈此问题。')
+      clearActiveGeneration()
+      return
     }
-    const entries = normalized.slice(0, HISTORY_LIMIT)
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries))
-    return entries
-  } catch {
-    localStorage.removeItem(HISTORY_KEY)
-    return []
+    openingGenerationId.value = job.generation_id
+    try {
+      await openDraft(job.draft_id)
+      await loadDraftHistory()
+      ElMessage.success('方案已生成，可以先调整再开始。')
+      clearActiveGeneration()
+    } catch (error) {
+      openingGenerationId.value = ''
+      ElMessage.error(formatAxiosErrorMessage(error, '方案已经生成，但暂时无法打开。请从后台进度重新进入。'))
+    }
+    return
+  }
+  if (job.status === 'failed') {
+    openingGenerationId.value = job.generation_id
+    ElMessage.error(job.error_message || '暂时无法生成方案，请稍后重试。')
+    clearActiveGeneration()
+    return
+  }
+  if (job.status === 'cancelled') {
+    openingGenerationId.value = job.generation_id
+    ElMessage.info('已停止等待这次生成。')
+    clearActiveGeneration()
   }
 }
 
-function saveHistory(result) {
-  const copy = JSON.parse(JSON.stringify(result))
-  const existing = historyList.value.find((item) => item.id === copy.draft_id)
-  const entry = normalizeHistoryEntry({
-    ...copy,
-    id: copy.draft_id,
-    createdAt: existing?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  })
-  historyList.value = [entry, ...historyList.value.filter((item) => item.id !== entry.id)].slice(0, HISTORY_LIMIT)
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(historyList.value))
-}
+watch(generation, (job) => {
+  void handleGenerationUpdate(job)
+})
 
-function updatePublication(updates) {
-  if (!advisorResult.value) return
-  advisorResult.value.publication = {
-    ...(advisorResult.value.publication || {}),
-    ...updates,
-    updated_at: new Date().toISOString()
-  }
-  saveHistory(advisorResult.value)
-}
-
+/**
+ * Submit one new durable plan-generation job and begin rendering its server progress.
+ * Input: Trimmed user goal, selected execution mode, and fixed maximum step count.
+ * Output: Selects the returned generation job; the final plan arrives through its Plan Draft reference.
+ * Called by: Composer primary action and quick-topic buttons.
+ * Side effects: Creates a database-backed generation job and starts polling it.
+ * Failure: Leaves any prior persisted draft intact and shows a transport-safe message.
+ * Invariant: The request is quick; no model execution is awaited in the browser request.
+ */
 async function submitQuery() {
   const query = userQuery.value.trim()
-  if (!query) {
-    ElMessage.warning('先写下这次想完成的结果。')
+  if (!query || isLoading.value) {
+    if (!query) ElMessage.warning('先写下这次想完成的结果。')
     return
   }
 
-  isLoading.value = true
   isEditingPlan.value = false
-  advisorAbortController.value = new AbortController()
+  publicationKey.value = ''
   try {
-    const result = await plansApi.create(query, {
+    const job = await plansApi.start(query, {
       executionMode: executionMode.value,
       maxSteps: 8,
-      config: { signal: advisorAbortController.value.signal, timeout: 900000 }
+      config: { timeout: 15000 }
     })
-    advisorResult.value = normalizePlanDraft(result, executionMode.value)
-    saveHistory(advisorResult.value)
-    ElMessage.success('方案已生成，可以先调整再开始。')
+    backgroundProgress.upsertPlanGeneration(job)
+    activeGenerationId.value = job.generation_id
   } catch (error) {
-    if (error?.name === 'CanceledError' || error?.name === 'AbortError' || /aborted|canceled/i.test(String(error?.message || ''))) {
-      ElMessage.info('已取消本次生成。')
-    } else {
-      ElMessage.error(formatAxiosErrorMessage(error, error?.message || '暂时无法生成方案，请稍后重试。'))
-    }
+    ElMessage.error(formatAxiosErrorMessage(error, error?.message || '暂时无法提交生成方案，请稍后重试。'))
+  }
+}
+
+async function cancelGeneration() {
+  const generationId = activeGenerationId.value
+  if (!generationId) return
+  try {
+    await backgroundProgress.cancelPlanGeneration(generationId)
+    clearActiveGeneration()
+    ElMessage.info('已请求停止这次生成。处理状态会保留在后台进度中。')
+  } catch (error) {
+    ElMessage.error(formatAxiosErrorMessage(error, error?.message || '暂时无法停止等待，请稍后重试。'))
+  }
+}
+
+/**
+ * Persist the complete edited Plan Draft using its rendered optimistic version.
+ * Input: Current in-memory draft with user edits.
+ * Output: Replaces it with the server-normalized, incremented version snapshot.
+ * Called by: Explicit edit completion and immediately before a user publishes while editing.
+ * Side effects: PATCHes the entire editable payload; does not create Goal or Run records.
+ * Failure: A version conflict leaves the editor open so the user does not unknowingly overwrite another edit.
+ * Invariant: The API payload excludes UI-only and publication fields; backend validation is final authority.
+ */
+async function saveCurrentDraft() {
+  const current = advisorResult.value
+  if (!current?.draft_id) throw new Error('方案缺少服务端标识，请重新打开后再试。')
+  isSavingDraft.value = true
+  try {
+    const saved = await plansApi.updateDraft(
+      current.draft_id,
+      buildPlanDraftPayload(current),
+      current.version,
+      { timeout: 15000 }
+    )
+    return applyDraft(saved, { syncComposer: false })
   } finally {
-    isLoading.value = false
-    advisorAbortController.value = null
+    isSavingDraft.value = false
   }
 }
 
-function cancelGeneration() {
-  advisorAbortController.value?.abort()
-}
-
-function isNotFoundError(error) {
-  return Number(error?.response?.status) === 404
-}
-
-function repairPublication(resource) {
-  advisorResult.value = resetMissingPublication(advisorResult.value, resource)
-  isEditingPlan.value = false
-  saveHistory(advisorResult.value)
-}
-
-async function ensurePublishedGoal() {
-  let goalId = advisorResult.value?.publication?.goal_id
-  if (goalId) {
-    try {
-      const existing = await goalsApi.get(goalId)
-      return existing.goal
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error
-      repairPublication('goal')
-      goalId = null
-    }
-  }
-
-  const goal = await goalsApi.create(buildGoalCreateInput(advisorResult.value))
-  updatePublication({
-    status: PUBLICATION_STATUS.GOAL_CREATED,
-    goal_id: goal.goal_id,
-    run_id: null
-  })
-  return goal
-}
-
-async function ensurePublishedRun(goalId) {
-  let runId = advisorResult.value?.publication?.run_id
-  if (runId) {
-    try {
-      const existing = await runsApi.get(runId)
-      if (existing.goal_id === goalId) return existing
-      repairPublication('run')
-      runId = null
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error
-      repairPublication('run')
-      runId = null
-    }
-  }
-
-  const run = await runsApi.create(goalId, buildRunSpecification(advisorResult.value))
-  updatePublication({
-    status: PUBLICATION_STATUS.RUN_CREATED,
-    goal_id: goalId,
-    run_id: run.run_id
-  })
-  return run
-}
-
-async function publishPlan() {
-  if (!canPublish.value) {
-    ElMessage.warning('目标名称和每一步都需要填写。')
+async function togglePlanEditing() {
+  if (!canEditPlan.value) return
+  if (!isEditingPlan.value) {
+    isEditingPlan.value = true
     return
   }
-  isPublishing.value = true
-  isEditingPlan.value = false
-  saveHistory(advisorResult.value)
   try {
-    const draftId = advisorResult.value.draft_id
-    const goal = await ensurePublishedGoal()
-    let run = await ensurePublishedRun(goal.goal_id)
-    if (run.status === 'queued') run = await runsApi.start(run.run_id)
-    updatePublication({
-      status: PUBLICATION_STATUS.PUBLISHED,
-      goal_id: goal.goal_id,
-      run_id: run.run_id
-    })
-
-    ElMessage.success('方案已经加入行动工作台。')
-    emit('published', { goal, run, draftId })
-    advisorResult.value = null
-    userQuery.value = ''
-    if (!props.embedded) await router.push({ path: '/tasks', query: { view: 'focus', run: run.run_id } })
+    await saveCurrentDraft()
+    isEditingPlan.value = false
+    await loadDraftHistory()
+    ElMessage.success('方案修改已保存。')
   } catch (error) {
-    const stage = advisorResult.value?.publication?.status
-    const message = stage === PUBLICATION_STATUS.GOAL_CREATED
-      ? '目标已经保存，但行动还没建立。再次点击会从这里继续。'
-      : stage === PUBLICATION_STATUS.RUN_CREATED
-        ? '行动已经建立，但还没启动。再次点击会从这里继续。'
-        : formatAxiosErrorMessage(error, '发布方案失败，请稍后重试。')
-    ElMessage.error(message)
-  } finally {
-    isPublishing.value = false
+    if (error?.response?.data?.error_code === 'PLAN_DRAFT_VERSION_CONFLICT') {
+      ElMessage.warning('这份方案已在其他位置更新。当前编辑尚未保存，请重新打开最新版本后再调整。')
+      return
+    }
+    ElMessage.error(formatAxiosErrorMessage(error, '方案修改未保存，请检查内容后重试。'))
   }
-}
-
-function useQuickTopic(topic) {
-  userQuery.value = topic
-  submitQuery()
-}
-
-function togglePlanEditing() {
-  if (!canEditPlan.value) return
-  isEditingPlan.value = !isEditingPlan.value
-  if (!isEditingPlan.value) saveHistory(advisorResult.value)
 }
 
 function addPlanStep() {
@@ -526,10 +529,10 @@ function addPlanStep() {
     client_key: 'step-' + sequence,
     title: '新的行动步骤',
     description: '',
-    kind: advisorResult.value?.run?.mode === 'agent' ? 'agent' : 'manual',
+    kind: 'manual',
     depends_on: previousKey ? [previousKey] : [],
     parallel_group: null,
-    max_attempts: advisorResult.value?.run?.mode === 'agent' ? 3 : 1,
+    max_attempts: 1,
     requires_approval: false,
     completion_criteria: { deliverables: [] },
     input_data: {}
@@ -564,49 +567,135 @@ function getDeliverables(step) {
   return Array.isArray(step?.completion_criteria?.deliverables) ? step.completion_criteria.deliverables : []
 }
 
-function kindLabel(kind) {
-  return ({ manual: '自己完成', agent: '交给系统', tool: '使用工具', review: '检查确认' })[kind] || '自己完成'
+function kindLabel() {
+  return '自己完成'
 }
 
 function publicationStatusLabel(status) {
   return ({
-    [PUBLICATION_STATUS.DRAFT]: '待确认',
-    [PUBLICATION_STATUS.GOAL_CREATED]: '可继续',
-    [PUBLICATION_STATUS.RUN_CREATED]: '待启动',
-    [PUBLICATION_STATUS.PUBLISHED]: '已发布'
+    [PLAN_DRAFT_STATUS.READY]: '待确认',
+    [PLAN_DRAFT_STATUS.PUBLISHED]: '已开始',
+    [PLAN_DRAFT_STATUS.DISCARDED]: '已放弃'
   })[status] || '待确认'
 }
 
 function formatHistoryDate(value) {
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
-function restoreFromHistory(item) {
+async function restoreFromHistory(item) {
   try {
-    advisorResult.value = normalizePlanDraft(item, executionMode.value)
-    userQuery.value = advisorResult.value.goal.desired_outcome || advisorResult.value.goal.title
-    executionMode.value = advisorResult.value.run.mode
-    isEditingPlan.value = false
-    showHistory.value = false
-  } catch {
-    ElMessage.warning('这份旧方案无法继续使用，请重新生成。')
+    await openDraft(item.draft_id, { closeHistory: true })
+  } catch (error) {
+    ElMessage.error(formatAxiosErrorMessage(error, '这份方案暂时无法打开，请稍后重试。'))
   }
 }
 
-async function clearHistory() {
+function openPublishedRun() {
+  const runId = advisorResult.value?.published_run_id
+  if (!runId) {
+    ElMessage.warning('这份方案尚未关联可打开的行动，请重新加载后再试。')
+    return
+  }
+  emit('published', { run_id: runId, goal_id: advisorResult.value?.published_goal_id || null })
+  router.push({ name: 'TaskWorkspace', query: { view: 'focus', run: runId } })
+}
+
+/**
+ * Atomically publish the current server draft or open its existing Run.
+ * Input: Current ready draft; unsaved edits are first persisted with optimistic versioning.
+ * Output: A published snapshot whose Goal and Run ids come from one backend transaction.
+ * Called by: Advisor primary confirmation action.
+ * Side effects: Optionally PATCHes an edit then POSTs publish with a retry-stable key.
+ * Failure: Re-reads the draft after an uncertain publish conflict instead of recreating individual resources.
+ * Invariant: The browser never chains Goal creation, Run creation, and Run start requests.
+ */
+async function publishPlan() {
+  if (!advisorResult.value || isPublishing.value) return
+  if (advisorResult.value.status === PLAN_DRAFT_STATUS.PUBLISHED) {
+    openPublishedRun()
+    return
+  }
+  isPublishing.value = true
   try {
-    await ElMessageBox.confirm('确定清空这台设备上的方案历史吗？', '清空方案历史', {
-      confirmButtonText: '清空',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-    historyList.value = []
-    localStorage.removeItem(HISTORY_KEY)
-    ElMessage.success('方案历史已清空。')
-  } catch {
-    // Closing the confirmation dialog leaves the history untouched.
+    if (isEditingPlan.value) {
+      await saveCurrentDraft()
+      isEditingPlan.value = false
+    }
+    const current = advisorResult.value
+    const key = publicationKey.value || createPublicationKey(current.draft_id)
+    publicationKey.value = key
+    const published = await plansApi.publishDraft(current.draft_id, key, { timeout: 30000 })
+    applyDraft(published, { syncComposer: false })
+    await loadDraftHistory()
+    ElMessage.success('方案已开始推进。')
+    openPublishedRun()
+  } catch (error) {
+    if (error?.response?.data?.error_code === 'PLAN_DRAFT_ALREADY_PUBLISHED') {
+      try {
+        const latest = await plansApi.getDraft(advisorResult.value?.draft_id, { timeout: 15000 })
+        const draft = applyDraft(latest, { syncComposer: false })
+        if (draft.status === PLAN_DRAFT_STATUS.PUBLISHED) {
+          await loadDraftHistory()
+          openPublishedRun()
+          return
+        }
+      } catch {
+        // The original publish error below remains the actionable message.
+      }
+    }
+    ElMessage.error(formatAxiosErrorMessage(error, '开始推进失败，请稍后重试。'))
+  } finally {
+    isPublishing.value = false
   }
 }
+
+function useQuickTopic(topic) {
+  userQuery.value = topic
+  submitQuery()
+}
+
+/**
+ * Recover durable work after page refresh without relying on browser session storage.
+ * Input: Owner-scoped draft and generation collections from the backend.
+ * Output: Restores a running job first, otherwise opens the newest persisted draft.
+ * Called by: Advisor mount once per page lifecycle.
+ * Side effects: Performs bounded reads and begins polling only for active server jobs.
+ * Failure: Keeps the composer usable when recovery is temporarily unavailable.
+ * Invariant: Recovery order is server state, not recency inferred from local timestamps.
+ */
+async function restorePlanningState() {
+  try {
+    const requestedDraftId = typeof route.query.draft === 'string' ? route.query.draft : ''
+    const drafts = await loadDraftHistory()
+    if (requestedDraftId) {
+      await openDraft(requestedDraftId)
+      return
+    }
+    await backgroundProgress.refresh({ silent: true })
+    const job = backgroundProgress.activeWork[0]?.raw
+    if (job?.generation_id) {
+      activeGenerationId.value = job.generation_id
+      return
+    }
+    if (drafts[0]?.draft_id) await openDraft(drafts[0].draft_id)
+  } catch {
+    // Recovery is additive: a transient outage must not prevent creating a new durable request.
+  }
+}
+
+watch(() => route.query.draft, (draftId) => {
+  if (typeof draftId !== 'string' || !draftId || advisorResult.value?.draft_id === draftId) return
+  openDraft(draftId).catch((error) => {
+    ElMessage.error(formatAxiosErrorMessage(error, '这份方案暂时无法打开，请稍后重试。'))
+  })
+})
+
+onMounted(() => {
+  restorePlanningState()
+})
 </script>
 
 <style scoped>
@@ -644,7 +733,7 @@ async function clearHistory() {
 .priority-badge { padding: 3px 8px; border-radius: 999px; font-size: 0.76rem; white-space: nowrap; }.priority-badge--easy { color: #357a57; background: rgba(44, 122, 75, 0.12); }.priority-badge--medium { color: #8a631a; background: rgba(184, 121, 24, 0.13); }.priority-badge--hard { color: #9a493e; background: rgba(180, 72, 60, 0.12); }
 .step-meta { flex-wrap: wrap; gap: 12px; margin-top: 14px; color: var(--text-muted); font-size: 0.84rem; }.step-meta span { white-space: nowrap; }.step-meta .el-icon { color: var(--color-primary); }.step-outcome { margin-top: 14px; padding: 10px 12px; border-left: 2px solid var(--color-primary-light); background: var(--bg-tertiary); }.step-outcome span { color: var(--text-muted); font-size: 0.76rem; font-weight: 700; }.step-outcome p { margin: 3px 0 0; color: var(--text-secondary); font-size: 0.88rem; line-height: 1.55; }
 .empty-plan { display: grid; min-height: 160px; place-items: center; align-content: center; gap: 10px; border-top: 1px solid var(--border-color-light); color: var(--text-muted); text-align: center; }.empty-plan .el-icon { color: var(--color-primary); font-size: 1.45rem; }.empty-plan p { margin: 0; }
-.drawer-title { width: 100%; justify-content: space-between; gap: 16px; }.history-list { display: grid; gap: 10px; }.history-item { display: grid; gap: 7px; padding: 14px; }.history-item__topline { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.history-item__title { min-width: 0; overflow: hidden; color: var(--text-primary); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }.history-item__meta { color: var(--text-muted); font-size: 0.82rem; }.history-item__status { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; color: #745717; background: rgba(180, 126, 28, 0.13); font-size: 0.72rem; font-weight: 700; }.history-item__status[data-status="published"] { color: #2f6e52; background: rgba(47, 110, 82, 0.12); }.history-item__status[data-status="run_created"] { color: #3d638f; background: rgba(61, 99, 143, 0.12); }
+.drawer-title { width: 100%; justify-content: space-between; gap: 16px; }.history-list { display: grid; gap: 10px; }.history-item { display: grid; gap: 7px; padding: 14px; }.history-item__topline { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.history-item__title { min-width: 0; overflow: hidden; color: var(--text-primary); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }.history-item__meta { color: var(--text-muted); font-size: 0.82rem; }.history-item__status { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; color: #745717; background: rgba(180, 126, 28, 0.13); font-size: 0.72rem; font-weight: 700; }.history-item__status[data-status="published"] { color: #2f6e52; background: rgba(47, 110, 82, 0.12); }.history-item__status[data-status="discarded"] { color: #6d5b55; background: rgba(109, 91, 85, 0.12); }
 @media (max-width: 680px) { .advisor-header h1 { font-size: 2rem; } .plan-result h2 { font-size: 1.55rem; } .advisor-page { padding-top: 24px; }.advisor-header, .plan-result__header, .composer-footer { align-items: stretch; flex-direction: column; }.advisor-header { gap: 18px; }.history-button { align-self: flex-end; }.composer-footer :deep(.el-segmented) { width: 100%; }.composer-footer :deep(.el-button) { width: 100%; }.topic-list { grid-template-columns: 1fr; }.plan-result__actions { justify-content: flex-start; }.plan-result__actions :deep(.el-button) { width: 100%; }.plan-step { grid-template-columns: 36px minmax(0, 1fr); gap: 12px; }.plan-step__number { width: 30px; height: 30px; }.plan-step__topline { align-items: flex-start; flex-direction: column; }.planning-state { align-items: flex-start; }.planning-state :deep(.el-button) { margin-left: 0; } }
 
 .execution-choice { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 0.82rem; font-weight: 700; }
@@ -669,9 +758,6 @@ async function clearHistory() {
 .approval-choice { margin-right: 0; color: var(--text-secondary); font-weight: 500; }
 .step-topline-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .priority-badge--manual { color: #316d57; background: rgba(49, 109, 87, 0.12); }
-.priority-badge--agent { color: #805f18; background: rgba(176, 124, 24, 0.14); }
-.priority-badge--tool { color: #3f6596; background: rgba(63, 101, 150, 0.12); }
-.priority-badge--review { color: #914c43; background: rgba(145, 76, 67, 0.12); }
 .plan-editor-actions { display: flex; justify-content: center; padding: 18px 0 4px; }
 @media (max-width: 680px) { .execution-choice { align-items: stretch; flex-direction: column; }.execution-choice :deep(.el-segmented) { width: 100%; }.plan-result__actions > .el-button { width: 100%; }.step-topline-actions { width: 100%; justify-content: space-between; }.plan-goal-fields, .step-editor-grid { grid-template-columns: minmax(0, 1fr); }.editor-field--wide, .approval-choice { grid-column: auto; } }
 </style>

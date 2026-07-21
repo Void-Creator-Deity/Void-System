@@ -1,84 +1,65 @@
-"""Knowledge resource composition tests that avoid optional runtime dependencies."""
+"""Knowledge resource composition tests without external model dependencies."""
 from __future__ import annotations
 
-import sys
-import types
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import ANY, patch
 
+from cryptography.fernet import Fernet
+
+from core.runtime_settings import RuntimeSettings
 from modules.knowledge.service import create_user_knowledge_resources
 
 
 class KnowledgeResourceCompositionTests(unittest.TestCase):
-    def test_resources_share_application_database_behind_modules(self) -> None:
+    def test_resources_use_one_store_for_documents_and_retrieval(self) -> None:
         class FakeDatabase:
             def get_connection(self):
-                raise AssertionError("The composition test does not open a connection")
+                return object()
 
         database = FakeDatabase()
-        fake_engine = object()
-        fake_repository = object()
+        settings = RuntimeSettings(
+            BASE_DIR=Path("."),
+            DOCUMENT_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        )
+        fake_store = type("Store", (), {"migrate_legacy_shared_collection": lambda self, catalog: {"migrated": False}})()
         fake_lifecycle = object()
-        fake_maintenance = object()
+        fake_repository = object()
+        fake_documents = object()
+        fake_shared = type("Shared", (), {"active_catalog": lambda self: {}})()
         fake_workspace = object()
+        fake_engine = object()
 
-        class FakeVectorManager:
-            def __init__(self, database):
-                self.database = database
-
-        class FakeDocumentManager:
-            def __init__(self, database, vector_manager, lifecycle_repository):
-                self.database = database
-                self.vector_manager = vector_manager
-                self.lifecycle_repository = lifecycle_repository
-
-        fake_vector_module = types.ModuleType("api.user_vector_manager")
-        fake_vector_module.UserVectorManager = FakeVectorManager
-        fake_document_module = types.ModuleType("api.user_document_manager")
-        fake_document_module.UserDocumentManager = FakeDocumentManager
-
-        with patch.dict(
-            sys.modules,
-            {
-                "api.user_vector_manager": fake_vector_module,
-                "api.user_document_manager": fake_document_module,
-            },
+        with patch("modules.knowledge.service.ChromaKnowledgeStore", return_value=fake_store) as store_factory, patch(
+            "modules.knowledge.service.SQLiteKnowledgeLifecycleRepository", return_value=fake_lifecycle
         ), patch(
-            "modules.knowledge.service.SQLiteKnowledgeLifecycleRepository",
-            return_value=fake_lifecycle,
+            "modules.knowledge.service.SQLiteUserKnowledgeRepository", return_value=fake_repository
         ), patch(
-            "modules.knowledge.service.SQLiteUserKnowledgeRepository",
-            return_value=fake_repository,
-        ), patch(
-            "modules.knowledge.service.LegacyUserKnowledgeMaintenance",
-            return_value=fake_maintenance,
-        ) as maintenance_adapter, patch(
-            "modules.knowledge.service.KnowledgeWorkspace",
-            return_value=fake_workspace,
-        ) as workspace_module, patch(
-            "modules.knowledge.service.build_legacy_user_knowledge_engine",
-            return_value=fake_engine,
-        ) as build_engine:
-            resources = create_user_knowledge_resources(database)
+            "modules.knowledge.service.PersonalKnowledgeDocumentManager", return_value=fake_documents
+        ) as documents_factory, patch(
+            "modules.knowledge.service.SharedKnowledgeDocumentManager", return_value=fake_shared
+        ) as shared_factory, patch(
+            "modules.knowledge.service.KnowledgeWorkspace", return_value=fake_workspace
+        ) as workspace_factory, patch(
+            "modules.knowledge.service._engine", return_value=fake_engine
+        ) as engine_factory:
+            resources = create_user_knowledge_resources(database, settings)
 
         self.assertIs(resources.engine, fake_engine)
         self.assertIs(resources.workspace, fake_workspace)
-        self.assertIs(resources.lifecycle_repository, fake_lifecycle)
-        document_manager, vector_manager = maintenance_adapter.call_args.args
-        self.assertIs(document_manager.database, database)
-        self.assertIs(vector_manager.database, database)
-        self.assertIs(document_manager.vector_manager, vector_manager)
-        self.assertIs(document_manager.lifecycle_repository, fake_lifecycle)
-        workspace_module.assert_called_once_with(
-            fake_repository, fake_maintenance, fake_lifecycle
+        self.assertIs(resources.document_manager, fake_documents)
+        store_factory.assert_called_once_with(settings, cipher=ANY)
+        documents_factory.assert_called_once_with(
+            database=database,
+            store=fake_store,
+            lifecycle_repository=fake_lifecycle,
+            settings=settings,
+            cipher=ANY,
+            document_repository=ANY,
         )
-        build_engine.assert_called_once_with(
-            document_manager,
-            vector_manager,
-            fake_repository,
-            trace_recorder=fake_lifecycle,
-            use_recorder=fake_lifecycle,
-        )
+        shared_factory.assert_called_once_with(database=database, store=fake_store, document_repository=ANY)
+        workspace_factory.assert_called_once_with(fake_repository, fake_documents, fake_lifecycle)
+        engine_factory.assert_called_once()
 
 
 if __name__ == "__main__":

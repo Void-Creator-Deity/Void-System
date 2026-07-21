@@ -1,4 +1,4 @@
-"""HTTP contract tests for Trigger-to-Run automation and Run commands."""
+"""HTTP contract tests for Trigger-to-Run automation."""
 from pathlib import Path
 import tempfile
 import unittest
@@ -64,17 +64,15 @@ class TaskAutomationHttpTests(unittest.TestCase):
                 "trigger_type": "event",
                 "configuration": {"event_type": "release.completed"},
                 "run_template": {
-                    "mode": "agent",
+                    "mode": "manual",
                     "steps": [
                         {
                             "client_key": "draft",
                             "title": "Draft release notes",
-                            "kind": "agent",
                         },
                         {
                             "client_key": "review",
                             "title": "Review release notes",
-                            "kind": "review",
                             "depends_on": ["draft"],
                         },
                     ],
@@ -84,7 +82,7 @@ class TaskAutomationHttpTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()["data"]["trigger"]
 
-    def test_trigger_lifecycle_fire_and_command_contract(self) -> None:
+    def test_trigger_lifecycle_fire_contract(self) -> None:
         trigger = self._create_trigger()
         listed = self.client.get("/api/triggers", headers=self.headers)
         self.assertEqual(listed.status_code, 200)
@@ -114,43 +112,12 @@ class TaskAutomationHttpTests(unittest.TestCase):
             ["draft"],
         )
 
-        created_command = self.client.post(
+        retired_command_route = self.client.post(
             f"/api/runs/{run['run_id']}/commands",
             headers=self.headers,
-            json={
-                "command_type": "instruction",
-                "instruction": "Mention the database migration.",
-                "idempotency_key": "migration-note",
-            },
+            json={},
         )
-        repeated_command = self.client.post(
-            f"/api/runs/{run['run_id']}/commands",
-            headers=self.headers,
-            json={
-                "command_type": "instruction",
-                "instruction": "Mention the database migration.",
-                "idempotency_key": "migration-note",
-            },
-        )
-        self.assertEqual(created_command.status_code, 200)
-        command = created_command.json()["data"]["command"]
-        self.assertEqual(
-            command["command_id"],
-            repeated_command.json()["data"]["command"]["command_id"],
-        )
-        pending = self.client.get(
-            f"/api/runs/{run['run_id']}/commands?status=pending",
-            headers=self.headers,
-        )
-        self.assertEqual(len(pending.json()["data"]["commands"]), 1)
-        acknowledged = self.client.post(
-            f"/api/runs/{run['run_id']}/commands/{command['command_id']}/acknowledge",
-            headers=self.headers,
-        )
-        self.assertEqual(acknowledged.status_code, 200)
-        self.assertEqual(
-            acknowledged.json()["data"]["command"]["status"], "acknowledged"
-        )
+        self.assertEqual(retired_command_route.status_code, 404)
 
     def test_pause_and_owner_isolation_contract(self) -> None:
         trigger = self._create_trigger()

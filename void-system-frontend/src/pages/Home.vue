@@ -149,12 +149,12 @@ async function loadDashboard() {
     const [loadedGoals, loadedRuns, loadedBalance, loadedActivity] = await Promise.all([
       goalsApi.list(),
       runsApi.list(),
-      growthProfileApi.getRewardBalance(),
-      growthProfileApi.getRewardActivity({ limit: 5 })
+      growthProfileApi.getGrowthPoints(),
+      growthProfileApi.listGrowthPointActivity({ limit: 5 })
     ])
     goals.value = loadedGoals
     runs.value = loadedRuns
-    balance.value = Number(loadedBalance?.balance || 0)
+    balance.value = Number(loadedBalance?.growth_points || 0)
     activities.value = Array.isArray(loadedActivity?.history) ? loadedActivity.history.slice(0, 5) : []
   } catch (error) {
     ElMessage.error(formatAxiosErrorMessage(error, '首页暂时无法加载。'))

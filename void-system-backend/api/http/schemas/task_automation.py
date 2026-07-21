@@ -1,4 +1,4 @@
-"""HTTP request schemas for Trigger-to-Run automation and Run commands."""
+"""HTTP request schemas for Trigger-to-Run automation."""
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from api.http.schemas.task_execution import RunStepCreate
 class TriggerRunTemplate(BaseModel):
     title: Optional[str] = Field(None, max_length=160)
     objective: str = Field("", max_length=2000)
-    mode: Literal["manual", "assisted", "agent"] = "agent"
+    mode: Literal["manual", "assisted"] = "manual"
     metadata: Dict[str, Any] = Field(default_factory=dict)
     steps: Optional[List[RunStepCreate]] = Field(None, max_length=100)
 
@@ -31,10 +31,3 @@ class TriggerUpdate(BaseModel):
 class TriggerFireRequest(BaseModel):
     source_key: str = Field(..., min_length=1, max_length=200)
     payload: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RunCommandCreate(BaseModel):
-    command_type: Literal["instruction", "follow_up"]
-    instruction: str = Field(..., min_length=1, max_length=4000)
-    payload: Dict[str, Any] = Field(default_factory=dict)
-    idempotency_key: Optional[str] = Field(None, max_length=200)

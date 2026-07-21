@@ -1,23 +1,23 @@
 /**
  * Growth Profile API
  *
- * Keeps reward balance and self-managed growth attributes behind a
- * product-facing interface while the backend preserves its legacy URLs.
+ * Keeps durable growth points and self-managed attributes behind a
+ * product-facing interface with one canonical backend contract.
  */
 
 import api, { apiRequest } from './index'
 
 export const growthProfileApi = {
-  getRewardBalance() {
-    return apiRequest(api.get('/api/coins/balance'))
+  getGrowthPoints() {
+    return apiRequest(api.get('/api/growth/points/balance'))
   },
 
-  getRewardActivity(params = {}) {
-    return apiRequest(api.get('/api/coins/history', { params }))
+  listGrowthPointActivity(params = {}) {
+    return apiRequest(api.get('/api/growth/points/activity', { params }))
   },
 
-  getRewardSummary() {
-    return apiRequest(api.get('/api/coins/stats'))
+  getGrowthPointSummary() {
+    return apiRequest(api.get('/api/growth/points/summary'))
   },
 
   listAttributes() {

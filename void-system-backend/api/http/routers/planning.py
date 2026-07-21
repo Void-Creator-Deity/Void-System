@@ -1,290 +1,207 @@
-"""HTTP adapter for the Planning Engine."""
-import logging
+"""HTTP adapter for durable Planning Engine jobs and reviewable Plan Drafts."""
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
-from api.http.dependencies import get_current_user, get_growth_profile, get_runtime_settings
+from api.http.dependencies import (
+    get_current_user,
+    get_plan_generation_service,
+    get_plan_draft_service,
+)
 from api.http.responses import APIResponse, create_success_response
-from api.http.schemas.planning import AdvisorRequest, RunPlanRequest
-from core.planning_contracts import PlanRequest, UserCapability
-from core.runtime_settings import RuntimeSettings
-from errors import VoidSystemException
-from modules.planning.context import build_generation_context, select_generation_mode
-from modules.planning.service import get_planning_engine
-from modules.growth.profile import GrowthProfile
+from api.http.schemas.planning import (
+    PlanDraftPublishRequest,
+    PlanDraftUpdateRequest,
+    RunPlanRequest,
+)
+from modules.planning.drafts import PlanDraftService
+from modules.planning.generation import PlanGenerationService
 
-
-logger = logging.getLogger("void-system.planning")
 router = APIRouter(tags=["AI服务"])
 
 
 @router.post(
-    "/api/plans",
-    summary="生成可审阅的执行方案",
+    "/api/plan-generations",
+    summary="Start a durable execution-plan generation job",
+    response_model=APIResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_run_plan_generation(
+    body: RunPlanRequest,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanGenerationService = Depends(get_plan_generation_service),
+) -> APIResponse:
+    """Store a generation request and wake the application-owned durable worker.
+
+    The request only creates a database job. It never performs model work through FastAPI
+    BackgroundTasks, so browser disconnects and request completion cannot own execution.
+    """
+    job = service.create(current_user["user_id"], body.model_dump())
+    worker = getattr(request.app.state, "plan_generation_worker", None)
+    if worker is not None:
+        worker.wake()
+    return create_success_response(
+        "Plan generation started. You can leave this page and return to the result.",
+        _serialize_generation_job(job),
+    )
+
+@router.get(
+    "/api/plan-generations",
+    summary="Restore recent durable execution-plan generation jobs",
     response_model=APIResponse,
 )
-async def create_run_plan(
-    body: RunPlanRequest,
+async def list_run_plan_generations(
     current_user: Dict[str, Any] = Depends(get_current_user),
-    profile: GrowthProfile = Depends(get_growth_profile),
-    settings: RuntimeSettings = Depends(get_runtime_settings),
+    service: PlanGenerationService = Depends(get_plan_generation_service),
 ) -> APIResponse:
-    topic = body.topic.strip()
-    try:
-        user_attributes = profile.list_capabilities(current_user["user_id"])
-        capabilities = [
-            UserCapability(
-                id=str(attribute.get("attr_id") or ""),
-                name=str(attribute.get("attr_name") or ""),
-                value=int(attribute.get("attr_value") or 0),
-                max_value=int(attribute.get("max_value") or 100),
-                description=str(attribute.get("description") or ""),
-            )
-            for attribute in user_attributes
-        ]
-        planner_mode = "single_task" if body.max_steps == 1 else "workflow_chain"
-        plan = get_planning_engine(settings).plan(
-            PlanRequest(
-                topic=topic,
-                profile_context=build_generation_context(
-                    current_user,
-                    user_attributes,
-                    advisor_preferences=body.advisor_prefs,
-                ),
-                capabilities=capabilities,
-                mode=planner_mode,
-                max_steps=body.max_steps,
-                strict=False,
-            )
-        )
-        result = _serialize_run_plan(
-            plan,
-            topic=topic,
-            execution_mode=body.execution_mode,
-            max_steps=body.max_steps,
-        )
-        return create_success_response("执行方案已生成，请确认后开始", data=result)
-    except VoidSystemException:
-        raise
-    except ImportError as exc:
-        raise VoidSystemException(
-            message="规划服务暂时不可用",
-            error_code="AI_SERVICE_UNAVAILABLE",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        ) from exc
-    except Exception as exc:
-        logger.error("Run plan generation failed (%s)", type(exc).__name__)
-        raise VoidSystemException(
-            message="执行方案生成失败",
-            error_code="PLANNING_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ) from exc
+    """Return persisted jobs so a refreshed page can restore its background work."""
+    return create_success_response(
+        "Plan generation history loaded",
+        {"items": [_serialize_generation_job(job) for job in service.list_recent(current_user["user_id"])]},
+    )
+
+
+@router.get(
+    "/api/plan-generations/{generation_id}",
+    summary="Read a durable execution-plan generation job",
+    response_model=APIResponse,
+)
+async def get_run_plan_generation(
+    generation_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanGenerationService = Depends(get_plan_generation_service),
+) -> APIResponse:
+    return create_success_response(
+        "Plan generation status loaded",
+        _serialize_generation_job(service.get(current_user["user_id"], generation_id)),
+    )
+
+
+@router.delete(
+    "/api/plan-generations/{generation_id}",
+    summary="Stop waiting for a durable execution-plan generation job",
+    response_model=APIResponse,
+)
+async def cancel_run_plan_generation(
+    generation_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanGenerationService = Depends(get_plan_generation_service),
+) -> APIResponse:
+    return create_success_response(
+        "Plan generation will no longer be used",
+        _serialize_generation_job(service.cancel(current_user["user_id"], generation_id)),
+    )
+
+
+def _serialize_generation_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "generation_id": job["generation_id"],
+        "status": job["status"],
+        "stage": job["stage"],
+        "progress": job["progress"],
+        "topic": job["topic"],
+        "execution_mode": job["execution_mode"],
+        "max_steps": job["max_steps"],
+        "result": job.get("result"),
+        "draft_id": job.get("draft_id"),
+        "error_message": job.get("error_message"),
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "attempt_count": int(job.get("attempt_count") or 0),
+        "cancel_requested": bool(job.get("cancel_requested", False)),
+    }
+
+
+@router.get(
+    "/api/plan-drafts",
+    summary="恢复近期可审阅方案草稿",
+    response_model=APIResponse,
+)
+async def list_plan_drafts(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanDraftService = Depends(get_plan_draft_service),
+) -> APIResponse:
+    """List persisted Plan Drafts for cross-page and post-refresh recovery."""
+    return create_success_response(
+        "方案草稿已加载",
+        {"items": [_serialize_plan_draft(item) for item in service.list_recent(current_user["user_id"])]},
+    )
+
+
+@router.get(
+    "/api/plan-drafts/{draft_id}",
+    summary="读取可审阅方案草稿",
+    response_model=APIResponse,
+)
+async def get_plan_draft(
+    draft_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanDraftService = Depends(get_plan_draft_service),
+) -> APIResponse:
+    """Return one owner-scoped draft including its authoritative editable payload."""
+    return create_success_response("方案草稿已加载", _serialize_plan_draft(service.get(current_user["user_id"], draft_id)))
+
+
+@router.patch(
+    "/api/plan-drafts/{draft_id}",
+    summary="保存方案草稿修改",
+    response_model=APIResponse,
+)
+async def update_plan_draft(
+    draft_id: str,
+    body: PlanDraftUpdateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    service: PlanDraftService = Depends(get_plan_draft_service),
+) -> APIResponse:
+    """Save a fully validated editable plan only when the rendered draft version is current."""
+    draft = service.update(current_user["user_id"], draft_id, body.payload, body.expected_version)
+    return create_success_response("方案修改已保存", _serialize_plan_draft(draft))
 
 
 @router.post(
-    "/api/ai/advisor",
-    summary="获取 AI 任务建议",
+    "/api/plan-drafts/{draft_id}/publish",
+    summary="将方案草稿原子发布为目标和行动",
     response_model=APIResponse,
 )
-async def get_ai_advisor(
-    body: AdvisorRequest,
+async def publish_plan_draft(
+    draft_id: str,
+    body: PlanDraftPublishRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
-    profile: GrowthProfile = Depends(get_growth_profile),
-    settings: RuntimeSettings = Depends(get_runtime_settings),
+    service: PlanDraftService = Depends(get_plan_draft_service),
 ) -> APIResponse:
-    topic = body.topic.strip()
-    if not topic:
-        raise VoidSystemException(
-            message="主题不能为空",
-            error_code="TOPIC_REQUIRED",
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-    try:
-        user_attributes = profile.list_capabilities(current_user["user_id"])
-        profile_context = build_generation_context(
-            current_user,
-            user_attributes,
-            advisor_preferences=body.advisor_prefs,
-        )
-        mode, mode_reason = select_generation_mode(topic)
-        if body.force_mode in {"single_task", "workflow_chain"}:
-            mode = body.force_mode
-            mode_reason = f"forced_by_user:{body.force_mode}"
-        elif mode_reason != "explicit_single_keyword":
-            mode = "workflow_chain"
-            mode_reason = f"auto_default_workflow:{mode_reason}"
-
-        capabilities = [
-            UserCapability(
-                id=str(attribute.get("attr_id") or ""),
-                name=str(attribute.get("attr_name") or ""),
-                value=int(attribute.get("attr_value") or 0),
-                max_value=int(attribute.get("max_value") or 100),
-                description=str(attribute.get("description") or ""),
-            )
-            for attribute in user_attributes
-        ]
-        plan = get_planning_engine(settings).plan(
-            PlanRequest(
-                topic=topic,
-                profile_context=profile_context,
-                capabilities=capabilities,
-                mode=mode,
-                strict=False,
-            )
-        )
-        result = _serialize_plan(plan, topic=topic, mode=mode)
-        return create_success_response("任务建议生成成功", data=result)
-    except VoidSystemException:
-        raise
-    except ImportError as exc:
-        raise VoidSystemException(
-            message="AI 服务暂时不可用",
-            error_code="AI_SERVICE_UNAVAILABLE",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        ) from exc
-    except Exception as exc:
-        logger.error("Task advice generation failed (%s)", type(exc).__name__)
-        raise VoidSystemException(
-            message="任务建议生成失败",
-            error_code="ADVISOR_FAILED",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ) from exc
+    """Publish one draft once; repeated browser retries resolve to the same Goal and Run."""
+    draft = service.publish(current_user["user_id"], draft_id, body.idempotency_key.strip())
+    return create_success_response("方案已开始推进", _serialize_plan_draft(draft))
 
 
-def _serialize_plan(plan, *, topic: str, mode: str) -> Dict[str, Any]:
-    tasks = [_serialize_task(task) for task in plan.tasks]
-    if mode == "single_task" and len(tasks) != 1:
-        raise VoidSystemException(
-            message="规划结果不完整，请重新生成后再发布",
-            error_code="ADVISOR_INVALID_PLAN",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if mode == "workflow_chain" and not tasks:
-        raise VoidSystemException(
-            message="规划结果不完整，请重新生成后再发布",
-            error_code="ADVISOR_INVALID_PLAN",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+def _serialize_plan_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a database draft to the public owner-scoped plan review contract.
 
-    metadata = plan.metadata if isinstance(plan.metadata, dict) else {}
+    Inputs:
+        draft: Internal Plan Draft snapshot returned by PlanDraftService.
+    Outputs:
+        Editable payload, optimistic version, publication status, and public Goal/Run references.
+    Called by:
+        Plan Draft list/read/update/publish planning routes and first-party plans client.
+    Side effects:
+        None; lease tokens, raw worker data, and other users' records are never accepted here.
+    Failure:
+        Missing mandatory identifiers is a programmer error and surfaces during endpoint tests.
+    Invariants:
+        The payload remains the server authority; publication identifiers appear only after atomic publish.
+    """
     return {
-        "mode": mode,
-        "query": topic,
-        "response": str(plan.response or "").strip(),
-        "estimated_duration": str(plan.estimated_duration or "").strip(),
-        "tasks": tasks,
-        "meta": {"fallback": bool(metadata.get("fallback", False))},
-    }
-
-
-def _serialize_task(task: Any) -> Dict[str, Any]:
-    title = str(getattr(task, "title", "") or "").strip()
-    description = str(getattr(task, "description", "") or "").strip()
-    priority = str(getattr(task, "priority", "") or "").strip()
-    completion_type = str(getattr(task, "completion_type", "") or "").strip()
-    task_type = str(getattr(task, "task_type", "") or "").strip()
-    criteria = getattr(task, "completion_criteria", None)
-    related_attrs = getattr(task, "related_attrs", None)
-    attribute_plan = getattr(task, "attribute_plan", None)
-
-    try:
-        estimated_time = int(getattr(task, "estimated_time", 0) or 0)
-        reward_coins = int(getattr(task, "reward_coins", 0) or 0)
-        attribute_points = int(getattr(task, "attribute_points", 0) or 0)
-    except (TypeError, ValueError):
-        estimated_time = reward_coins = attribute_points = -1
-
-    is_valid = (
-        title
-        and description
-        and 1 <= estimated_time <= 480
-        and 0 <= reward_coins <= 1000
-        and 0 <= attribute_points <= 100
-        and priority in {"easy", "medium", "hard"}
-        and completion_type in {"simple", "progress", "ai_eval", "submission"}
-        and task_type in {"main", "side", "daily"}
-        and isinstance(criteria, dict)
-        and isinstance(related_attrs, dict)
-        and isinstance(attribute_plan, list)
-    )
-    if not is_valid:
-        raise VoidSystemException(
-            message="规划结果不完整，请重新生成后再发布",
-            error_code="ADVISOR_INVALID_PLAN",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    return {
-        "title": title,
-        "description": description,
-        "estimated_time": estimated_time,
-        "reward_coins": reward_coins,
-        "attribute_points": attribute_points,
-        "priority": priority,
-        "task_type": task_type,
-        "completion_type": completion_type,
-        "related_attrs": related_attrs,
-        "completion_criteria": criteria,
-        "attribute_plan": attribute_plan,
-    }
-
-
-def _serialize_run_plan(
-    plan: Any,
-    *,
-    topic: str,
-    execution_mode: str,
-    max_steps: int,
-) -> Dict[str, Any]:
-    tasks = [_serialize_task(task) for task in plan.tasks]
-    if not tasks or len(tasks) > max_steps:
-        raise VoidSystemException(
-            message="规划结果不完整，请调整目标后重新生成",
-            error_code="PLANNING_INVALID_RUN_SPEC",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    steps = []
-    previous_key = None
-    for index, task in enumerate(tasks, start=1):
-        key = f"step-{index}"
-        steps.append(
-            {
-                "client_key": key,
-                "title": task["title"],
-                "description": task["description"],
-                "kind": "agent" if execution_mode == "agent" else "manual",
-                "depends_on": [previous_key] if previous_key else [],
-                "max_attempts": 3 if execution_mode == "agent" else 1,
-                "requires_approval": False,
-                "completion_criteria": task["completion_criteria"],
-                "input_data": {
-                    "estimated_minutes": task["estimated_time"],
-                    "capability_plan": task["attribute_plan"],
-                },
-            }
-        )
-        previous_key = key
-    metadata = plan.metadata if isinstance(plan.metadata, dict) else {}
-    return {
-        "goal": {
-            "title": topic[:160],
-            "description": str(plan.response or "").strip(),
-            "desired_outcome": topic,
-            "priority": "medium",
-        },
-        "run": {
-            "title": topic[:160],
-            "objective": topic,
-            "mode": execution_mode,
-            "steps": steps,
-        },
-        "summary": str(plan.response or "").strip(),
-        "estimated_duration": str(plan.estimated_duration or "").strip(),
-        "meta": {
-            "needs_review": True,
-            "used_fallback": bool(metadata.get("fallback", False)),
-        },
+        "draft_id": draft["draft_id"],
+        "generation_id": draft.get("generation_id"),
+        "status": draft["status"],
+        "version": int(draft.get("version") or 1),
+        "payload": draft.get("payload") or {},
+        "published_goal_id": draft.get("published_goal_id"),
+        "published_run_id": draft.get("published_run_id"),
+        "created_at": draft["created_at"],
+        "updated_at": draft["updated_at"],
+        "published_at": draft.get("published_at"),
     }

@@ -6,22 +6,40 @@ import unittest
 from fastapi.testclient import TestClient
 
 from api.http.application import ApplicationOptions, create_app
+from api.http.dependencies import get_task_execution
+from adapters.sqlite.task_execution_repository import SQLiteTaskExecutionRepository
+from core.planning_contracts import EvaluationResult
+from modules.tasks.execution import TaskExecution
+
+
+class _PassingEvaluationEngine:
+    """Deterministic evaluator used to exercise the assisted HTTP contract."""
+
+    def evaluate(self, _request):
+        return EvaluationResult(
+            status="pass",
+            feedback="The submitted evidence meets the completion criteria.",
+            score=92,
+        )
 
 
 class TaskExecutionHttpTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.client = TestClient(
-            create_app(
-                ApplicationOptions(
-                    database_path=str(Path(self.temp_dir.name) / "task-execution-http.db"),
-                    enable_ai_routes=False,
-                    enable_langserve_routes=False,
-                    bootstrap_admin=False,
-                )
+        self.app = create_app(
+            ApplicationOptions(
+                database_path=str(Path(self.temp_dir.name) / "task-execution-http.db"),
+                enable_ai_routes=False,
+                enable_langserve_routes=False,
+                bootstrap_admin=False,
             )
         )
+        self.client = TestClient(self.app)
         self.client.__enter__()
+        self.app.dependency_overrides[get_task_execution] = lambda: TaskExecution(
+            SQLiteTaskExecutionRepository(self.app.state.database.get_connection),
+            evaluation_engine=_PassingEvaluationEngine(),
+        )
         registered = self.client.post(
             "/api/auth/register",
             json={
@@ -57,13 +75,12 @@ class TaskExecutionHttpTests(unittest.TestCase):
             f"/api/goals/{goal_id}/runs",
             headers=self.headers,
             json={
-                "mode": "assisted",
+                "mode": "manual",
                 "steps": [
                     {"client_key": "prepare", "title": "Prepare"},
                     {
                         "client_key": "verify",
                         "title": "Verify",
-                        "kind": "review",
                         "depends_on": ["prepare"],
                     },
                 ],
@@ -183,7 +200,7 @@ class TaskExecutionHttpTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error_code"], "UNKNOWN_STEP_DEPENDENCY")
 
-    def test_agent_run_lease_and_checkpoint_contract(self) -> None:
+    def test_assisted_run_requires_evidence_and_retires_worker_leases(self) -> None:
         goal = self.client.post(
             "/api/goals", headers=self.headers, json={"title": "Research architecture"}
         ).json()["data"]["goal"]
@@ -191,42 +208,45 @@ class TaskExecutionHttpTests(unittest.TestCase):
             f"/api/goals/{goal['goal_id']}/runs",
             headers=self.headers,
             json={
-                "mode": "agent",
-                "steps": [{"title": "Inspect modules", "kind": "agent"}],
+                "mode": "assisted",
+                "steps": [{"title": "Inspect modules"}],
             },
         ).json()["data"]["run"]
-        self.client.post(f"/api/runs/{run['run_id']}/start", headers=self.headers)
-
-        claimed = self.client.post(
-            f"/api/runs/{run['run_id']}/lease",
-            headers=self.headers,
-            json={"worker_id": "backend-worker", "lease_seconds": 60},
+        step = self.client.post(
+            f"/api/runs/{run['run_id']}/start", headers=self.headers
+        ).json()["data"]["run"]["steps"][0]
+        self.assertEqual(
+            self.client.post(
+                f"/api/runs/{run['run_id']}/steps/{step['step_id']}/start",
+                headers=self.headers,
+            ).status_code,
+            200,
         )
-        self.assertEqual(claimed.status_code, 200)
-        token = claimed.json()["data"]["lease"]["lease_token"]
-
-        heartbeat = self.client.post(
-            f"/api/runs/{run['run_id']}/heartbeat",
+        blocked = self.client.post(
+            f"/api/runs/{run['run_id']}/steps/{step['step_id']}/complete",
+            headers=self.headers,
+            json={},
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error_code"], "ASSISTED_REVIEW_REQUIRED")
+        reviewed = self.client.post(
+            f"/api/runs/{run['run_id']}/steps/{step['step_id']}/review",
             headers=self.headers,
             json={
-                "lease_token": token,
-                "lease_seconds": 90,
-                "checkpoint_data": {"phase": "inspection", "completed": 2},
+                "submission": "Inspected the relevant modules and recorded the outcome.",
+                "idempotency_key": "inspection-review-1",
             },
         )
-        self.assertEqual(heartbeat.status_code, 200)
-        self.assertEqual(
-            heartbeat.json()["data"]["lease"]["checkpoint_data"]["phase"],
-            "inspection",
-        )
-
-        released = self.client.post(
+        self.assertEqual(reviewed.status_code, 200)
+        completed_run = reviewed.json()["data"]["run"]
+        self.assertEqual(completed_run["status"], "completed")
+        self.assertEqual(completed_run["actions"][0]["status"], "confirmed")
+        retired = self.client.post(
             f"/api/runs/{run['run_id']}/lease/release",
             headers=self.headers,
-            json={"lease_token": token},
+            json={},
         )
-        self.assertEqual(released.status_code, 200)
-        self.assertIsNotNone(released.json()["data"]["run"]["lease"]["released_at"])
+        self.assertEqual(retired.status_code, 404)
 
     def test_failed_run_can_resume_from_a_retryable_step(self) -> None:
         goal = self.client.post(
@@ -341,40 +361,12 @@ class TaskExecutionHttpTests(unittest.TestCase):
             persisted["next_action"]["text"], "Turn the note into a reusable template."
         )
 
-        observations = self.client.get(
-            "/api/companion/profile/observations", headers=self.headers
-        )
-        self.assertEqual(observations.status_code, 200)
-        review_observations = [
-            item for item in observations.json()["data"]["observations"]
-            if item["source_type"] == "task_run_review"
-        ]
-        self.assertEqual(len(review_observations), 1)
-        observation = review_observations[0]
-        self.assertEqual(observation["source_ref"], f"run:{run_id}:review")
-        self.assertEqual(observation["kind"], "task")
-        self.assertEqual(observation["attributes"]["rating"], 5)
-        self.assertTrue(observation["attributes"]["has_notes"])
-        self.assertNotIn("The result was clear.", observation["summary"])
-        self.assertNotIn("The result was clear.", str(observation["attributes"]))
-
         revised = self.client.put(
             f"/api/runs/{run_id}/review",
             headers=self.headers,
             json={"rating": 4},
         )
         self.assertEqual(revised.status_code, 200)
-        refreshed_observations = self.client.get(
-            "/api/companion/profile/observations", headers=self.headers
-        ).json()["data"]["observations"]
-        revised_observations = [
-            item for item in refreshed_observations
-            if item["source_type"] == "task_run_review"
-        ]
-        self.assertEqual(len(revised_observations), 1)
-        self.assertEqual(revised_observations[0]["observation_id"], observation["observation_id"])
-        self.assertEqual(revised_observations[0]["attributes"]["rating"], 4)
-
         refreshed = self.client.get(f"/api/runs/{run_id}/review", headers=self.headers)
         self.assertEqual(refreshed.status_code, 200)
         self.assertEqual(refreshed.json()["data"]["review"]["reflection"]["outcome"], "met")

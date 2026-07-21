@@ -138,8 +138,7 @@ async def get_user_profile(
     profile = user_service.get_user_profile(current_user["user_id"])
     profile.update(
         {
-            "balance": growth_profile.balance(current_user["user_id"]),
-            "resources": growth_profile.resources(current_user["user_id"]),
+            "growth_points": growth_profile.balance(current_user["user_id"]),
             "stats": user_service.get_user_stats(current_user["user_id"]),
         }
     )

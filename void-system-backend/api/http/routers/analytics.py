@@ -42,7 +42,7 @@ async def get_visualization_overview(
                 "user_stats": repository.global_user_stats(),
                 "task_stats": repository.global_task_stats(),
                 "attribute_stats": repository.global_attribute_stats(),
-                "economy_stats": repository.global_economy_stats(),
+                "growth_point_stats": repository.global_growth_point_stats(),
                 "document_stats": repository.global_document_stats(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
@@ -133,8 +133,8 @@ async def get_attributes_visualization(
         ) from exc
 
 
-@router.get("/api/admin/visualization/economy", summary="Get economy analytics", response_model=APIResponse)
-async def get_economy_visualization(
+@router.get("/api/admin/visualization/growth", summary="Get growth-point analytics", response_model=APIResponse)
+async def get_growth_visualization(
     days: int = Query(30, ge=1, le=365),
     current_admin: Dict[str, Any] = Depends(get_current_admin),
     repository: AnalyticsRepository = Depends(get_analytics_repository),
@@ -142,19 +142,18 @@ async def get_economy_visualization(
     del current_admin
     try:
         return create_success_response(
-            "Economy analytics loaded",
+            "Growth-point analytics loaded",
             data={
-                "transaction_trend": repository.coin_transaction_trend(days),
-                "balance_distribution": repository.user_balance_distribution(),
-                "item_sales_stats": repository.item_sales_stats(),
-                "health_metrics": repository.economy_health_metrics(),
+                "activity_trend": repository.growth_point_activity_trend(days),
+                "points_distribution": repository.growth_point_distribution(),
+                "health_metrics": repository.growth_point_health_metrics(),
                 "period_days": days,
             },
         )
     except Exception as exc:
-        logger.error("Economy analytics failed: %s", exc, exc_info=True)
+        logger.error("Growth-point analytics failed: %s", exc, exc_info=True)
         raise VoidSystemException(
-            message="Economy analytics could not be loaded",
-            error_code="ECONOMY_VISUALIZATION_FAILED",
+            message="Growth-point analytics could not be loaded",
+            error_code="GROWTH_VISUALIZATION_FAILED",
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
         ) from exc

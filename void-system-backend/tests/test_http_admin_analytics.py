@@ -44,7 +44,7 @@ class AdminAnalyticsHttpTests(unittest.TestCase):
     def test_all_administrator_analytics_endpoints_return_empty_safe_read_models(self) -> None:
         expected_keys = {
             "/api/admin/visualization/overview": {
-                "user_stats", "task_stats", "attribute_stats", "economy_stats", "document_stats"
+                "user_stats", "task_stats", "attribute_stats", "growth_point_stats", "document_stats"
             },
             "/api/admin/visualization/users": {
                 "registration_trend", "activity_stats", "level_distribution", "period_days"
@@ -55,8 +55,8 @@ class AdminAnalyticsHttpTests(unittest.TestCase):
             "/api/admin/visualization/attributes": {
                 "type_distribution", "value_distribution", "popular_attributes"
             },
-            "/api/admin/visualization/economy": {
-                "transaction_trend", "balance_distribution", "item_sales_stats", "health_metrics", "period_days"
+            "/api/admin/visualization/growth": {
+                "activity_trend", "points_distribution", "health_metrics", "period_days"
             },
         }
         for endpoint, keys in expected_keys.items():

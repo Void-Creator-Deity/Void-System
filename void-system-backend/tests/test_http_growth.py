@@ -79,8 +79,8 @@ class GrowthProfileHttpTests(unittest.TestCase):
         self.assertEqual(updated.json()["data"]["max_value"], 40)
         self.assertEqual(updated.json()["data"]["attr_name"], "Deep focus")
 
-        self.assertEqual(self.client.get("/api/coins/balance", headers=owner_headers).json()["data"]["balance"], 0)
-        summary = self.client.get("/api/coins/stats", headers=owner_headers)
+        self.assertEqual(self.client.get("/api/growth/points/balance", headers=owner_headers).json()["data"]["growth_points"], 0)
+        summary = self.client.get("/api/growth/points/summary", headers=owner_headers)
         self.assertEqual(summary.status_code, 200)
         self.assertEqual(summary.json()["data"]["net_income"], 0)
 

@@ -7,10 +7,11 @@ import base64
 import io
 import logging
 import mimetypes
-from typing import Union
+from typing import Optional, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
+from core.runtime_settings import RuntimeSettings
 from services.ai_services.llm_factory import get_chat_llm
 from services.ai_services.vision_messages import human_message_with_text_and_images
 
@@ -43,8 +44,16 @@ def _flatten_message_content(content: Union[str, list, None]) -> str:
     return str(content).strip()
 
 
-async def caption_one_image_data_url(data_url: str) -> str:
-    llm = get_chat_llm(temperature=0.2)
+async def caption_one_image_data_url(
+    data_url: str, *, settings: Optional[RuntimeSettings] = None
+) -> str:
+    """Caption one session image using the caller's immutable AI settings.
+
+    Inputs: a bounded image data URL and optional application settings snapshot.
+    Output: a concise visible-text summary. Transport configuration stays in the
+    canonical LLM factory, which prevents per-feature provider divergence.
+    """
+    llm = get_chat_llm(temperature=0.2, settings=settings)
     human = human_message_with_text_and_images("请根据附图输出概括。", [data_url])
     messages = [SystemMessage(content=CAPTION_SYSTEM), human]
     try:
@@ -87,10 +96,17 @@ def _image_data_url_for_vision(file_data: bytes, file_name: str) -> str:
     return f"data:image/jpeg;base64,{encoded}"
 
 
-async def describe_image_for_knowledge(file_data: bytes, file_name: str) -> str:
-    """Produce searchable image evidence with a configured multimodal chat model."""
+async def describe_image_for_knowledge(
+    file_data: bytes, file_name: str, *, settings: Optional[RuntimeSettings] = None
+) -> str:
+    """Produce searchable image evidence with a configured multimodal chat model.
+
+    Inputs: file bytes, display name, and an optional application settings
+    snapshot. Output: searchable factual image evidence. This is called by
+    knowledge ingestion and must not read a mutable global model configuration.
+    """
     data_url = _image_data_url_for_vision(file_data, file_name)
-    llm = get_chat_llm(temperature=0.0)
+    llm = get_chat_llm(temperature=0.0, settings=settings)
     human = human_message_with_text_and_images(
         "请提取这张资料图片中可检索、可引用的事实内容。",
         [data_url],

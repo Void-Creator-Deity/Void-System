@@ -40,6 +40,10 @@ class SystemHttpTests(unittest.TestCase):
         self.assertTrue(body["success"])
         self.assertEqual(body["data"]["status"], "healthy")
         self.assertEqual(body["data"]["database"], "healthy")
+        self.assertEqual(body["data"]["schema"], "compatible")
+        current_schema_version = len(self.client.app.state.database._migrations())
+        self.assertEqual(body["data"]["schema_version"], current_schema_version)
+        self.assertEqual(body["data"]["expected_schema_version"], current_schema_version)
         self.assertEqual(body["data"]["version"], "0.3.0")
         self.assertTrue(health.headers["X-Request-ID"])
 
@@ -54,6 +58,7 @@ class SystemHttpTests(unittest.TestCase):
         self.assertEqual(body["error_code"], "DATABASE_UNAVAILABLE")
         self.assertEqual(body["data"]["status"], "unhealthy")
         self.assertEqual(body["data"]["database"], "unhealthy")
+        self.assertEqual(body["data"]["schema"], "incompatible_or_unavailable")
         self.assertTrue(response.headers["X-Request-ID"])
 
     def test_route_discovery_includes_business_routes_from_lazy_router_includes(self) -> None:
@@ -61,7 +66,10 @@ class SystemHttpTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         paths = {route["path"] for route in response.json()["data"]["routes"]}
-        self.assertTrue({"/api/tasks", "/api/task-chains", "/api/ai/advisor", "/api/knowledge/system/ask"}.issubset(paths))
+        self.assertTrue({"/api/goals", "/api/runs", "/api/triggers", "/api/plan-generations", "/api/plan-drafts", "/api/library/ask"}.issubset(paths))
+        self.assertNotIn("/api/knowledge/system/ask", paths)
+        self.assertNotIn("/api/plans", paths)
+        self.assertNotIn("/api/ai/advisor", paths)
 
     def test_allowed_origin_receives_cors_headers(self) -> None:
         response = self.client.options(

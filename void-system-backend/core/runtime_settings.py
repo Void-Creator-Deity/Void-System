@@ -53,7 +53,6 @@ class RuntimeSettings:
     DEBUG: bool = True
     RELOAD: bool = False
     DATABASE_URL: str = "sqlite:///void_system.db"
-    DATABASE_POOL_SIZE: int = 10
     SECRET_KEY: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
@@ -66,6 +65,8 @@ class RuntimeSettings:
     ENABLE_LANGSERVE_ROUTES: bool = False
     MAX_FILE_SIZE: int = 52_428_800
     USER_FILES_DIR: str = "user_files"
+    DOCUMENT_ENCRYPTION_KEY: Optional[str] = None
+    DOCUMENT_ENCRYPTION_KEY_FILE: Optional[str] = None
     LLM_PROVIDER: str = "ollama"
     EMBEDDING_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -75,14 +76,8 @@ class RuntimeSettings:
     OPENAI_BASE_URL: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     CHROMA_PERSIST_DIR: str = "chroma_db"
-    VECTOR_DIMENSION: int = 384
     LOG_LEVEL: str = "INFO"
-    LOG_FILE: str = "logs/void_system.log"
     CORS_ORIGINS: list[str] = field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
-    MAX_CONCURRENT_TASKS: int = 10
-    TASK_QUEUE_SIZE: int = 100
-    REDIS_URL: Optional[str] = None
-    CACHE_EXPIRE_SECONDS: int = 3600
 
     @classmethod
     def from_environment(
@@ -101,7 +96,6 @@ class RuntimeSettings:
             DEBUG=_bool(source, "DEBUG", True),
             RELOAD=_bool(source, "RELOAD", False),
             DATABASE_URL=source.get("DATABASE_URL", "sqlite:///void_system.db"),
-            DATABASE_POOL_SIZE=_int(source, "DATABASE_POOL_SIZE", 10),
             SECRET_KEY=source.get("SECRET_KEY") or secrets.token_urlsafe(32),
             ALGORITHM=source.get("ALGORITHM", "HS256"),
             ACCESS_TOKEN_EXPIRE_MINUTES=_int(source, "ACCESS_TOKEN_EXPIRE_MINUTES", 30),
@@ -114,6 +108,8 @@ class RuntimeSettings:
             ENABLE_LANGSERVE_ROUTES=_bool(source, "ENABLE_LANGSERVE_ROUTES", False),
             MAX_FILE_SIZE=_int(source, "MAX_FILE_SIZE", 52_428_800),
             USER_FILES_DIR=source.get("USER_FILES_DIR", "user_files"),
+            DOCUMENT_ENCRYPTION_KEY=source.get("DOCUMENT_ENCRYPTION_KEY") or None,
+            DOCUMENT_ENCRYPTION_KEY_FILE=source.get("DOCUMENT_ENCRYPTION_KEY_FILE") or None,
             LLM_PROVIDER=source.get("LLM_PROVIDER", "ollama"),
             EMBEDDING_PROVIDER=source.get("EMBEDDING_PROVIDER", "ollama"),
             OLLAMA_BASE_URL=source.get("OLLAMA_BASE_URL", "http://localhost:11434"),
@@ -123,18 +119,14 @@ class RuntimeSettings:
             OPENAI_BASE_URL=source.get("OPENAI_BASE_URL") or None,
             GOOGLE_API_KEY=source.get("GOOGLE_API_KEY") or None,
             CHROMA_PERSIST_DIR=source.get("CHROMA_PERSIST_DIR", "chroma_db"),
-            VECTOR_DIMENSION=_int(source, "VECTOR_DIMENSION", 384),
             LOG_LEVEL=source.get("LOG_LEVEL", "INFO"),
-            LOG_FILE=source.get("LOG_FILE", "logs/void_system.log"),
             CORS_ORIGINS=_origins(source),
-            MAX_CONCURRENT_TASKS=_int(source, "MAX_CONCURRENT_TASKS", 10),
-            TASK_QUEUE_SIZE=_int(source, "TASK_QUEUE_SIZE", 100),
-            REDIS_URL=source.get("REDIS_URL") or None,
-            CACHE_EXPIRE_SECONDS=_int(source, "CACHE_EXPIRE_SECONDS", 3600),
         )
 
     def validate_runtime(self) -> None:
         """Fail early when a production configuration is unsafe or incomplete."""
+        if self.is_production() and not self.DOCUMENT_ENCRYPTION_KEY:
+            raise RuntimeError("Production requires DOCUMENT_ENCRYPTION_KEY for knowledge source encryption")
         if self.is_production() and len(self.SECRET_KEY) < 32:
             raise RuntimeError("Production SECRET_KEY must contain at least 32 characters")
         if self.is_production() and "*" in self.CORS_ORIGINS:

@@ -13,11 +13,14 @@ _ENV_FILE = _BACKEND_ROOT / ".env"
 load_dotenv(_ENV_FILE)
 
 from api.http.application import create_app
-from config import Config
+from core.runtime_settings import RuntimeSettings
+
+
+settings = RuntimeSettings.from_environment()
 
 
 logging.basicConfig(
-    level=getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO),
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
@@ -27,9 +30,9 @@ app = create_app()
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host=Config.HOST,
-        port=Config.PORT,
-        log_level=Config.LOG_LEVEL.lower(),
-        reload=Config.RELOAD,
+        host=settings.HOST,
+        port=settings.PORT,
+        log_level=settings.LOG_LEVEL.lower(),
+        reload=settings.RELOAD,
         reload_excludes=["**/data/**", "**/session_temp/**", "**/__pycache__/**", "**/.git/**"],
     )

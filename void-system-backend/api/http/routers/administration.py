@@ -7,7 +7,11 @@ from starlette.concurrency import run_in_threadpool
 
 from api.http.dependencies import get_current_admin
 from api.http.responses import APIResponse, create_success_response
-from api.http.schemas.administration import AIConfigTestRequest, AIConfigUpdateRequest
+from api.http.schemas.administration import (
+    AIConfigModelListRequest,
+    AIConfigTestRequest,
+    AIConfigUpdateRequest,
+)
 from errors import VoidSystemException
 from modules.administration.ai_configuration import AIConfigurationError, AIConfigurationManager
 
@@ -57,6 +61,23 @@ async def update_ai_runtime_config(
         raise _translate_error(exc) from exc
     message = "没有需要保存的变更" if not data["updated_keys"] else "模型连接配置已保存"
     return create_success_response(message, data=data)
+
+
+@router.post("/ai-config/models", summary="获取上游模型列表", response_model=APIResponse)
+async def discover_ai_models(
+    payload: AIConfigModelListRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin),
+    manager: AIConfigurationManager = Depends(get_ai_configuration),
+) -> APIResponse:
+    del current_admin
+    try:
+        data = await run_in_threadpool(
+            manager.discover_models,
+            payload.model_dump(exclude_unset=True),
+        )
+    except AIConfigurationError as exc:
+        raise _translate_error(exc) from exc
+    return create_success_response("上游模型列表已更新", data=data)
 
 
 @router.post("/ai-config/test", summary="测试模型连接", response_model=APIResponse)

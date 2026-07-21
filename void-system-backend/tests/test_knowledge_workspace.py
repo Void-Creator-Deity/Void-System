@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from adapters.legacy.knowledge_adapters import LegacyUserVectorIndex
+from core.knowledge_contracts import KnowledgeChunk, KnowledgeScope
+from modules.knowledge.indexes import ScopedSemanticIndex
 from adapters.sqlite.user_knowledge_repository import SQLiteUserKnowledgeRepository
 from core.knowledge_contracts import KnowledgeQuery
 from database import Database
@@ -43,10 +44,10 @@ class KnowledgeWorkspaceTests(unittest.TestCase):
                 "INSERT INTO users (user_id, username, email) VALUES ('u1', 'user-one', 'u1@example.com')"
             )
             connection.execute(
-                """INSERT INTO user_documents
-                   (doc_id, user_id, title, original_name, file_size, storage_path,
-                    parse_status, tags, chroma_ids)
-                   VALUES ('d1', 'u1', 'Guide', 'guide.md', 12, '', 'completed', '["work"]', '[]')"""
+                """INSERT INTO knowledge_documents
+                   (document_id, visibility, owner_id, title, file_name, file_size, storage_path,
+                    encryption_version, parse_status, tags, chroma_ids)
+                   VALUES ('d1', 'private', 'u1', 'Guide', 'guide.md', 12, '', 'none', 'completed', '["work"]', '[]')"""
             )
             connection.commit()
         finally:
@@ -99,39 +100,33 @@ class KnowledgeWorkspaceTests(unittest.TestCase):
 
 
 class ActiveRetrievalTests(unittest.TestCase):
-    def test_vector_search_uses_only_active_catalog_ids(self) -> None:
+    def test_semantic_search_receives_only_active_catalog_documents(self) -> None:
+        class Store:
+            def semantic_search(self, *, query, scope, catalog):
+                self.call = (query, scope, catalog)
+                return [KnowledgeChunk("chunk-1", "active-doc", "u1", "supported text", scope, 0.9)]
+
         class Repository:
             def active_document_ids(self, owner_id, requested_ids=None):
                 self.call = (owner_id, requested_ids)
                 return ["active-doc"]
 
-        class Document:
-            page_content = "supported text"
-            metadata = {"doc_id": "active-doc", "chunk_id": "chunk-1"}
-
-        class Collection:
-            def similarity_search_with_relevance_scores(self, **kwargs):
-                self.kwargs = kwargs
-                return [(Document(), 0.9)]
-
-        class VectorManager:
-            def __init__(self):
-                self.collection = Collection()
-
-            def get_user_collection(self, owner_id):
-                return self.collection
+            def get_document(self, owner_id, document_id):
+                return {"doc_id": document_id, "title": "Guide", "original_name": "guide.md"}
 
         repository = Repository()
-        manager = VectorManager()
-        index = LegacyUserVectorIndex(manager, repository)
-        results = index.search(
-            KnowledgeQuery(owner_id="u1", question="question", document_ids=["active-doc", "archived-doc"])
-        )
+        store = Store()
+
+        def catalog(query, scope):
+            if scope != KnowledgeScope.USER or not query.owner_id:
+                return {}
+            return {document_id: repository.get_document(query.owner_id, document_id) for document_id in repository.active_document_ids(query.owner_id, query.document_ids)}
+
+        index = ScopedSemanticIndex(store, catalog)
+        results = index.search(KnowledgeQuery(owner_id="u1", question="question", document_ids=["active-doc", "archived-doc"], scopes=(KnowledgeScope.USER,)))
         self.assertEqual(repository.call, ("u1", ["active-doc", "archived-doc"]))
-        self.assertEqual(
-            manager.collection.kwargs["filter"],
-            {"doc_id": {"$in": ["active-doc"]}},
-        )
+        self.assertEqual(store.call[1], KnowledgeScope.USER)
+        self.assertEqual(set(store.call[2]), {"active-doc"})
         self.assertEqual([chunk.document_id for chunk in results], ["active-doc"])
 
 

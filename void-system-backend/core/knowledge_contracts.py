@@ -12,6 +12,23 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
 
+class KnowledgeRetrievalError(RuntimeError):
+    """Signal that an index failed instead of finding no relevant knowledge.
+
+    Inputs: the stable implementation component name and optional operation.
+    Output: a domain exception that HTTP adapters can map to a recoverable
+    service-unavailable response without exposing Chroma or provider internals.
+    Callers: knowledge index adapters raise this only after every supported
+    fallback has failed. Invariant: an empty result still means retrieval ran
+    successfully and found no matching active documents.
+    """
+
+    def __init__(self, component: str, operation: str = "search") -> None:
+        self.component = component
+        self.operation = operation
+        super().__init__(f"Knowledge {operation} failed in {component}.")
+
+
 class KnowledgeScope(str, Enum):
     """Where a knowledge item is visible."""
 

@@ -51,8 +51,8 @@ class UserKnowledgeRepository(Protocol):
 class KnowledgeMaintenance(Protocol):
     """Infrastructure operations kept behind an application-owned adapter."""
 
-    async def rebuild_index(self, owner_id: str) -> Dict[str, Any]:
-        """Rebuild searchable content for active documents."""
+    def enqueue_rebuild_jobs(self, owner_id: str) -> Dict[str, Any]:
+        """Persist rebuild work for active documents without running it in the caller."""
 
     def index_stats(self, owner_id: str) -> Dict[str, Any]:
         """Return compatibility diagnostics for the current index adapter."""

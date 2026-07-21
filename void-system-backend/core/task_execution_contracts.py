@@ -9,11 +9,11 @@ GOAL_STATUSES = frozenset({"active", "completed", "archived"})
 RUN_STATUSES = frozenset({
     "queued", "running", "paused", "waiting_approval", "completed", "failed", "cancelled",
 })
-RUN_MODES = frozenset({"manual", "assisted", "agent"})
+RUN_MODES = frozenset({"manual", "assisted"})
 STEP_STATUSES = frozenset({
     "pending", "ready", "running", "waiting_approval", "completed", "failed", "skipped", "cancelled",
 })
-STEP_KINDS = frozenset({"manual", "agent", "tool", "review"})
+STEP_KINDS = frozenset({"manual"})
 TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
 TERMINAL_STEP_STATUSES = frozenset({"completed", "failed", "skipped", "cancelled"})
 SATISFIED_STEP_STATUSES = frozenset({"completed", "skipped"})
@@ -40,6 +40,8 @@ class StepSpec:
     requires_approval: bool = False
     completion_criteria: Mapping[str, Any] = field(default_factory=dict)
     input_data: Mapping[str, Any] = field(default_factory=dict)
+    # A bounded, publication-time declaration. Completion never asks a model to price work.
+    reward_spec: Mapping[str, Any] = field(default_factory=dict)
     client_key: Optional[str] = None
 
 
@@ -229,27 +231,3 @@ class TaskExecutionRepository(Protocol):
         decision: str,
         note: Optional[str],
     ) -> Optional[str]: ...
-
-    def claim_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        worker_id: str,
-        lease_seconds: int,
-    ) -> Optional[Dict[str, Any]]: ...
-    def heartbeat_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        lease_seconds: int,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]: ...
-    def release_run_lease(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        *,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> bool: ...

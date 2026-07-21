@@ -1,81 +1,52 @@
-"""Regression tests for system knowledge retrieval through portable contracts."""
+"""Regression tests for shared retrieval through the unified store indexes."""
 from __future__ import annotations
 
 import unittest
 
-from adapters.legacy.knowledge_adapters import LegacySystemLexicalIndex, LegacySystemVectorIndex
-from core.knowledge_contracts import KnowledgeQuery, KnowledgeScope
+from core.knowledge_contracts import KnowledgeChunk, KnowledgeQuery, KnowledgeScope
+from modules.knowledge.indexes import ScopedLexicalIndex, ScopedSemanticIndex
 
 
-class _Document:
-    def __init__(self, text, metadata):
-        self.page_content = text
-        self.metadata = metadata
+class FakeStore:
+    def __init__(self) -> None:
+        self.semantic_calls = []
+        self.lexical_calls = []
 
+    def semantic_search(self, *, query, scope, catalog):
+        self.semantic_calls.append((query, scope, catalog))
+        return [KnowledgeChunk("chunk-1", "system-1", "system", "Incident response guide", scope, 0.82, "Operations handbook", "handbook.md", 0)]
 
-class _VectorStore:
-    def __init__(self):
-        self.documents = [
-            _Document("The handbook explains incident response.", {"doc_id": "system-1", "chunk_index": 0}),
-            _Document("Hidden content", {"doc_id": "inactive", "chunk_index": 0}),
-        ]
-
-    def similarity_search_with_relevance_scores(self, question, k):
-        del question, k
-        return [(document, 0.82) for document in self.documents]
-
-    def get(self, **kwargs):
-        del kwargs
-        return {
-            "documents": [document.page_content for document in self.documents],
-            "metadatas": [document.metadata for document in self.documents],
-        }
-
-
-class _Catalog:
-    def list_system_rag_documents(self, tags=None):
-        rows = [
-            {"id": "system-1", "title": "Operations handbook", "file_name": "handbook.md", "tags": ["ops"], "description": "Runbooks"},
-        ]
-        if tags:
-            return [row for row in rows if all(tag in row["tags"] for tag in tags)]
-        return rows
-
-
-class _Manager:
-    def __init__(self):
-        self.vector_db = _VectorStore()
-        self.db = _Catalog()
+    def lexical_search(self, *, query, scope, catalog):
+        self.lexical_calls.append((query, scope, catalog))
+        return [KnowledgeChunk("chunk-1", "system-1", "system", "Incident response guide", scope, 2.0, "Operations handbook", "handbook.md", 0)]
 
 
 class SystemKnowledgeIndexTests(unittest.TestCase):
-    def test_semantic_index_only_returns_active_system_catalog_documents(self):
-        results = LegacySystemVectorIndex(_Manager()).search(
-            KnowledgeQuery(question="incident response", scopes=(KnowledgeScope.SYSTEM,), top_k=5)
-        )
+    def setUp(self) -> None:
+        self.store = FakeStore()
 
-        self.assertEqual(1, len(results))
-        self.assertEqual("system-1", results[0].document_id)
-        self.assertEqual(KnowledgeScope.SYSTEM, results[0].scope)
-        self.assertEqual("Operations handbook", results[0].title)
+        def catalog(query, scope):
+            self.catalog_query = (query, scope)
+            if scope != KnowledgeScope.SYSTEM:
+                return {}
+            return {"system-1": {"title": "Operations handbook", "file_name": "handbook.md", "tags": ["ops"]}}
 
-    def test_lexical_index_honors_scope_and_tag_filters(self):
-        index = LegacySystemLexicalIndex(_Manager())
-        no_scope_results = index.search(
-            KnowledgeQuery(question="incident", scopes=(KnowledgeScope.USER,), top_k=5)
-        )
-        filtered_results = index.search(
-            KnowledgeQuery(
-                question="incident",
-                scopes=(KnowledgeScope.SYSTEM,),
-                top_k=5,
-                filters={"tags": ["ops"]},
-            )
-        )
+        self.catalog = catalog
 
-        self.assertEqual([], no_scope_results)
-        self.assertEqual(1, len(filtered_results))
-        self.assertEqual(["ops"], filtered_results[0].metadata["tags"])
+    def test_semantic_index_reads_shared_scope_from_the_unified_store(self) -> None:
+        index = ScopedSemanticIndex(self.store, self.catalog)
+        query = KnowledgeQuery(question="incident response", scopes=(KnowledgeScope.SYSTEM,))
+        result = index.search(query)
+        self.assertEqual([item.document_id for item in result], ["system-1"])
+        self.assertEqual(self.store.semantic_calls[0][1], KnowledgeScope.SYSTEM)
+        self.assertIn("system-1", self.store.semantic_calls[0][2])
+
+    def test_lexical_index_passes_only_the_requested_personal_scope_to_the_store(self) -> None:
+        index = ScopedLexicalIndex(self.store, self.catalog)
+        result = index.search(KnowledgeQuery(owner_id="u1", question="incident", scopes=(KnowledgeScope.USER,)))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(self.store.lexical_calls[0][1], KnowledgeScope.USER)
+        self.assertEqual(self.catalog_query[1], KnowledgeScope.USER)
 
 
 if __name__ == "__main__":

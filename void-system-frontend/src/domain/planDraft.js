@@ -1,19 +1,17 @@
-/** Canonical planning draft normalization and publication contracts. */
-
-export const PUBLICATION_STATUS = Object.freeze({
-  DRAFT: 'draft',
-  GOAL_CREATED: 'goal_created',
-  RUN_CREATED: 'run_created',
-  PUBLISHED: 'published'
+/**
+ * Client-side mapping for the server-owned Plan Draft contract.
+ *
+ * This module validates only the data needed to render and edit a draft. The backend
+ * TaskExecution boundary remains the authority for publication and persistence rules.
+ */
+export const PLAN_DRAFT_STATUS = Object.freeze({
+  READY: 'ready',
+  PUBLISHED: 'published',
+  DISCARDED: 'discarded'
 })
 
-const EXECUTION_MODES = new Set(['manual', 'assisted', 'agent'])
-const STEP_KINDS = new Set(['manual', 'agent', 'tool', 'review'])
+const EXECUTION_MODES = new Set(['manual', 'assisted'])
 const GOAL_PRIORITIES = new Set(['low', 'medium', 'high'])
-
-export function createDraftId() {
-  return globalThis.crypto?.randomUUID?.() || ('draft-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10))
-}
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -53,7 +51,7 @@ function uniqueStepKey(value, index, usedKeys) {
   return key
 }
 
-function normalizeSteps(rawSteps, mode) {
+function normalizeSteps(rawSteps) {
   if (!Array.isArray(rawSteps) || !rawSteps.length) {
     throw new Error('方案中没有可以执行的步骤。')
   }
@@ -64,7 +62,7 @@ function normalizeSteps(rawSteps, mode) {
     const originalKey = optionalText(step.client_key) || ('step-' + (index + 1))
     const clientKey = uniqueStepKey(originalKey, index, usedKeys)
     if (!keyAliases.has(originalKey)) keyAliases.set(originalKey, clientKey)
-    const kind = STEP_KINDS.has(step.kind) ? step.kind : (mode === 'agent' ? 'agent' : 'manual')
+    const kind = 'manual'
     return {
       client_key: clientKey,
       title: requiredText(step.title),
@@ -72,9 +70,7 @@ function normalizeSteps(rawSteps, mode) {
       kind,
       depends_on: stringList(step.depends_on),
       parallel_group: optionalText(step.parallel_group) || null,
-      max_attempts: Number.isInteger(step.max_attempts) && step.max_attempts >= 1 && step.max_attempts <= 10
-        ? step.max_attempts
-        : (kind === 'agent' ? 3 : 1),
+      max_attempts: 1,
       requires_approval: Boolean(step.requires_approval),
       completion_criteria: normalizeCompletionCriteria(step.completion_criteria),
       input_data: isPlainObject(step.input_data) ? { ...step.input_data } : {}
@@ -106,108 +102,95 @@ function assertAcyclicSteps(steps) {
   for (const key of dependencies.keys()) visit(key)
 }
 
-function normalizePublication(value) {
-  const publication = isPlainObject(value) ? value : {}
-  const goalId = optionalText(publication.goal_id) || null
-  const runId = optionalText(publication.run_id) || null
-  let status = Object.values(PUBLICATION_STATUS).includes(publication.status)
-    ? publication.status
-    : PUBLICATION_STATUS.DRAFT
-  if (!goalId) status = PUBLICATION_STATUS.DRAFT
-  else if (!runId && status !== PUBLICATION_STATUS.GOAL_CREATED) status = PUBLICATION_STATUS.GOAL_CREATED
-  else if (runId && ![PUBLICATION_STATUS.RUN_CREATED, PUBLICATION_STATUS.PUBLISHED].includes(status)) {
-    status = PUBLICATION_STATUS.RUN_CREATED
-  }
-  return {
-    status,
-    goal_id: goalId,
-    run_id: runId,
-    updated_at: optionalText(publication.updated_at) || null
-  }
-}
-
-export function normalizePlanDraft(result, fallbackMode = 'assisted') {
-  if (!isPlainObject(result) || !isPlainObject(result.goal) || !isPlainObject(result.run)) {
+/**
+ * Normalize an HTTP Plan Draft snapshot into the Advisor render model.
+ * Input: A public Plan Draft record, or its payload while a generation is completing.
+ * Output: Editable goal/run data plus immutable server identity, version and publication references.
+ * Called by: Advisor generation recovery, history selection, save and publish responses.
+ * Side effects: None.
+ * Failure: Throws for malformed plans so the page can keep the prior authoritative draft visible.
+ * Invariant: draft_id, status, version and published ids originate from the server and are never invented.
+ */
+export function normalizePlanDraft(record, fallbackMode = 'assisted') {
+  const source = isPlainObject(record?.payload) ? record.payload : record
+  if (!isPlainObject(source) || !isPlainObject(source.goal) || !isPlainObject(source.run)) {
     throw new Error('生成的方案不完整，请重新生成。')
   }
-  const mode = EXECUTION_MODES.has(result.run.mode) ? result.run.mode : fallbackMode
-  const goalTitle = requiredText(result.goal.title)
+  const mode = EXECUTION_MODES.has(source.run.mode) ? source.run.mode : fallbackMode
+  const goalTitle = requiredText(source.goal.title)
+  const status = Object.values(PLAN_DRAFT_STATUS).includes(record?.status)
+    ? record.status
+    : PLAN_DRAFT_STATUS.READY
   return {
     goal: {
       title: goalTitle,
-      description: optionalText(result.goal.description) || optionalText(result.summary),
-      desired_outcome: optionalText(result.goal.desired_outcome) || goalTitle,
-      priority: GOAL_PRIORITIES.has(result.goal.priority) ? result.goal.priority : 'medium',
-      metadata: isPlainObject(result.goal.metadata) ? { ...result.goal.metadata } : {}
+      description: optionalText(source.goal.description) || optionalText(source.summary),
+      desired_outcome: optionalText(source.goal.desired_outcome) || goalTitle,
+      priority: GOAL_PRIORITIES.has(source.goal.priority) ? source.goal.priority : 'medium',
+      metadata: isPlainObject(source.goal.metadata) ? { ...source.goal.metadata } : {}
     },
     run: {
-      title: optionalText(result.run.title) || goalTitle,
-      objective: optionalText(result.run.objective) || optionalText(result.goal.desired_outcome) || goalTitle,
+      title: optionalText(source.run.title) || goalTitle,
+      objective: optionalText(source.run.objective) || optionalText(source.goal.desired_outcome) || goalTitle,
       mode,
-      metadata: isPlainObject(result.run.metadata) ? { ...result.run.metadata } : {},
-      steps: normalizeSteps(result.run.steps, mode)
+      metadata: isPlainObject(source.run.metadata) ? { ...source.run.metadata } : {},
+      steps: normalizeSteps(source.run.steps)
     },
-    estimated_duration: optionalText(result.estimated_duration),
+    summary: optionalText(source.summary),
+    estimated_duration: optionalText(source.estimated_duration),
+    context: isPlainObject(source.context) ? { ...source.context } : {},
     meta: {
-      fallback: Boolean(result.meta?.used_fallback ?? result.meta?.fallback),
-      needs_review: result.meta?.needs_review !== false
+      ...((isPlainObject(source.meta) ? source.meta : {})),
+      fallback: Boolean(source.meta?.used_fallback ?? source.meta?.fallback),
+      needs_review: source.meta?.needs_review !== false
     },
-    draft_id: String(result.draft_id || result.id || createDraftId()),
-    publication: normalizePublication(result.publication)
+    draft_id: optionalText(record?.draft_id),
+    status,
+    version: Number.isInteger(record?.version) && record.version >= 1 ? record.version : 1,
+    published_goal_id: optionalText(record?.published_goal_id) || null,
+    published_run_id: optionalText(record?.published_run_id) || null,
+    created_at: optionalText(record?.created_at) || null,
+    updated_at: optionalText(record?.updated_at) || null,
+    published_at: optionalText(record?.published_at) || null
   }
 }
 
-export function normalizeHistoryEntry(item) {
-  const draft = normalizePlanDraft(item)
+/**
+ * Prepare an Advisor draft for the PATCH contract without leaking view-only fields.
+ * Input: A locally edited normalized Plan Draft.
+ * Output: The complete canonical payload accepted by PlanDraftService.
+ * Called by: Advisor before explicit save and indirectly by its publish workflow.
+ * Side effects: None.
+ * Failure: Throws on invalid local shape; backend validation remains authoritative.
+ * Invariant: Dependencies are acyclic locally and all immutable resource identifiers are excluded.
+ */
+export function buildPlanDraftPayload(draft) {
+  const normalized = normalizePlanDraft(draft, draft?.run?.mode || 'assisted')
+  assertAcyclicSteps(normalized.run.steps)
   return {
-    ...draft,
-    id: draft.draft_id,
-    createdAt: optionalText(item?.createdAt) || optionalText(item?.created_at) || new Date().toISOString(),
-    updatedAt: optionalText(item?.updatedAt) || optionalText(item?.updated_at) || null
-  }
-}
-
-export function buildGoalCreateInput(plan) {
-  const title = requiredText(plan?.goal?.title, '目标名称不能为空。')
-  const draftId = requiredText(plan?.draft_id, '方案缺少稳定标识，请重新生成。')
-  return {
-    ...plan.goal,
-    title,
-    description: optionalText(plan.goal.description),
-    desired_outcome: optionalText(plan.goal.desired_outcome) || title,
-    idempotency_key: 'plan-goal-' + draftId,
-    metadata: { ...(plan.goal.metadata || {}), planning_draft_id: draftId }
-  }
-}
-
-export function buildRunSpecification(plan) {
-  const draftId = requiredText(plan?.draft_id, '方案缺少稳定标识，请重新生成。')
-  const normalized = normalizeSteps(plan?.run?.steps, plan?.run?.mode || 'assisted')
-  assertAcyclicSteps(normalized)
-  return {
-    ...plan.run,
-    title: optionalText(plan.run.title) || requiredText(plan.goal.title),
-    objective: optionalText(plan.run.objective) || optionalText(plan.goal.desired_outcome) || requiredText(plan.goal.title),
-    idempotency_key: 'plan-' + draftId,
-    metadata: { ...(plan.run.metadata || {}), planning_draft_id: draftId },
-    steps: normalized
-  }
-}
-
-export function resetMissingPublication(plan, resource) {
-  if (resource === 'goal') {
-    return {
-      ...plan,
-      publication: { status: PUBLICATION_STATUS.DRAFT, goal_id: null, run_id: null, updated_at: new Date().toISOString() }
+    goal: normalized.goal,
+    run: normalized.run,
+    summary: normalized.summary,
+    estimated_duration: normalized.estimated_duration,
+    context: normalized.context,
+    meta: {
+      ...normalized.meta,
+      used_fallback: Boolean(normalized.meta?.fallback)
     }
   }
-  return {
-    ...plan,
-    publication: {
-      status: plan?.publication?.goal_id ? PUBLICATION_STATUS.GOAL_CREATED : PUBLICATION_STATUS.DRAFT,
-      goal_id: plan?.publication?.goal_id || null,
-      run_id: null,
-      updated_at: new Date().toISOString()
-    }
-  }
+}
+
+/**
+ * Create a retry-stable publication key for one server-owned Plan Draft.
+ * Input: A non-empty draft id.
+ * Output: Browser-generated opaque idempotency key safe to reuse after request uncertainty.
+ * Called by: Advisor when the user first confirms publication.
+ * Side effects: Uses browser randomness when available.
+ * Failure: Falls back to a timestamp/random suffix in older web views.
+ * Invariant: The key is scoped to the current draft and never stored as publication truth.
+ */
+export function createPublicationKey(draftId) {
+  const id = requiredText(draftId, '方案缺少服务端标识，请重新打开后再试。')
+  const entropy = globalThis.crypto?.randomUUID?.() || (Date.now() + '-' + Math.random().toString(36).slice(2, 10))
+  return 'plan-draft-' + id + '-' + entropy
 }

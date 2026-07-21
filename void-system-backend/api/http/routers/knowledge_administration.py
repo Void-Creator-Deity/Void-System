@@ -106,7 +106,7 @@ async def upload_system_knowledge_document(
 ) -> APIResponse:
     try:
         file_name = file.filename or "knowledge-document"
-        result = manager.add_document_async(
+        result = manager.add_document(
             file_data=await file.read(),
             metadata={
                 "title": title.strip() if title else file_name,
@@ -221,7 +221,7 @@ async def sync_system_knowledge_index(
 ) -> APIResponse:
     del current_admin
     try:
-        result = manager.sync_chroma_with_db()
+        result = manager.reconcile_index()
         if not result.get("success"):
             _raise_knowledge_failure(
                 result,

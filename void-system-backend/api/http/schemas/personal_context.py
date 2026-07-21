@@ -1,4 +1,4 @@
-﻿"""HTTP request schemas for the system companion and personal context."""
+"""HTTP request schemas for the system companion and personal context."""
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -8,6 +8,7 @@ class CompanionSettingsUpdate(BaseModel):
     enabled: Optional[bool] = None
     tone: Optional[Literal["calm", "warm", "direct"]] = None
     initiative: Optional[Literal["quiet", "balanced", "proactive"]] = None
+    persona: Optional[Dict[str, str]] = None
     permissions: Optional[Dict[str, bool]] = None
 
 
@@ -47,41 +48,16 @@ class MemoryReview(BaseModel):
     reason: str = Field("", max_length=500)
 
 
-class ProfileObservationCreate(BaseModel):
-    kind: Literal["favorite", "feedback", "task", "conversation", "import", "manual"] = "manual"
-    summary: str = Field(..., min_length=1, max_length=500)
-    source_type: str = Field("manual", min_length=1, max_length=60)
-    source_ref: Optional[str] = Field(None, max_length=500)
-    attributes: Dict[str, Any] = Field(default_factory=dict)
-    weight: float = Field(1.0, ge=0, le=1)
-    observed_at: Optional[str] = None
-    sensitivity: Literal["personal", "private", "sensitive"] = "private"
-    status: Literal["active", "archived"] = "active"
+class ProfileHypothesisReview(BaseModel):
+    """A user's explicit decision about one AI-organized understanding."""
 
-
-class ProfileClaimCreate(BaseModel):
-    domain: Literal[
-        "basic", "interests", "working_style", "communication", "values", "current_phase"
-    ]
-    profile_key: str = Field(..., min_length=1, max_length=160)
-    value: Any
-    summary: str = Field(..., min_length=1, max_length=240)
-    rationale: str = Field("", max_length=1000)
-    confidence: float = Field(0.5, ge=0, le=1)
-    review_status: Literal["pending", "confirmed", "rejected", "corrected"] = "pending"
-    evidence_refs: list[Dict[str, Any]] = Field(default_factory=list)
-    first_observed_at: Optional[str] = None
-    last_observed_at: Optional[str] = None
-    status: Literal["active", "archived"] = "active"
-
-
-class ProfileClaimReview(BaseModel):
-    decision: Literal["pending", "confirmed", "rejected", "corrected"]
-    value: Any = None
-    reason: str = Field("", max_length=500)
-
-
-class ProfileSuggestionReview(BaseModel):
     decision: Literal["confirmed", "rejected", "corrected"]
     value: Any = None
     reason: str = Field("", max_length=500)
+
+
+class ProfileHypothesisInferenceRequest(BaseModel):
+    """Bounded request to organize safe profile signals into reviewable hypotheses."""
+
+    max_signals: int = Field(24, ge=3, le=48)
+    max_hypotheses: int = Field(4, ge=1, le=6)

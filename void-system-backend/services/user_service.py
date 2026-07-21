@@ -7,7 +7,6 @@ import secrets
 from datetime import timedelta
 from typing import Any, Dict, Optional
 
-from config import config
 from core.identity_contracts import IdentityRepository
 from core.runtime_settings import RuntimeSettings
 from adapters.sqlite.identity_repository import SQLiteIdentityRepository
@@ -38,7 +37,7 @@ class UserService:
         settings: Optional[RuntimeSettings] = None,
     ):
         self.repository = repository
-        self.settings = settings or config
+        self.settings = settings or RuntimeSettings.from_environment()
 
     def register_user(self, email: str, password: str, username: str) -> Dict[str, Any]:
         username = sanitize_string(username, 50).strip()
@@ -232,6 +231,6 @@ def get_user_service(
     db: Optional[Database] = None,
     settings: Optional[RuntimeSettings] = None,
 ) -> UserService:
-    active_settings = settings or config
+    active_settings = settings or RuntimeSettings.from_environment()
     database = db or Database(active_settings.get_database_path())
     return UserService(SQLiteIdentityRepository(database.get_connection), active_settings)

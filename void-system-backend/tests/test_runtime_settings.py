@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from api.http.application import ApplicationOptions, create_app
@@ -19,6 +20,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                 "DEBUG": "false",
                 "CORS_ORIGINS": "https://app.example, https://admin.example ",
                 "DATABASE_URL": "sqlite:///runtime.db",
+                "DOCUMENT_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
             },
             base_dir=Path("C:/runtime-root"),
         )

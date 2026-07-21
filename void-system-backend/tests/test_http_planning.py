@@ -2,12 +2,13 @@
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
+from adapters.sqlite.plan_draft_repository import SQLitePlanDraftRepository
+from adapters.sqlite.plan_generation_repository import SQLitePlanGenerationRepository
+
 from api.http.application import ApplicationOptions, create_app
-from core.planning_contracts import PlanResult, PlannedTask
 from core.runtime_settings import RuntimeSettings
 
 
@@ -27,6 +28,7 @@ class PlanningHttpTests(unittest.TestCase):
                     database_path=str(database_path),
                     enable_ai_routes=False,
                     enable_langserve_routes=False,
+                    enable_plan_generation_worker=False,
                     settings=settings,
                 )
             )
@@ -43,147 +45,136 @@ class PlanningHttpTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
-    def test_advisor_returns_a_stable_publishable_plan_contract(self) -> None:
-        plan = PlanResult(
-            response="Split the goal into one focused task.",
-            tasks=[
-                PlannedTask(
-                    title="Draft the module contract",
-                    description="Write the boundary and completion criteria.",
-                    estimated_time=30,
-                    reward_coins=10,
-                    attribute_points=0,
-                    priority="medium",
-                    task_type="main",
-                    completion_type="simple",
-                    related_attrs={},
-                    completion_criteria={
-                        "criteria": "A reviewed contract exists.",
-                        "deliverables": ["Contract document"],
-                        "checks": ["Covers the module boundary"],
-                        "evidence": ["Document link"],
-                    },
-                    attribute_plan=[],
-                )
-            ],
-            mode="single_task",
-            estimated_duration="30 minutes",
-            metadata={"fallback": False},
-        )
-        engine = Mock()
-        engine.plan.return_value = plan
+    def test_retired_synchronous_planning_routes_are_not_public(self) -> None:
+        """Keep all first-party planning on durable jobs and persisted review drafts."""
+        for route in ("/api/plans", "/api/ai/advisor"):
+            response = self.client.post(route, headers=self.headers, json={"topic": "Retired route check"})
+            self.assertEqual(response.status_code, 404, route)
 
-        with patch("api.http.routers.planning.get_planning_engine", return_value=engine):
-            response = self.client.post(
-                "/api/ai/advisor",
-                json={"topic": "Define the module contract", "force_mode": "single_task"},
+        paths = self.client.get("/api/openapi.json").json()["paths"]
+        self.assertIn("/api/plan-generations", paths)
+        self.assertIn("/api/plan-drafts", paths)
+        self.assertNotIn("/api/plans", paths)
+        self.assertNotIn("/api/ai/advisor", paths)
+
+    def test_durable_plan_generation_can_be_read_after_submission(self) -> None:
+        created = self.client.post(
+                "/api/plan-generations",
+                json={"topic": "Make the job recoverable", "execution_mode": "assisted", "max_steps": 8},
                 headers=self.headers,
             )
 
-        self.assertEqual(response.status_code, 200)
-        data = response.json()["data"]
-        self.assertEqual(
-            set(data),
-            {"mode", "query", "response", "estimated_duration", "tasks", "meta"},
+        self.assertEqual(created.status_code, 202)
+        job = created.json()["data"]
+        self.assertEqual(job["status"], "queued")
+        self.assertEqual(job["stage"], "queued")
+        self.assertEqual(job["progress"], 0)
+        self.assertIsNone(job["result"])
+
+        loaded = self.client.get(f"/api/plan-generations/{job['generation_id']}", headers=self.headers)
+        self.assertEqual(loaded.status_code, 200)
+        loaded_job = loaded.json()["data"]
+        self.assertEqual(loaded_job["generation_id"], job["generation_id"])
+        self.assertIn(loaded_job["status"], {"queued", "ready"})
+        if loaded_job["status"] == "ready":
+            self.assertEqual(loaded_job["result"]["goal"]["title"], "Make the job recoverable")
+
+    def test_generation_history_is_owner_scoped_and_restorable(self) -> None:
+        created = self.client.post(
+            "/api/plan-generations",
+            json={"topic": "Restore this plan after refresh", "execution_mode": "assisted", "max_steps": 4},
+            headers=self.headers,
         )
-        self.assertEqual(data["mode"], "single_task")
-        self.assertEqual(data["query"], "Define the module contract")
-        self.assertEqual(len(data["tasks"]), 1)
-        self.assertEqual(data["tasks"][0]["title"], "Draft the module contract")
-        self.assertEqual(data["tasks"][0]["completion_type"], "simple")
-        self.assertNotIn("steps", data)
+        self.assertEqual(created.status_code, 202)
+        job = created.json()["data"]
 
-    def test_canonical_planner_returns_goal_and_run_specification(self) -> None:
-        plan = PlanResult(
-            response="Prepare, implement, and review the change.",
-            tasks=[
-                PlannedTask(
-                    title="Prepare",
-                    description="Confirm the desired behavior.",
-                    estimated_time=20,
-                    reward_coins=0,
-                    attribute_points=0,
-                    priority="medium",
-                    task_type="main",
-                    completion_type="simple",
-                    related_attrs={},
-                    completion_criteria={"criteria": "Scope is confirmed."},
-                    attribute_plan=[],
-                ),
-                PlannedTask(
-                    title="Implement",
-                    description="Build and verify the change.",
-                    estimated_time=60,
-                    reward_coins=0,
-                    attribute_points=0,
-                    priority="hard",
-                    task_type="main",
-                    completion_type="submission",
-                    related_attrs={},
-                    completion_criteria={"criteria": "Tests pass."},
-                    attribute_plan=[],
-                ),
-            ],
-            mode="workflow_chain",
-            estimated_duration="80 minutes",
-            metadata={"fallback": False},
-        )
-        engine = Mock()
-        engine.plan.return_value = plan
+        listed = self.client.get("/api/plan-generations", headers=self.headers)
+        self.assertEqual(listed.status_code, 200)
+        items = listed.json()["data"]["items"]
+        restored = next(item for item in items if item["generation_id"] == job["generation_id"])
+        self.assertEqual(restored["topic"], "Restore this plan after refresh")
+        self.assertEqual(restored["status"], "queued")
+        self.assertNotIn("lease_token", restored)
 
-        with patch("api.http.routers.planning.get_planning_engine", return_value=engine):
-            response = self.client.post(
-                "/api/plans",
-                json={
-                    "topic": "Refactor task execution",
-                    "execution_mode": "agent",
-                    "max_steps": 8,
-                },
-                headers=self.headers,
-            )
 
-        self.assertEqual(response.status_code, 200)
-        data = response.json()["data"]
-        self.assertEqual(set(data), {"goal", "run", "summary", "estimated_duration", "meta"})
-        self.assertEqual(data["run"]["mode"], "agent")
-        self.assertEqual(data["run"]["steps"][0]["depends_on"], [])
-        self.assertEqual(data["run"]["steps"][1]["depends_on"], ["step-1"])
-        self.assertNotIn("single_task", str(data))
-        self.assertNotIn("workflow_chain", str(data))
-
-        # A plan is a reviewable draft. It must not create canonical or legacy work records.
-        connection = self.client.app.state.database.get_connection()
+    def test_plan_draft_http_edit_and_idempotent_publish(self) -> None:
+        """Exercise the first-party draft contract from persisted generation through publication."""
+        database = self.client.app.state.database
+        connection = database.get_connection()
         try:
             owner_id = connection.execute(
                 "SELECT user_id FROM users WHERE username = ?", ("admin",)
             ).fetchone()["user_id"]
-            for table in ("task_goals", "task_runs", "tasks", "task_chains"):
-                count = connection.execute(
-                    f"SELECT COUNT(*) AS count FROM {table} WHERE user_id = ?", (owner_id,)
-                ).fetchone()["count"]
-                self.assertEqual(count, 0, table)
         finally:
             connection.close()
+        generation = SQLitePlanGenerationRepository(database.get_connection).create(
+            owner_id,
+            {"topic": "Publish a saved plan", "execution_mode": "assisted", "max_steps": 2, "advisor_prefs": {}},
+        )
+        payload = {
+            "goal": {
+                "title": "发布保存的方案",
+                "description": "验证端到端草稿发布。",
+                "desired_outcome": "可恢复且幂等的发布",
+                "priority": "high",
+            },
+            "run": {
+                "title": "开始方案",
+                "objective": "发布为正在推进的行动",
+                "mode": "assisted",
+                "steps": [
+                    {
+                        "client_key": "first",
+                        "title": "完成第一步",
+                        "description": "先完成可执行起点。",
+                        "kind": "manual",
+                        "max_attempts": 1,
+                        "completion_criteria": {},
+                        "input_data": {},
+                        "depends_on": [],
+                    }
+                ],
+            },
+            "summary": "这是服务器持久化的方案。",
+            "estimated_duration": "30 分钟",
+            "meta": {"needs_review": True},
+        }
+        draft = SQLitePlanDraftRepository(database.get_connection).create_from_generation(
+            owner_id, generation["generation_id"], payload
+        )
 
-    def test_unexpected_planning_failure_does_not_expose_internal_error(self) -> None:
-        with self.assertLogs("void-system.planning", level="ERROR") as captured:
-            with patch(
-                "api.http.routers.planning.get_planning_engine",
-                side_effect=RuntimeError("provider token secret-value"),
-            ):
-                response = self.client.post(
-                    "/api/ai/advisor",
-                    json={"topic": "Prepare a learning plan"},
-                    headers=self.headers,
-                )
+        listed = self.client.get("/api/plan-drafts", headers=self.headers)
+        self.assertEqual(listed.status_code, 200)
+        self.assertIn(draft["draft_id"], [item["draft_id"] for item in listed.json()["data"]["items"]])
+        loaded = self.client.get(f"/api/plan-drafts/{draft['draft_id']}", headers=self.headers)
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["data"]["version"], 1)
 
-        self.assertEqual(response.status_code, 500)
-        body = response.json()
-        self.assertFalse(body["success"])
-        self.assertEqual(body["error_code"], "ADVISOR_FAILED")
-        self.assertNotIn("secret-value", str(body))
-        self.assertNotIn("secret-value", "\n".join(captured.output))
-
+        payload["goal"]["title"] = "发布已保存的方案"
+        saved = self.client.patch(
+            f"/api/plan-drafts/{draft['draft_id']}",
+            json={"payload": payload, "expected_version": 1},
+            headers=self.headers,
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["data"]["version"], 2)
+        published = self.client.post(
+            f"/api/plan-drafts/{draft['draft_id']}/publish",
+            json={"idempotency_key": "http-retry-key"},
+            headers=self.headers,
+        )
+        self.assertEqual(published.status_code, 200)
+        snapshot = published.json()["data"]
+        self.assertEqual(snapshot["status"], "published")
+        self.assertTrue(snapshot["published_goal_id"])
+        self.assertTrue(snapshot["published_run_id"])
+        retry = self.client.post(
+            f"/api/plan-drafts/{draft['draft_id']}/publish",
+            json={"idempotency_key": "http-retry-key"},
+            headers=self.headers,
+        )
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(retry.json()["data"]["published_run_id"], snapshot["published_run_id"])
 
 if __name__ == "__main__":
     unittest.main()

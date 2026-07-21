@@ -4,8 +4,8 @@ import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import (
+    Request,
     APIRouter,
-    BackgroundTasks,
     Body,
     Depends,
     File,
@@ -17,6 +17,7 @@ from fastapi import (
 
 from api.http.dependencies import (
     get_current_user,
+    get_knowledge_job_service,
     get_user_knowledge_resources,
     get_user_knowledge_workspace,
 )
@@ -48,17 +49,22 @@ def _parse_tags(raw: Optional[str]) -> List[str]:
     return [str(tag).strip()[:40] for tag in parsed if str(tag).strip()][:20]
 
 
-@router.post("/api/user/documents/upload", summary="添加知识资料", response_model=APIResponse)
+@router.post("/api/user/documents/upload", summary="Add personal knowledge", response_model=APIResponse)
 async def upload_user_document(
+    request: Request,
     files: List[UploadFile] = File(...),
     title: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     current_user: Dict[str, Any] = Depends(get_current_user),
     resources: UserKnowledgeResources = Depends(get_user_knowledge_resources),
 ) -> APIResponse:
+    """Persist uploaded sources and wake the durable knowledge worker.
+
+    The returned task snapshots remain authoritative across browser refreshes and backend restarts.
+    """
     if not files:
         raise VoidSystemException(
-            message="请至少选择一个文件",
+            message="Select at least one file",
             error_code="NO_FILES",
             status_code=http_status.HTTP_400_BAD_REQUEST,
         )
@@ -66,7 +72,7 @@ async def upload_user_document(
     tag_list = _parse_tags(tags)
     results = []
     for file in files:
-        file_name = file.filename or "未命名资料"
+        file_name = file.filename or "untitled-upload"
         try:
             result = await resources.engine.ingest(
                 IngestSource(
@@ -78,16 +84,20 @@ async def upload_user_document(
                     scope=KnowledgeScope.USER,
                 )
             )
-        except Exception as exc:
-            logger.error("知识资料上传失败 %s: %s", file_name, exc, exc_info=True)
+        except Exception:
+            logger.exception("Knowledge upload failed for %s", file_name)
             result = {
                 "success": False,
-                "message": "文件暂时无法处理",
+                "message": "The file could not be prepared for processing",
                 "error_code": "INGEST_FAILED",
             }
         results.append({"file_name": file_name, **result})
 
     successful_count = sum(1 for result in results if result.get("success"))
+    if successful_count:
+        worker = getattr(request.app.state, "knowledge_job_worker", None)
+        if worker is not None:
+            worker.wake()
     data = {
         "results": results,
         "successful_count": successful_count,
@@ -95,15 +105,12 @@ async def upload_user_document(
     }
     if successful_count == 0:
         raise VoidSystemException(
-            message="所选文件均未能处理",
+            message="None of the selected files could be prepared",
             error_code="UPLOAD_FAILED",
             status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
             details=data,
         )
-    return create_success_response(
-        f"已添加 {successful_count}/{len(results)} 个文件",
-        data=data,
-    )
+    return create_success_response("Files added; processing continues in the background", data=data)
 
 
 @router.get("/api/user/documents", summary="获取知识资料", response_model=APIResponse)
@@ -144,14 +151,74 @@ async def get_user_document_stats(
     )
 
 
-@router.post("/api/user/documents/rebuild-index", summary="重新整理个人资料", response_model=APIResponse)
+@router.post("/api/user/documents/rebuild-index", summary="Rebuild personal knowledge", response_model=APIResponse)
 async def rebuild_user_document_index(
-    background_tasks: BackgroundTasks,
+    request: Request,
     current_user: Dict[str, Any] = Depends(get_current_user),
-    workspace: KnowledgeWorkspace = Depends(get_user_knowledge_workspace),
+    resources: UserKnowledgeResources = Depends(get_user_knowledge_resources),
 ) -> APIResponse:
-    background_tasks.add_task(workspace.rebuild_index, current_user["user_id"])
-    return create_success_response("资料整理任务已开始", data={"status": "queued"})
+    """Persist rebuild tasks first, then wake the application-owned worker."""
+    result = resources.workspace.enqueue_rebuild_jobs(current_user["user_id"])
+    if not result.get("success") and not result.get("jobs"):
+        raise VoidSystemException(
+            message=str(result.get("message") or "Knowledge rebuild could not be queued"),
+            error_code=str(result.get("error_code") or "KNOWLEDGE_REBUILD_QUEUE_FAILED"),
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            details=result,
+        )
+    worker = getattr(request.app.state, "knowledge_job_worker", None)
+    if worker is not None and result.get("jobs"):
+        worker.wake()
+    return create_success_response("Knowledge rebuild tasks were queued", data=result)
+
+
+@router.get("/api/user/knowledge/jobs", summary="List personal knowledge processing", response_model=APIResponse)
+async def list_knowledge_jobs(
+    limit: int = Query(30, ge=1, le=100),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    jobs: Any = Depends(get_knowledge_job_service),
+) -> APIResponse:
+    return create_success_response(
+        "Knowledge processing history retrieved",
+        data={"jobs": jobs.list_recent(current_user["user_id"], limit=limit)},
+    )
+
+
+@router.get("/api/user/knowledge/jobs/{job_id}", summary="Get knowledge processing", response_model=APIResponse)
+async def get_knowledge_job(
+    job_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    jobs: Any = Depends(get_knowledge_job_service),
+) -> APIResponse:
+    return create_success_response("Knowledge processing retrieved", data=jobs.get(current_user["user_id"], job_id))
+
+
+@router.post("/api/user/knowledge/jobs/{job_id}/cancel", summary="Cancel knowledge processing", response_model=APIResponse)
+async def cancel_knowledge_job(
+    request: Request,
+    job_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    jobs: Any = Depends(get_knowledge_job_service),
+) -> APIResponse:
+    job = jobs.cancel(current_user["user_id"], job_id)
+    worker = getattr(request.app.state, "knowledge_job_worker", None)
+    if worker is not None:
+        worker.wake()
+    return create_success_response("Knowledge processing cancellation requested", data=job)
+
+
+@router.post("/api/user/knowledge/jobs/{job_id}/retry", summary="Retry knowledge processing", response_model=APIResponse)
+async def retry_knowledge_job(
+    request: Request,
+    job_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    jobs: Any = Depends(get_knowledge_job_service),
+) -> APIResponse:
+    job = jobs.retry(current_user["user_id"], job_id)
+    worker = getattr(request.app.state, "knowledge_job_worker", None)
+    if worker is not None:
+        worker.wake()
+    return create_success_response("Knowledge processing retry was queued", data=job)
 
 
 @router.get("/api/user/documents/{doc_id}", summary="获取知识资料详情", response_model=APIResponse)
@@ -285,49 +352,40 @@ async def get_vector_stats(
     return create_success_response("知识索引诊断读取成功", data={"stats": stats})
 
 
-@router.post("/api/user/qa/ask", summary="询问个人知识", response_model=APIResponse)
+@router.post("/api/user/qa/ask", summary="Ask my library", response_model=APIResponse)
 async def ask_with_user_documents(
     question: str = Body(..., embed=True),
     document_ids: Optional[List[str]] = Body(None, embed=True),
+    include_global_shared: bool = Body(False, embed=True),
     current_user: Dict[str, Any] = Depends(get_current_user),
     resources: UserKnowledgeResources = Depends(get_user_knowledge_resources),
 ) -> APIResponse:
+    """Ask owned uploads and joined shared material, with explicit global expansion."""
     question = question.strip()
     if not question:
         raise VoidSystemException(
-            message="请输入想了解的问题",
+            message="Please enter a question.",
             error_code="EMPTY_QUESTION",
             status_code=http_status.HTTP_400_BAD_REQUEST,
         )
-
-    stats = resources.workspace.stats(current_user["user_id"])
-    if stats.get("completed_documents", 0) == 0:
-        return create_success_response(
-            "添加资料后即可开始提问",
-            data={
-                "answer": "这里还没有可检索的资料。先添加文件，处理完成后就可以基于内容提问。",
-                "has_documents": False,
-                "stats": stats,
-                "sources": [],
-                "support": {"status": "needs_more_context", "source_count": 0},
-            },
-        )
-
     try:
         answer = await resources.engine.ask(
             KnowledgeQuery(
                 owner_id=current_user["user_id"],
                 question=question,
                 document_ids=document_ids,
-                scopes=(KnowledgeScope.USER,),
+                scopes=(KnowledgeScope.USER, KnowledgeScope.SYSTEM),
                 top_k=6,
                 mode="hybrid",
+                filters={"include_global_shared": include_global_shared},
             )
         )
+    except VoidSystemException:
+        raise
     except Exception as exc:
-        logger.error("个人知识问答失败: %s", exc, exc_info=True)
+        logger.error("Library question failed: %s", exc, exc_info=True)
         raise VoidSystemException(
-            message="暂时无法完成回答，请稍后重试",
+            message="Knowledge service could not answer right now.",
             error_code="KNOWLEDGE_ANSWER_FAILED",
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
         ) from exc
@@ -337,19 +395,20 @@ async def ask_with_user_documents(
             "doc_id": citation.document_id,
             "title": citation.title or citation.file_name or citation.document_id[:8],
             "chunk_index": citation.chunk_index,
+            "source": "shared" if citation.metadata.get("scope") == KnowledgeScope.SYSTEM.value else "upload",
         }
         for citation in answer.citations
     ]
     return create_success_response(
-        "回答完成",
+        "Library answer completed",
         data={
             "question": question,
             "answer": answer.answer,
             "sources": sources,
             "confidence": answer.confidence,
             "retrieved_docs_count": len({citation.document_id for citation in answer.citations}),
-            "has_documents": True,
-            "stats": stats,
+            "has_documents": bool(sources),
+            "include_global_shared": include_global_shared,
             "support": answer_support(answer),
         },
     )

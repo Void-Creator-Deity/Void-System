@@ -10,10 +10,19 @@ from typing import Dict, Any, List, Optional, Set
 from datetime import datetime, timezone
 import logging
 
-from config import config
+from core.runtime_settings import RuntimeSettings
 from errors import ErrorCode, VoidSystemException
 
 logger = logging.getLogger(__name__)
+
+# Upload format policy is product behavior, not a deploy-time setting. Keeping
+# it here prevents an obsolete global configuration object from becoming a
+# second source of truth for application runtime settings.
+ALLOWED_FILE_EXTENSIONS = frozenset({
+    "txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "csv",
+    "jpg", "jpeg", "png", "gif", "bmp", "tiff",
+    "py", "js", "html", "css", "json", "xml", "yaml", "yml",
+})
 
 
 # ==================== 文件处理工具 ====================
@@ -44,23 +53,29 @@ def is_allowed_file(filename: str) -> bool:
         是否允许上传
     """
     extension = get_file_extension(filename)
-    return extension in config.ALLOWED_EXTENSIONS
+    return extension in ALLOWED_FILE_EXTENSIONS
 
 
-def validate_file_size(file_size: int) -> None:
+def validate_file_size(
+    file_size: int,
+    max_file_size: Optional[int] = None,
+) -> None:
     """
     验证文件大小
 
     Args:
-        file_size: 文件大小（字节）
+        file_size: file size in bytes.
+        max_file_size: optional application-injected limit; standalone callers
+            use the canonical runtime setting.
 
     Raises:
         VoidSystemException: 文件过大
     """
-    if file_size > config.MAX_FILE_SIZE:
+    limit = max_file_size or RuntimeSettings.from_environment().MAX_FILE_SIZE
+    if file_size > limit:
         raise VoidSystemException.from_error_code(
             ErrorCode.FILE_TOO_LARGE,
-            details={"max_size": config.MAX_FILE_SIZE, "actual_size": file_size}
+            details={"max_size": limit, "actual_size": file_size}
         )
 
 

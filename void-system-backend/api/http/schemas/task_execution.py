@@ -26,7 +26,7 @@ class RunStepCreate(BaseModel):
     client_key: Optional[str] = Field(None, max_length=100)
     title: str = Field(..., min_length=1, max_length=160)
     description: str = Field("", max_length=2000)
-    kind: Literal["manual", "agent", "tool", "review"] = "manual"
+    kind: Literal["manual"] = "manual"
     depends_on: List[str] = Field(default_factory=list, max_length=100)
     parallel_group: Optional[str] = Field(None, max_length=100)
     max_attempts: int = Field(1, ge=1, le=10)
@@ -38,7 +38,7 @@ class RunStepCreate(BaseModel):
 class RunCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=160)
     objective: str = Field("", max_length=2000)
-    mode: Literal["manual", "assisted", "agent"] = "manual"
+    mode: Literal["manual", "assisted"] = "manual"
     idempotency_key: Optional[str] = Field(None, max_length=200)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     steps: Optional[List[RunStepCreate]] = Field(None, max_length=100)
@@ -63,22 +63,6 @@ class RunReviewUpdate(BaseModel):
         return self
 
 
-class RunLeaseClaimRequest(BaseModel):
-    worker_id: str = Field(..., min_length=1, max_length=200)
-    lease_seconds: int = Field(60, ge=10, le=3600)
-
-
-class RunLeaseHeartbeatRequest(BaseModel):
-    lease_token: str = Field(..., min_length=1, max_length=200)
-    lease_seconds: int = Field(60, ge=10, le=3600)
-    checkpoint_data: Optional[Dict[str, Any]] = None
-
-
-class RunLeaseReleaseRequest(BaseModel):
-    lease_token: str = Field(..., min_length=1, max_length=200)
-    checkpoint_data: Optional[Dict[str, Any]] = None
-
-
 class ArtifactCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     kind: str = Field("result", min_length=1, max_length=60)
@@ -90,6 +74,14 @@ class ArtifactCreate(BaseModel):
 class StepCompleteRequest(BaseModel):
     output_data: Dict[str, Any] = Field(default_factory=dict)
     artifacts: List[ArtifactCreate] = Field(default_factory=list, max_length=50)
+
+
+class AssistedStepReviewRequest(BaseModel):
+    """Evidence submitted for an explicit AI-assisted completion review."""
+
+    submission: str = Field(..., min_length=1, max_length=8000)
+    artifacts: List[ArtifactCreate] = Field(default_factory=list, max_length=50)
+    idempotency_key: Optional[str] = Field(None, min_length=1, max_length=200)
 
 
 class StepFailRequest(BaseModel):

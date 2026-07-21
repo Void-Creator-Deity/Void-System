@@ -1,4 +1,4 @@
-"""Durable Goal and Run orchestration for user and agent work."""
+"""Durable Goal, Run, and Step execution for manual and assisted work."""
 from __future__ import annotations
 
 import logging
@@ -17,6 +17,7 @@ from core.task_execution_contracts import (
     TaskExecutionError,
     TaskExecutionRepository,
 )
+from core.planning_contracts import EvaluationEngine, EvaluationRequest
 
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,12 @@ class TaskExecution:
         repository: TaskExecutionRepository,
         run_review_observation_sink: RunReviewObservationSink | None = None,
         run_review_memory_candidate_sink: RunReviewMemoryCandidateSink | None = None,
+        evaluation_engine: EvaluationEngine | None = None,
     ) -> None:
         self._repository = repository
         self._run_review_observation_sink = run_review_observation_sink
         self._run_review_memory_candidate_sink = run_review_memory_candidate_sink
+        self._evaluation_engine = evaluation_engine
 
     def create_goal(self, user_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
         title = self._required_text(values.get("title"), "Goal title", 160)
@@ -91,6 +94,59 @@ class TaskExecution:
             raise TaskExecutionError("Goal changed before it could be updated.", "GOAL_STATE_CONFLICT", 409)
         return self.get_goal(user_id, goal_id)
 
+    def normalize_plan_draft(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """Validate an editable Plan Draft using the canonical Goal/Run execution rules.
+
+        Inputs:
+            payload: User-editable object containing goal, run, optional summary, duration, context,
+            and metadata fields. It must not contain persistent Goal/Run identifiers.
+        Outputs:
+            A normalized, publishable plan object with validated Goal fields, Run mode, Step graph,
+            object-shaped metadata, and bounded text values.
+        Called by:
+            PlanDraftService on each saved edit and immediately before atomic publication.
+        Side effects:
+            None. This is a pure Domain validation boundary shared by draft editing and publishing.
+        Failure:
+            Raises TaskExecutionError with stable validation semantics for invalid text, mode, JSON
+            shape, duplicate step keys, or cyclic/unknown dependencies.
+        Invariants:
+            The normalized result can be inserted into the only Goal/Run execution model; a browser
+            cannot smuggle legacy task fields or an unvalidated dependency graph into persistence.
+        """
+        raw = self._mapping(payload)
+        raw_goal = self._mapping(raw.get("goal"))
+        raw_run = self._mapping(raw.get("run"))
+        goal = {
+            "title": self._required_text(raw_goal.get("title"), "Goal title", 160),
+            "description": self._text(raw_goal.get("description"), 2000),
+            "desired_outcome": self._text(raw_goal.get("desired_outcome"), 2000),
+            "priority": self._choice(raw_goal.get("priority") or "medium", {"low", "medium", "high"}, "priority"),
+            "metadata": self._mapping(raw_goal.get("metadata")),
+        }
+        mode = self._choice(raw_run.get("mode") or "manual", RUN_MODES, "run mode")
+        raw_steps = raw_run.get("steps")
+        if not isinstance(raw_steps, list) or not raw_steps:
+            raise TaskExecutionError("A plan draft needs at least one step.", "RUN_SPEC_INVALID")
+        steps = self._normalize_steps(raw_steps)
+        self._validate_graph(steps)
+        run = {
+            "title": self._required_text(raw_run.get("title") or goal["title"], "Run title", 160),
+            "objective": self._text(raw_run.get("objective") or goal["desired_outcome"], 2000),
+            "mode": mode,
+            "metadata": self._mapping(raw_run.get("metadata")),
+            "steps": steps,
+        }
+        normalized = {
+            "goal": goal,
+            "run": run,
+            "summary": self._text(raw.get("summary"), 5000),
+            "estimated_duration": self._text(raw.get("estimated_duration"), 200),
+            "context": self._mapping(raw.get("context")),
+            "meta": self._mapping(raw.get("meta")),
+        }
+        return normalized
+
     def validate_run_template(
         self,
         user_id: str,
@@ -107,7 +163,7 @@ class TaskExecution:
                 "client_key": "work",
                 "title": values.get("title") or goal["title"],
                 "description": values.get("objective") or goal.get("desired_outcome") or goal.get("description", ""),
-                "kind": "agent" if mode == "agent" else "manual",
+                "kind": "manual",
             }
         ]
         steps = self._normalize_steps(raw_steps)
@@ -266,18 +322,16 @@ class TaskExecution:
         artifacts: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
         run = self._require_run_status(user_id, run_id, {"running"})
+        if run["mode"] != "manual":
+            raise TaskExecutionError(
+                "System-assisted steps must be submitted for review.",
+                "ASSISTED_REVIEW_REQUIRED",
+                409,
+            )
         step = self._find_step(run, step_id)
         if step["status"] != "running":
             raise TaskExecutionError("Only a running step can complete.", "STEP_NOT_RUNNING", 409)
-        normalized_artifacts = []
-        for artifact in artifacts or []:
-            normalized_artifacts.append({
-                "title": self._required_text(artifact.get("title"), "Artifact title", 200),
-                "kind": self._optional_text(artifact.get("kind"), 60) or "result",
-                "uri": self._optional_text(artifact.get("uri"), 2000),
-                "content_type": self._optional_text(artifact.get("content_type"), 200),
-                "metadata": self._mapping(artifact.get("metadata")),
-            })
+        normalized_artifacts = self._normalize_artifacts(artifacts)
         result = self._repository.apply_step_transition(
             user_id, run_id, step_id, ["running"], "completed", "step.completed",
             output_data=output_data or {}, artifacts=normalized_artifacts,
@@ -287,6 +341,98 @@ class TaskExecution:
             raise TaskExecutionError(
                 "Step changed before completion was saved.", "STEP_STATE_CONFLICT", 409
             )
+        return self.get_run(user_id, run_id)
+
+    def review_assisted_step(
+        self,
+        user_id: str,
+        run_id: str,
+        step_id: str,
+        values: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Review explicit user evidence and complete a system-assisted step only on approval.
+
+        Inputs: a running assisted Run, its running Step, user-authored evidence, and optional
+        artifact references. Output: the refreshed Run with the durable review Action. Called by
+        the review HTTP command. Evidence is saved before the model is called, so a provider
+        outage is visible and retryable rather than losing the user's submission.
+        """
+        run = self._require_run_status(user_id, run_id, {"running"})
+        if run["mode"] != "assisted":
+            raise TaskExecutionError("This run does not use system review.", "REVIEW_NOT_ENABLED", 409)
+        step = self._find_step(run, step_id)
+        if step["status"] != "running":
+            raise TaskExecutionError("Only a running step can be reviewed.", "STEP_NOT_RUNNING", 409)
+        submission = self._required_text(values.get("submission"), "Submission", 8000)
+        artifacts = self._normalize_artifacts(values.get("artifacts"))
+        action = self._repository.create_action(
+            user_id,
+            run_id,
+            step_id,
+            {
+                "action_type": "system_review_submission",
+                "input_data": {
+                    "submission": submission,
+                    "artifacts": artifacts,
+                    "completion_criteria": self._mapping(step.get("completion_criteria")),
+                },
+                "idempotency_key": self._optional_text(values.get("idempotency_key"), 200),
+            },
+        )
+        if not action.pop("_created", False):
+            return self.get_run(user_id, run_id)
+        if self._evaluation_engine is None:
+            self._repository.complete_action(
+                user_id, run_id, step_id, action["action_id"], "unavailable",
+                output_data={"feedback": "The AI review service is not configured."},
+            )
+            return self.get_run(user_id, run_id)
+        task = {
+            "task_name": step.get("title") or run.get("title") or "Task step",
+            "description": step.get("description") or "",
+            "completion_criteria": self._mapping(step.get("completion_criteria")),
+        }
+        try:
+            result = self._evaluation_engine.evaluate(
+                EvaluationRequest(
+                    task=task,
+                    submission={
+                        "submission": submission,
+                        "media_urls": [item["uri"] for item in artifacts if item.get("uri")],
+                        "artifacts": artifacts,
+                    },
+                    user_stats={"attributes": []},
+                )
+            )
+        except Exception:
+            logger.exception("System-assisted step review failed", extra={"run_id": run_id, "step_id": step_id})
+            self._repository.complete_action(
+                user_id, run_id, step_id, action["action_id"], "unavailable",
+                output_data={"feedback": "The AI review service is temporarily unavailable. Your evidence was saved."},
+            )
+            return self.get_run(user_id, run_id)
+
+        approved = result.status == "pass" and int(result.score) >= 70
+        output = {
+            "approved": approved,
+            "feedback": self._text(result.feedback, 4000),
+            "score": max(0, min(100, int(result.score))),
+            "raw": self._mapping(result.raw),
+        }
+        action_status = "confirmed" if approved else "revision_requested"
+        if not self._repository.complete_action(
+            user_id, run_id, step_id, action["action_id"], action_status, output_data=output
+        ):
+            raise TaskExecutionError("Review changed before it could be saved.", "ACTION_STATE_CONFLICT", 409)
+        if not approved:
+            return self.get_run(user_id, run_id)
+        transition = self._repository.apply_step_transition(
+            user_id, run_id, step_id, ["running"], "completed", "step.completed_after_review",
+            output_data={"submission": submission, "review": output}, artifacts=artifacts,
+            publish_ready_steps=True, complete_run_if_satisfied=True,
+        )
+        if not transition.get("changed"):
+            raise TaskExecutionError("Review passed but the step changed before completion.", "STEP_STATE_CONFLICT", 409)
         return self.get_run(user_id, run_id)
 
     def fail_step(
@@ -378,67 +524,6 @@ class TaskExecution:
             )
         return self.get_run(user_id, run_id)
 
-    def claim_agent_run(
-        self,
-        user_id: str,
-        run_id: str,
-        worker_id: str,
-        lease_seconds: int = 60,
-    ) -> Dict[str, Any]:
-        run = self._require_run_status(user_id, run_id, {"running"})
-        if run["mode"] != "agent":
-            raise TaskExecutionError(
-                "Only agent-mode runs can be claimed by a worker.", "RUN_NOT_AGENT_MODE", 409
-            )
-        worker = self._required_text(worker_id, "Worker id", 200)
-        duration = self._integer(lease_seconds, default=60, minimum=10, maximum=3600)
-        lease = self._repository.claim_run_lease(user_id, run_id, worker, duration)
-        if lease is None:
-            raise TaskExecutionError(
-                "Run is already claimed by another active worker.", "RUN_LEASE_CONFLICT", 409
-            )
-        return lease
-
-    def heartbeat_agent_run(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        *,
-        lease_seconds: int = 60,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        token = self._required_text(lease_token, "Lease token", 200)
-        duration = self._integer(lease_seconds, default=60, minimum=10, maximum=3600)
-        lease = self._repository.heartbeat_run_lease(
-            user_id, run_id, token, duration,
-            checkpoint_data=self._mapping(checkpoint_data) if checkpoint_data is not None else None,
-        )
-        if lease is None:
-            raise TaskExecutionError(
-                "Lease is missing, expired, or owned by another worker.", "RUN_LEASE_INVALID", 409
-            )
-        return lease
-
-    def release_agent_run(
-        self,
-        user_id: str,
-        run_id: str,
-        lease_token: str,
-        *,
-        checkpoint_data: Optional[Mapping[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        self.get_run(user_id, run_id)
-        token = self._required_text(lease_token, "Lease token", 200)
-        if not self._repository.release_run_lease(
-            user_id, run_id, token,
-            checkpoint_data=self._mapping(checkpoint_data) if checkpoint_data is not None else None,
-        ):
-            raise TaskExecutionError(
-                "Lease is missing or already released.", "RUN_LEASE_INVALID", 409
-            )
-        return self.get_run(user_id, run_id)
-
     def start_action(
         self,
         user_id: str,
@@ -476,7 +561,7 @@ class TaskExecution:
         error_summary: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._find_step(self.get_run(user_id, run_id), step_id)
-        if status not in {"completed", "failed", "cancelled"}:
+        if status not in {"completed", "failed", "cancelled", "confirmed", "revision_requested", "unavailable"}:
             raise TaskExecutionError("Invalid action result status.", "INVALID_ACTION_STATUS")
         if not self._repository.complete_action(
             user_id, run_id, step_id, action_id, status,
@@ -540,8 +625,7 @@ class TaskExecution:
             approval for approval in approvals if approval.get("status") != "pending"
         ]
         reward_totals = {
-            "coins": sum(int(item.get("coins") or 0) for item in rewards),
-            "experience": sum(int(item.get("experience") or 0) for item in rewards),
+            "growth_points": sum(int(item.get("growth_points") or 0) for item in rewards),
             "settlements": len(rewards),
         }
         completion = {
@@ -757,6 +841,7 @@ class TaskExecution:
                 "requires_approval": bool(raw.get("requires_approval")),
                 "completion_criteria": self._mapping(raw.get("completion_criteria")),
                 "input_data": self._mapping(raw.get("input_data")),
+                "reward_spec": self._normalize_reward_spec(raw.get("reward_spec")),
             })
         return normalized
 
@@ -792,12 +877,61 @@ class TaskExecution:
             visit(key)
 
     @staticmethod
+    def _normalize_reward_spec(value: Any) -> Dict[str, int]:
+        """Validate the fixed points amount that a completed Step may settle.
+
+        This runs while a Run is created, before the specification reaches SQLite. It
+        accepts no model-defined attributes or execution-time pricing and returns a
+        compact JSON-safe mapping consumed by the repository completion transaction.
+        """
+        if value is None:
+            reward: Dict[str, Any] = {}
+        elif not isinstance(value, Mapping):
+            raise TaskExecutionError(
+                "Step rewards must be an object.", "STEP_REWARD_INVALID"
+            )
+        else:
+            reward = dict(value)
+        growth_points = reward.get("growth_points", 0)
+        if isinstance(growth_points, bool) or not isinstance(growth_points, int):
+            raise TaskExecutionError(
+                "Step growth points must be an integer.", "STEP_REWARD_INVALID"
+            )
+        if not 0 <= growth_points <= 1000:
+            raise TaskExecutionError(
+                "Step growth points must be between 0 and 1000.", "STEP_REWARD_INVALID"
+            )
+        if set(reward) - {"growth_points"}:
+            raise TaskExecutionError(
+                "Step rewards may only declare growth_points.", "STEP_REWARD_INVALID"
+            )
+        return {"growth_points": growth_points}
+
+    @staticmethod
     def _mapping(value: Any) -> Dict[str, Any]:
         if value is None:
             return {}
         if not isinstance(value, Mapping):
             raise TaskExecutionError("Expected an object value.", "INVALID_OBJECT_VALUE")
         return dict(value)
+
+    def _normalize_artifacts(self, artifacts: Any) -> list[Dict[str, Any]]:
+        """Normalize user evidence once for manual records and AI review submissions."""
+        if artifacts is None:
+            return []
+        if not isinstance(artifacts, Sequence) or isinstance(artifacts, (str, bytes)):
+            raise TaskExecutionError("Artifacts must be a list.", "INVALID_ARTIFACTS")
+        return [
+            {
+                "title": self._required_text(item.get("title"), "Artifact title", 200),
+                "kind": self._optional_text(item.get("kind"), 60) or "result",
+                "uri": self._optional_text(item.get("uri"), 2000),
+                "content_type": self._optional_text(item.get("content_type"), 200),
+                "metadata": self._mapping(item.get("metadata")),
+            }
+            for item in artifacts
+            if isinstance(item, Mapping)
+        ]
 
     @staticmethod
     def _required_text(value: Any, label: str, maximum: int) -> str:

@@ -4,9 +4,23 @@ import sqlite3
 import tempfile
 import unittest
 
+from adapters.sqlite.task_execution_repository import SQLiteTaskExecutionRepository
+from core.planning_contracts import EvaluationResult
 from core.task_execution_contracts import TaskExecutionError
 from database import Database
+from modules.tasks.execution import TaskExecution
 from modules.tasks.service import get_task_execution
+
+
+class _PassingEvaluationEngine:
+    """Deterministic review double for the assisted execution contract."""
+
+    def evaluate(self, _request):
+        return EvaluationResult(
+            status="pass",
+            feedback="Evidence meets the completion criteria.",
+            score=92,
+        )
 
 
 class TaskExecutionTests(unittest.TestCase):
@@ -41,26 +55,24 @@ class TaskExecutionTests(unittest.TestCase):
             "user-1",
             goal["goal_id"],
             {
-                "mode": "agent",
+                "mode": "manual",
                 "steps": [
-                    {"client_key": "plan", "title": "Plan", "kind": "agent"},
+                    {"client_key": "plan", "title": "Plan", "kind": "manual"},
                     {
                         "client_key": "build",
                         "title": "Build",
-                        "kind": "tool",
-                        "depends_on": ["plan"],
+                                                "depends_on": ["plan"],
                     },
                     {
                         "client_key": "test",
                         "title": "Test",
-                        "kind": "tool",
+                        "kind": "manual",
                         "depends_on": ["plan"],
                     },
                     {
                         "client_key": "review",
                         "title": "Review",
-                        "kind": "review",
-                        "depends_on": ["build", "test"],
+                                                "depends_on": ["build", "test"],
                     },
                 ],
             },
@@ -146,7 +158,7 @@ class TaskExecutionTests(unittest.TestCase):
         run = self.execution.create_run(
             "user-1",
             goal["goal_id"],
-            {"steps": [{"title": "Inspect", "kind": "tool"}]},
+            {"steps": [{"title": "Inspect", "kind": "manual"}]},
         )
         run = self.execution.start_run("user-1", run["run_id"])
         run = self.execution.pause_run("user-1", run["run_id"])
@@ -257,53 +269,195 @@ class TaskExecutionTests(unittest.TestCase):
             self.execution.get_run("user-2", first["run_id"])
         self.assertEqual(context.exception.code, "RUN_NOT_FOUND")
 
-    def test_agent_lease_supports_checkpoint_and_expired_reclaim(self) -> None:
+    def test_assisted_step_requires_evidence_then_persists_confirmed_review(self) -> None:
+        goal = self.create_goal()
+        execution = TaskExecution(
+            SQLiteTaskExecutionRepository(self.database.get_connection),
+            evaluation_engine=_PassingEvaluationEngine(),
+        )
+        run = execution.create_run(
+            "user-1",
+            goal["goal_id"],
+            {"mode": "assisted", "steps": [{"title": "Investigate"}]},
+        )
+        run = execution.start_run("user-1", run["run_id"])
+        step_id = run["steps"][0]["step_id"]
+        execution.start_step("user-1", run["run_id"], step_id)
+
+        with self.assertRaises(TaskExecutionError) as context:
+            execution.complete_step("user-1", run["run_id"], step_id)
+        self.assertEqual(context.exception.code, "ASSISTED_REVIEW_REQUIRED")
+
+        reviewed = execution.review_assisted_step(
+            "user-1",
+            run["run_id"],
+            step_id,
+            {"submission": "Inspected the module boundary and recorded the result."},
+        )
+        self.assertEqual(reviewed["status"], "completed")
+        self.assertEqual(reviewed["steps"][0]["status"], "completed")
+        self.assertEqual(reviewed["actions"][0]["status"], "confirmed")
+        self.assertEqual(
+            reviewed["actions"][0]["input_data"]["submission"],
+            "Inspected the module boundary and recorded the result.",
+        )
+        event_types = [event["event_type"] for event in execution.list_events("user-1", run["run_id"])]
+        self.assertIn("step.completed_after_review", event_types)
+
+    def test_manual_completion_settles_published_growth_points_once(self) -> None:
         goal = self.create_goal()
         run = self.execution.create_run(
             "user-1",
             goal["goal_id"],
-            {"mode": "agent", "steps": [{"title": "Investigate", "kind": "agent"}]},
+            {
+                "steps": [
+                    {
+                        "title": "Publish the verified release",
+                        "reward_spec": {"growth_points": 17},
+                    }
+                ]
+            },
         )
         run = self.execution.start_run("user-1", run["run_id"])
-        lease = self.execution.claim_agent_run(
-            "user-1", run["run_id"], "worker-a", lease_seconds=60
-        )
-        self.assertEqual(lease["worker_id"], "worker-a")
-        token = lease["lease_token"]
+        step_id = run["steps"][0]["step_id"]
+        self.execution.start_step("user-1", run["run_id"], step_id)
+        completed = self.execution.complete_step("user-1", run["run_id"], step_id)
 
-        with self.assertRaises(TaskExecutionError) as conflict:
-            self.execution.claim_agent_run(
-                "user-1", run["run_id"], "worker-b", lease_seconds=60
-            )
-        self.assertEqual(conflict.exception.code, "RUN_LEASE_CONFLICT")
+        self.assertEqual(completed["steps"][0]["status"], "completed")
+        review = self.execution.get_run_review("user-1", run["run_id"])
+        self.assertEqual(review["rewards"]["totals"], {"growth_points": 17, "settlements": 1})
+        self.assertEqual(review["rewards"]["items"][0]["growth_points"], 17)
 
-        lease = self.execution.heartbeat_agent_run(
-            "user-1",
-            run["run_id"],
-            token,
-            checkpoint_data={"cursor": 4, "summary": "tools inspected"},
-        )
-        self.assertEqual(lease["checkpoint_data"]["cursor"], 4)
+        events = self.execution.list_events("user-1", run["run_id"])
+        completion_event = next(event for event in events if event["event_type"] == "step.completed")
+        self.assertEqual(completion_event["payload"]["reward_settlement"]["growth_points"], 17)
 
         connection = self.database.get_connection()
-        connection.execute(
-            "UPDATE task_run_leases SET expires_at = ? WHERE run_id = ?",
-            ("2000-01-01T00:00:00+00:00", run["run_id"]),
-        )
-        connection.commit()
-        connection.close()
+        try:
+            settlements = connection.execute(
+                "SELECT COUNT(*) FROM task_reward_settlements WHERE user_id = ? AND step_id = ?",
+                ("user-1", step_id),
+            ).fetchone()[0]
+            ledger_entries = connection.execute(
+                "SELECT amount, source FROM growth_point_ledger WHERE user_id = ?", ("user-1",)
+            ).fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(settlements, 1)
+        self.assertEqual([(row[0], row[1]) for row in ledger_entries], [(17, f"task_step:{step_id}")])
 
-        reclaimed = self.execution.claim_agent_run(
-            "user-1", run["run_id"], "worker-b", lease_seconds=60
+        with self.assertRaises(TaskExecutionError) as context:
+            self.execution.complete_step("user-1", run["run_id"], step_id)
+        self.assertEqual(context.exception.code, "RUN_STATUS_CONFLICT")
+        self.assertEqual(self.execution.get_run_review("user-1", run["run_id"])["rewards"]["totals"]["growth_points"], 17)
+
+    def test_assisted_approval_settles_growth_points_but_unavailable_review_does_not(self) -> None:
+        goal = self.create_goal()
+        approved_execution = TaskExecution(
+            SQLiteTaskExecutionRepository(self.database.get_connection),
+            evaluation_engine=_PassingEvaluationEngine(),
         )
-        self.assertEqual(reclaimed["worker_id"], "worker-b")
-        self.assertNotEqual(reclaimed["lease_token"], token)
-        self.assertEqual(reclaimed["checkpoint_data"]["cursor"], 4)
-        with self.assertRaises(TaskExecutionError) as stale:
-            self.execution.heartbeat_agent_run("user-1", run["run_id"], token)
-        self.assertEqual(stale.exception.code, "RUN_LEASE_INVALID")
-        events = self.execution.list_events("user-1", run["run_id"])
-        self.assertIn("run.lease_reclaimed", [event["event_type"] for event in events])
+        approved = approved_execution.create_run(
+            "user-1",
+            goal["goal_id"],
+            {
+                "mode": "assisted",
+                "steps": [{"title": "Review evidence", "reward_spec": {"growth_points": 23}}],
+            },
+        )
+        approved = approved_execution.start_run("user-1", approved["run_id"])
+        approved_step_id = approved["steps"][0]["step_id"]
+        approved_execution.start_step("user-1", approved["run_id"], approved_step_id)
+        approved_execution.review_assisted_step(
+            "user-1", approved["run_id"], approved_step_id, {"submission": "Evidence submitted."}
+        )
+        self.assertEqual(
+            approved_execution.get_run_review("user-1", approved["run_id"])["rewards"]["totals"],
+            {"growth_points": 23, "settlements": 1},
+        )
+
+        unavailable_execution = TaskExecution(SQLiteTaskExecutionRepository(self.database.get_connection))
+        unavailable = unavailable_execution.create_run(
+            "user-1",
+            goal["goal_id"],
+            {
+                "mode": "assisted",
+                "steps": [{"title": "Wait for review", "reward_spec": {"growth_points": 29}}],
+            },
+        )
+        unavailable = unavailable_execution.start_run("user-1", unavailable["run_id"])
+        unavailable_step_id = unavailable["steps"][0]["step_id"]
+        unavailable_execution.start_step("user-1", unavailable["run_id"], unavailable_step_id)
+        unavailable_result = unavailable_execution.review_assisted_step(
+            "user-1", unavailable["run_id"], unavailable_step_id, {"submission": "Saved evidence."}
+        )
+        self.assertEqual(unavailable_result["steps"][0]["status"], "running")
+        self.assertEqual(
+            unavailable_execution.get_run_review("user-1", unavailable["run_id"])["rewards"]["totals"],
+            {"growth_points": 0, "settlements": 0},
+        )
+
+    def test_invalid_reward_specifications_are_rejected_before_persistence(self) -> None:
+        goal = self.create_goal()
+        invalid_specs = [
+            {"growth_points": -1},
+            {"growth_points": 1001},
+            {"growth_points": True},
+            {"growth_points": "10"},
+            {"growth_points": 1, "attribute_points": 2},
+            ["not-an-object"],
+        ]
+        for reward_spec in invalid_specs:
+            with self.subTest(reward_spec=reward_spec):
+                with self.assertRaises(TaskExecutionError) as context:
+                    self.execution.create_run(
+                        "user-1",
+                        goal["goal_id"],
+                        {"steps": [{"title": "Validate reward", "reward_spec": reward_spec}]},
+                    )
+                self.assertEqual(context.exception.code, "STEP_REWARD_INVALID")
+
+    def test_reward_ledger_failure_rolls_back_completed_step_and_settlement(self) -> None:
+        goal = self.create_goal()
+        run = self.execution.create_run(
+            "user-1",
+            goal["goal_id"],
+            {"steps": [{"title": "Atomic reward", "reward_spec": {"growth_points": 31}}]},
+        )
+        run = self.execution.start_run("user-1", run["run_id"])
+        step_id = run["steps"][0]["step_id"]
+        self.execution.start_step("user-1", run["run_id"], step_id)
+        connection = self.database.get_connection()
+        try:
+            connection.execute(
+                """CREATE TRIGGER fail_growth_ledger_insert
+                   BEFORE INSERT ON growth_point_ledger
+                   WHEN NEW.source LIKE 'task_step:%'
+                   BEGIN
+                       SELECT RAISE(ABORT, 'growth ledger unavailable');
+                   END"""
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.execution.complete_step("user-1", run["run_id"], step_id)
+
+        unchanged = self.execution.get_run("user-1", run["run_id"])
+        self.assertEqual(unchanged["steps"][0]["status"], "running")
+        connection = self.database.get_connection()
+        try:
+            settlement_count = connection.execute(
+                "SELECT COUNT(*) FROM task_reward_settlements WHERE step_id = ?", (step_id,)
+            ).fetchone()[0]
+            ledger_count = connection.execute(
+                "SELECT COUNT(*) FROM growth_point_ledger WHERE source = ?", (f"task_step:{step_id}",)
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(settlement_count, 0)
+        self.assertEqual(ledger_count, 0)
 
     def test_state_transition_rolls_back_when_event_append_fails(self) -> None:
         goal = self.create_goal()
