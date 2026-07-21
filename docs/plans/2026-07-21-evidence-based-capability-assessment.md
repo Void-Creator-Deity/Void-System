@@ -2,9 +2,14 @@
 
 ## Status
 
-Proposed. This document defines the replacement for the current manual
-`attributes` feature. It is a product and domain decision document, not a
-request to reintroduce the retired task reward increments.
+Superseded as the replacement for the user-facing `attributes` feature on
+July 21, 2026. The user clarified that the desired product is a novel-style
+narrative attribute system, not a real-world capability assessment system. See
+`2026-07-21-narrative-attribute-system.md` for the active direction.
+
+The evidence-based capability design remains a possible future, separate
+professional-development module. It must not overwrite or redefine the
+narrative attribute system.
 
 ## Problem
 
